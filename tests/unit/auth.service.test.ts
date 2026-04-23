@@ -22,7 +22,6 @@ function baseRegisterInput(overrides: Partial<RegisterInput> = {}): RegisterInpu
       fullName: "Jane Doe",
       email: "Jane@Example.com ",
       phoneNumber: "+61412345678",
-      relationshipType: "MOTHER",
       address: "123 Main Street",
     },
     students: [
@@ -31,6 +30,7 @@ function baseRegisterInput(overrides: Partial<RegisterInput> = {}): RegisterInpu
         email: "alex@example.com",
         gender: "MALE",
         yearLevel: "Year 7",
+        schoolName: "Melbourne High School",
       },
     ],
     ...overrides,
@@ -72,7 +72,7 @@ describe("auth service hardening", () => {
       })
     );
     expect(tx.parentStudentRelation.createMany).toHaveBeenCalledWith({
-      data: [{ parentId: "parent-1", studentId: "student-1", relationshipType: "MOTHER" }],
+      data: [{ parentId: "parent-1", studentId: "student-1" }],
     });
     expect(result.parent).toEqual(
       expect.objectContaining({ id: "parent-1", email: "jane@example.com", password: expect.any(String) })
@@ -115,7 +115,7 @@ describe("auth service hardening", () => {
       registerParentWithStudents(
         prisma,
         baseRegisterInput({
-          students: [{ fullName: "Alex Doe", email: " jane@example.com", gender: "MALE", yearLevel: "Year 7" }],
+          students: [{ fullName: "Alex Doe", email: " jane@example.com", gender: "MALE", yearLevel: "Year 7", schoolName: "Melbourne High School" }],
         })
       )
     ).rejects.toMatchObject({ statusCode: 400 });

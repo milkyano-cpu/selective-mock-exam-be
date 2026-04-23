@@ -28,14 +28,6 @@ enum Gender {
   FEMALE
 }
 
-enum RelationshipType {
-  MOTHER
-  FATHER
-  GUARDIAN
-  GRANDPARENT
-  OTHER
-}
-
 model User {
   id           String     @id @default(uuid())
   email        String     @unique
@@ -47,6 +39,7 @@ model User {
   address      String?
   gender       Gender?
   yearLevel    String?    @map("year_level")
+  schoolName   String?    @map("student_school_name")
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @updatedAt @map("updated_at")
 
@@ -70,10 +63,9 @@ model User {
 }
 
 model ParentStudentRelation {
-  parentId         String           @map("parent_id")
-  studentId        String           @map("student_id")
-  relationshipType RelationshipType @map("relationship_type")
-  createdAt        DateTime         @default(now()) @map("created_at")
+  parentId  String   @map("parent_id")
+  studentId String   @map("student_id")
+  createdAt DateTime @default(now()) @map("created_at")
 
   parent  User @relation("ParentToStudent", fields: [parentId], references: [id])
   student User @relation("StudentToParent", fields: [studentId], references: [id])

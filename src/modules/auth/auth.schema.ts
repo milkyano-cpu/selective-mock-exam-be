@@ -13,6 +13,10 @@ const studentSchema = z.object({
   yearLevel: z
     .string({ error: "Year level is required" })
     .min(1, "Year level cannot be empty"),
+  schoolName: z
+    .string({ error: "School name is required" })
+    .min(2, "School name must be at least 2 characters")
+    .max(200),
 });
 
 const registerBodySchema = z.object({
@@ -28,10 +32,6 @@ const registerBodySchema = z.object({
       .string({ error: "Phone number is required" })
       .min(6, "Phone number is too short")
       .max(20),
-    relationshipType: z.enum(
-      ["MOTHER", "FATHER", "GUARDIAN", "GRANDPARENT", "OTHER"],
-      { error: "Invalid relationship type" }
-    ),
     address: z
       .string({ error: "Address is required" })
       .min(5, "Address is too short"),
