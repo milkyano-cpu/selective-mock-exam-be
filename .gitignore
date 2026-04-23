@@ -1,0 +1,13 @@
+node_modules
+dist
+coverage
+# Keep environment variables out of version control
+.env
+
+/generated/prisma
+
+# Documentation
+*.md
+!docs/auth.md
+# Docker
+docker-compose.override.yml

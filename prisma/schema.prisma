@@ -1,0 +1,495 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==========================================
+// DOMAIN 1: USER MANAGEMENT
+// ==========================================
+
+enum Role {
+  STUDENT
+  PARENT
+  TUTOR
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum RelationshipType {
+  MOTHER
+  FATHER
+  GUARDIAN
+  GRANDPARENT
+  OTHER
+}
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  fullName     String     @map("full_name")
+  role         Role
+  status       UserStatus @default(ACTIVE)
+  phoneNumber  String?    @map("phone_number")
+  address      String?
+  gender       Gender?
+  yearLevel    String?    @map("year_level")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  // Relations
+  children          ParentStudentRelation[] @relation("ParentToStudent")
+  parents           ParentStudentRelation[] @relation("StudentToParent")
+  questions         Question[]              @relation("TutorQuestions")
+  examsCreated      Exam[]                  @relation("AdminExams")
+  examSessions      ExamSession[]
+  practiceSessions  PracticeSession[]
+  assignedPractices PracticeSession[]       @relation("TutorAssigned")
+  recommendations   Recommendation[]
+  performance       StudentPerformance[]
+  leaderboards      Leaderboard[]
+  flashcards        Flashcard[]
+  posts             ForumPost[]
+  subscriptions     Subscription[]
+  refreshTokens     RefreshToken[]
+
+  @@map("users")
+}
+
+model ParentStudentRelation {
+  parentId         String           @map("parent_id")
+  studentId        String           @map("student_id")
+  relationshipType RelationshipType @map("relationship_type")
+  createdAt        DateTime         @default(now()) @map("created_at")
+
+  parent  User @relation("ParentToStudent", fields: [parentId], references: [id])
+  student User @relation("StudentToParent", fields: [studentId], references: [id])
+
+  @@id([parentId, studentId])
+  @@index([studentId])
+  @@map("parent_student_relations")
+}
+
+// ==========================================
+// DOMAIN 2: MASTER DATA & QUESTION BANK
+// ==========================================
+
+model Subject {
+  id          String  @id @default(uuid())
+  name        String
+  description String?
+
+  topics      Topic[]
+  questions   Question[]
+  performance StudentPerformance[]
+
+  @@map("subjects")
+}
+
+model Topic {
+  id          String  @id @default(uuid())
+  subjectId   String  @map("subject_id")
+  name        String
+  description String?
+
+  subject          Subject             @relation(fields: [subjectId], references: [id])
+  questions        Question[]
+  practiceSessions PracticeSession[]
+  recommendations  Recommendation[]
+  performance      StudentPerformance[]
+  resources        StudyResource[]
+
+  @@index([subjectId])
+  @@map("topics")
+}
+
+enum QuestionType {
+  MCQ
+  ESSAY
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum QuestionStatus {
+  DRAFT
+  PENDING_APPROVAL
+  PUBLISHED
+}
+
+model Question {
+  id            String         @id @default(uuid())
+  subjectId     String         @map("subject_id")
+  topicId       String         @map("topic_id")
+  tutorId       String         @map("tutor_id")
+  type          QuestionType
+  difficulty    Difficulty
+  contentText   String         @map("content_text")
+  contentLatex  String?        @map("content_latex")
+  options       Json?
+  correctAnswer String         @map("correct_answer")
+  status        QuestionStatus @default(DRAFT)
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  subject         Subject          @relation(fields: [subjectId], references: [id])
+  topic           Topic            @relation(fields: [topicId], references: [id])
+  tutor           User             @relation("TutorQuestions", fields: [tutorId], references: [id])
+  examQuestions   ExamQuestion[]
+  answers         StudentAnswer[]
+  practiceAnswers PracticeAnswer[]
+  flashcards      Flashcard[]
+
+  @@index([subjectId, topicId, status, difficulty])
+  @@index([tutorId, status])
+  @@map("questions")
+}
+
+// ==========================================
+// DOMAIN 3: FORMAL EXAMINATION (MOCK EXAM)
+// ==========================================
+
+enum ExamType {
+  MOCK_EXAM
+  ASSIGNMENT
+}
+
+enum GradingType {
+  AUTO
+  MANUAL
+  MIXED
+}
+
+model Exam {
+  id              String      @id @default(uuid())
+  title           String
+  examType        ExamType    @map("exam_type")
+  durationMinutes Int         @map("duration_minutes")
+  gradingType     GradingType @map("grading_type")
+  createdBy       String      @map("created_by")
+
+  creator   User           @relation("AdminExams", fields: [createdBy], references: [id])
+  questions ExamQuestion[]
+  sessions  ExamSession[]
+
+  @@map("exams")
+}
+
+model ExamQuestion {
+  examId     String @map("exam_id")
+  questionId String @map("question_id")
+  order      Int
+
+  exam     Exam     @relation(fields: [examId], references: [id])
+  question Question @relation(fields: [questionId], references: [id])
+
+  @@id([examId, questionId])
+  @@map("exam_questions")
+}
+
+enum SessionStatus {
+  IN_PROGRESS
+  SUBMITTED
+  GRADED
+}
+
+enum RankingLevel {
+  SUPERIOR
+  ABOVE_AVERAGE
+  HIGH_AVERAGE
+  AVERAGE
+  LOW_AVERAGE
+}
+
+model ExamSession {
+  id               String        @id @default(uuid())
+  examId           String        @map("exam_id")
+  studentId        String        @map("student_id")
+  status           SessionStatus @default(IN_PROGRESS)
+  startTime        DateTime      @default(now()) @map("start_time")
+  endTime          DateTime?     @map("end_time")
+  totalTimeSeconds Int?          @map("total_time_seconds")
+  finalScore       Decimal?      @map("final_score") @db.Decimal(5, 2)
+  rankingLevel     RankingLevel? @map("ranking_level")
+
+  exam    Exam            @relation(fields: [examId], references: [id])
+  student User            @relation(fields: [studentId], references: [id])
+  answers StudentAnswer[]
+
+  @@index([studentId, examId, status])
+  @@index([examId, status])
+  @@map("exam_sessions")
+}
+
+model StudentAnswer {
+  id               String   @id @default(uuid())
+  sessionId        String   @map("session_id")
+  questionId       String   @map("question_id")
+  studentAnswer    String   @map("student_answer")
+  isCorrect        Boolean  @default(false) @map("is_correct")
+  timeSpentSeconds Int      @map("time_spent_seconds")
+  manualScore      Decimal? @map("manual_score") @db.Decimal(5, 2)
+  tutorFeedback    String?  @map("tutor_feedback")
+  aiFeedback       Json?    @map("ai_feedback")
+
+  session  ExamSession @relation(fields: [sessionId], references: [id])
+  question Question    @relation(fields: [questionId], references: [id])
+
+  @@index([sessionId, questionId])
+  @@map("student_answers")
+}
+
+// ==========================================
+// DOMAIN 4: PRACTICE & RECOMMENDATIONS
+// ==========================================
+
+enum PracticeSource {
+  SELF_SELECTED
+  TUTOR_ASSIGNED
+  PATHWAY
+  RECOMMENDATION
+}
+
+model PracticeSession {
+  id         String         @id @default(uuid())
+  studentId  String         @map("student_id")
+  topicId    String?        @map("topic_id")
+  sourceType PracticeSource @map("source_type")
+  assignedBy String?        @map("assigned_by")
+  startedAt  DateTime       @default(now()) @map("started_at")
+  endedAt    DateTime?      @map("ended_at")
+
+  student User             @relation(fields: [studentId], references: [id])
+  topic   Topic?           @relation(fields: [topicId], references: [id])
+  tutor   User?            @relation("TutorAssigned", fields: [assignedBy], references: [id])
+  answers PracticeAnswer[]
+
+  @@index([studentId, topicId, sourceType])
+  @@index([assignedBy])
+  @@map("practice_sessions")
+}
+
+model PracticeAnswer {
+  id               String  @id @default(uuid())
+  sessionId        String  @map("session_id")
+  questionId       String  @map("question_id")
+  studentAnswer    String  @map("student_answer")
+  isCorrect        Boolean @map("is_correct")
+  timeSpentSeconds Int     @map("time_spent_seconds")
+
+  session  PracticeSession @relation(fields: [sessionId], references: [id])
+  question Question        @relation(fields: [questionId], references: [id])
+
+  @@index([sessionId, questionId])
+  @@map("practice_answers")
+}
+
+enum RecommendationStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  IGNORED
+}
+
+model Recommendation {
+  id            String               @id @default(uuid())
+  studentId     String               @map("student_id")
+  topicId       String               @map("topic_id")
+  reason        String
+  priorityScore Int                  @map("priority_score")
+  status        RecommendationStatus @default(PENDING)
+  createdAt     DateTime             @default(now()) @map("created_at")
+
+  student User  @relation(fields: [studentId], references: [id])
+  topic   Topic @relation(fields: [topicId], references: [id])
+
+  @@index([studentId, status, priorityScore])
+  @@index([topicId, status])
+  @@map("recommendations")
+}
+
+// ==========================================
+// DOMAIN 5: ANALYTICS & AGGREGATION
+// ==========================================
+
+model StudentPerformance {
+  id           String   @id @default(uuid())
+  studentId    String   @map("student_id")
+  subjectId    String   @map("subject_id")
+  topicId      String   @map("topic_id")
+  scoreAvg     Float    @map("score_avg")
+  attemptCount Int      @map("attempt_count")
+  lastUpdated  DateTime @updatedAt @map("last_updated")
+
+  student User    @relation(fields: [studentId], references: [id])
+  subject Subject @relation(fields: [subjectId], references: [id])
+  topic   Topic   @relation(fields: [topicId], references: [id])
+
+  @@unique([studentId, topicId])
+  @@map("student_performances")
+}
+
+enum LeaderboardPeriod {
+  WEEKLY
+  MONTHLY
+  ALL_TIME
+}
+
+model Leaderboard {
+  id           String            @id @default(uuid())
+  studentId    String            @map("student_id")
+  rank         Int
+  score        Float
+  period       LeaderboardPeriod
+  calculatedAt DateTime          @default(now()) @map("calculated_at")
+
+  student User @relation(fields: [studentId], references: [id])
+
+  @@index([period, rank])
+  @@index([studentId, period])
+  @@map("leaderboards")
+}
+
+// ==========================================
+// DOMAIN 6: ACTIVE RECALL (FLASHCARDS)
+// ==========================================
+
+model Flashcard {
+  id           String   @id @default(uuid())
+  studentId    String   @map("student_id")
+  questionId   String?  @map("question_id")
+  frontContent String   @map("front_content")
+  backContent  String   @map("back_content")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  student  User             @relation(fields: [studentId], references: [id])
+  question Question?        @relation(fields: [questionId], references: [id])
+  review   FlashcardReview?
+
+  @@index([studentId, createdAt])
+  @@map("flashcards")
+}
+
+model FlashcardReview {
+  flashcardId    String   @id @map("flashcard_id")
+  easeFactor     Decimal  @default(2.5) @map("ease_factor") @db.Decimal(5, 2)
+  intervalDays   Int      @default(0) @map("interval_days")
+  repetitions    Int      @default(0)
+  nextReviewDate DateTime @map("next_review_date")
+
+  flashcard Flashcard @relation(fields: [flashcardId], references: [id])
+
+  @@index([nextReviewDate])
+  @@map("flashcard_reviews")
+}
+
+// ==========================================
+// DOMAIN 7: SYSTEM, SOCIAL & PAYMENTS
+// ==========================================
+
+enum ForumStatus {
+  ACTIVE
+  FLAGGED
+  UNDER_REVIEW
+  REJECTED
+}
+
+model ForumPost {
+  id             String      @id @default(uuid())
+  authorId       String      @map("author_id")
+  targetAudience Role        @map("target_audience")
+  isAnonymous    Boolean     @default(false) @map("is_anonymous")
+  content        String
+  status         ForumStatus @default(ACTIVE)
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  author User @relation(fields: [authorId], references: [id])
+
+  @@map("forum_posts")
+}
+
+enum ResourceType {
+  PDF
+  WORD
+  VIDEO
+}
+
+model StudyResource {
+  id           String       @id @default(uuid())
+  title        String
+  resourceType ResourceType @map("resource_type")
+  url          String
+  topicId      String?      @map("topic_id")
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  topic Topic? @relation(fields: [topicId], references: [id])
+
+  @@map("study_resources")
+}
+
+model SystemSetting {
+  key   String @id
+  value String
+
+  @@map("system_settings")
+}
+
+model Banner {
+  id        String   @id @default(uuid())
+  imageUrl  String   @map("image_url")
+  targetUrl String?  @map("target_url")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("banners")
+}
+
+model Subscription {
+  id                   String   @id @default(uuid())
+  userId               String   @map("user_id")
+  stripeCustomerId     String   @map("stripe_customer_id")
+  stripeSubscriptionId String   @map("stripe_subscription_id")
+  status               String
+  currentPeriodEnd     DateTime @map("current_period_end")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("subscriptions")
+}
+
+// ==========================================
+// AUTH: TOKEN MANAGEMENT
+// ==========================================
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  jti       String
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([jti])
+  @@index([jti, userId])
+  @@map("refresh_tokens")
+}
