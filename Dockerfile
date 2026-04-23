@@ -8,6 +8,9 @@ RUN npm ci
 
 COPY . .
 RUN npx prisma generate
+
+# Increase memory limit for TypeScript compilation (needed for small VPS)
+ENV NODE_OPTIONS="--max-old-space-size=1536"
 RUN npm run build
 
 RUN npm prune --omit=dev
