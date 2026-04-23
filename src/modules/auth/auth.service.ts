@@ -104,6 +104,7 @@ export async function registerParentWithStudents(
               role: "STUDENT",
               gender: s.gender,
               yearLevel: s.yearLevel,
+              schoolName: s.schoolName,
             },
             select: { id: true, email: true, fullName: true },
           })
@@ -114,7 +115,6 @@ export async function registerParentWithStudents(
         data: students.map((s) => ({
           parentId: parent.id,
           studentId: s.id,
-          relationshipType: parentInput.relationshipType,
         })),
       });
 

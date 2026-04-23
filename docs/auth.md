@@ -32,7 +32,6 @@ Creates one parent and at least one student.
     "fullName": "Jane Doe",
     "email": "jane@example.com",
     "phoneNumber": "+61412345678",
-    "relationshipType": "MOTHER",
     "address": "123 Main Street, Truganina VIC 3029"
   },
   "students": [
@@ -40,7 +39,8 @@ Creates one parent and at least one student.
       "fullName": "Alex Doe",
       "email": "alex@example.com",
       "gender": "MALE",
-      "yearLevel": "Year 7"
+      "yearLevel": "Year 7",
+      "schoolName": "Melbourne High School"
     }
   ]
 }

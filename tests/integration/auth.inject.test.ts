@@ -59,7 +59,6 @@ describeIfIntegration("auth routes via app.inject", () => {
           fullName: "Jane Doe",
           email: ` ${parentEmail.toUpperCase()} `,
           phoneNumber: "+61412345678",
-          relationshipType: "MOTHER",
           address: "123 Main Street",
         },
         students: [
@@ -68,12 +67,14 @@ describeIfIntegration("auth routes via app.inject", () => {
             email: studentEmail,
             gender: "MALE",
             yearLevel: "Year 7",
+            schoolName: "Melbourne High School",
           },
           {
             fullName: "Sam Doe",
             email: secondStudentEmail,
             gender: "FEMALE",
             yearLevel: "Year 5",
+            schoolName: "Melbourne Girls School",
           },
         ],
       },
