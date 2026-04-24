@@ -21,12 +21,19 @@ describe("Fastify plugins", () => {
   it("purges expired tokens and clears cleanup timer on close", async () => {
     jest.useFakeTimers();
     const onCloseHooks: Array<() => void> = [];
-    const deleteMany = jest
+    const refreshDeleteMany = jest
       .fn()
       .mockResolvedValueOnce({ count: 2 })
       .mockResolvedValueOnce({ count: 0 });
+    const resetDeleteMany = jest
+      .fn()
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
     const fastify = {
-      prisma: { refreshToken: { deleteMany } },
+      prisma: {
+        refreshToken: { deleteMany: refreshDeleteMany },
+        passwordResetToken: { deleteMany: resetDeleteMany },
+      },
       log: { info: jest.fn() },
       addHook: jest.fn((_name: string, hook: () => void) => onCloseHooks.push(hook)),
     };
@@ -36,12 +43,19 @@ describe("Fastify plugins", () => {
     await jest.advanceTimersByTimeAsync(60 * 60 * 1000);
     onCloseHooks[0]!();
 
-    expect(deleteMany).toHaveBeenCalledWith({
+    expect(refreshDeleteMany).toHaveBeenCalledWith({
       where: { expiresAt: { lt: expect.any(Date) } },
+    });
+    expect(resetDeleteMany).toHaveBeenCalledWith({
+      where: { OR: [{ expiresAt: { lt: expect.any(Date) } }, { usedAt: { not: null } }] },
     });
     expect(fastify.log.info).toHaveBeenCalledWith(
       { count: 2 },
       "Purged expired refresh tokens"
+    );
+    expect(fastify.log.info).toHaveBeenCalledWith(
+      { count: 1 },
+      "Purged expired/used password reset tokens"
     );
   });
 
@@ -200,19 +214,23 @@ describe("Fastify plugins", () => {
     );
   });
 
-  it("registers security plugins with CORS and helmet", async () => {
+  it("registers security plugins with cookie, CORS, and helmet", async () => {
     const fastify = { register: jest.fn().mockResolvedValue(undefined) };
 
     await securityPlugin(fastify as never, undefined as never);
 
-    expect(fastify.register).toHaveBeenCalledTimes(2);
-    expect(fastify.register.mock.calls[0]![1]).toEqual({
+    expect(fastify.register).toHaveBeenCalledTimes(3);
+    // call[0] — fastifyCookie (no options)
+    expect(fastify.register.mock.calls[0]![1]).toBeUndefined();
+    // call[1] — fastifyCors
+    expect(fastify.register.mock.calls[1]![1]).toEqual({
       origin: expect.any(Array),
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       allowedHeaders: ["Content-Type", "Authorization"],
       credentials: true,
     });
-    expect(fastify.register.mock.calls[1]![1]).toBeUndefined();
+    // call[2] — fastifyHelmet (no options)
+    expect(fastify.register.mock.calls[2]![1]).toBeUndefined();
   });
 
   it("adds trace id response headers", async () => {

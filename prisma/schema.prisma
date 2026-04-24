@@ -57,7 +57,8 @@ model User {
   flashcards        Flashcard[]
   posts             ForumPost[]
   subscriptions     Subscription[]
-  refreshTokens     RefreshToken[]
+  refreshTokens        RefreshToken[]
+  passwordResetTokens  PasswordResetToken[]
 
   @@map("users")
 }
@@ -175,6 +176,8 @@ model Exam {
   durationMinutes Int         @map("duration_minutes")
   gradingType     GradingType @map("grading_type")
   createdBy       String      @map("created_by")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
 
   creator   User           @relation("AdminExams", fields: [createdBy], references: [id])
   questions ExamQuestion[]
@@ -462,6 +465,7 @@ model Subscription {
 
   user User @relation(fields: [userId], references: [id])
 
+  @@index([userId])
   @@map("subscriptions")
 }
 
@@ -484,4 +488,18 @@ model RefreshToken {
   @@index([jti])
   @@index([jti, userId])
   @@map("refresh_tokens")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }

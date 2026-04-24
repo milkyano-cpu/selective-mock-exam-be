@@ -99,62 +99,100 @@ describeIfIntegration("auth routes via app.inject", () => {
       emailMocks.sendParentWelcomeEmail.mock.calls[0]?.[0].password;
     expect(parentPassword).toEqual(expect.any(String));
 
+    // First login — returns httpOnly cookies, no tokens in body
     const firstLogin = await app.inject({
       method: "POST",
       url: "/api/v1/auth/login",
       payload: { email: parentEmail, password: parentPassword },
     });
-    const firstBody = firstLogin.json();
     expect(firstLogin.statusCode).toBe(200);
 
+    const firstBody = firstLogin.json();
+    expect(firstBody.data).not.toHaveProperty("accessToken");
+    expect(firstBody.data).not.toHaveProperty("refreshToken");
+
+    const firstAccessCookie = firstLogin.cookies.find((c) => c.name === "access_token");
+    const firstRefreshCookie = firstLogin.cookies.find((c) => c.name === "refresh_token");
+    expect(firstAccessCookie).toMatchObject({ httpOnly: true, sameSite: "Lax", path: "/" });
+    expect(firstRefreshCookie).toMatchObject({
+      httpOnly: true,
+      sameSite: "Lax",
+      path: "/api/v1/auth/refresh",
+    });
+
+    // Second login — invalidates first session
     const secondLogin = await app.inject({
       method: "POST",
       url: "/api/v1/auth/login",
       payload: { email: parentEmail, password: parentPassword },
     });
-    const secondBody = secondLogin.json();
     expect(secondLogin.statusCode).toBe(200);
 
+    const secondAccessCookie = secondLogin.cookies.find((c) => c.name === "access_token");
+    const secondRefreshCookie = secondLogin.cookies.find((c) => c.name === "refresh_token");
+    expect(secondAccessCookie).toBeDefined();
+    expect(secondRefreshCookie).toBeDefined();
+
+    // Old session cookie should now be rejected (DB session revoked)
     const oldSessionProfile = await app.inject({
       method: "GET",
       url: "/api/v1/users/me",
-      headers: { authorization: `Bearer ${firstBody.data.accessToken}` },
+      cookies: { access_token: firstAccessCookie!.value },
     });
     expect(oldSessionProfile.statusCode).toBe(401);
 
+    // New session cookie should work
     const activeProfile = await app.inject({
       method: "GET",
       url: "/api/v1/users/me",
-      headers: { authorization: `Bearer ${secondBody.data.accessToken}` },
+      cookies: { access_token: secondAccessCookie!.value },
     });
     expect(activeProfile.statusCode).toBe(200);
 
-    const refresh = await app.inject({
+    // Refresh using refresh_token cookie
+    const refreshResponse = await app.inject({
       method: "POST",
       url: "/api/v1/auth/refresh",
-      payload: { refreshToken: secondBody.data.refreshToken },
+      cookies: { refresh_token: secondRefreshCookie!.value },
     });
-    const refreshBody = refresh.json();
-    expect(refresh.statusCode).toBe(200);
+    expect(refreshResponse.statusCode).toBe(200);
 
+    const refreshBody = refreshResponse.json();
+    expect(refreshBody.data).not.toHaveProperty("accessToken");
+    expect(refreshBody.data).not.toHaveProperty("refreshToken");
+
+    const newAccessCookie = refreshResponse.cookies.find((c) => c.name === "access_token");
+    const newRefreshCookie = refreshResponse.cookies.find((c) => c.name === "refresh_token");
+    expect(newAccessCookie).toBeDefined();
+    expect(newRefreshCookie).toBeDefined();
+
+    // Reuse of old refresh token must be rejected
     const reusedRefresh = await app.inject({
       method: "POST",
       url: "/api/v1/auth/refresh",
-      payload: { refreshToken: secondBody.data.refreshToken },
+      cookies: { refresh_token: secondRefreshCookie!.value },
     });
     expect(reusedRefresh.statusCode).toBe(401);
 
+    // Logout using new access token cookie
     const logout = await app.inject({
       method: "POST",
       url: "/api/v1/auth/logout",
-      headers: { authorization: `Bearer ${refreshBody.data.accessToken}` },
+      cookies: { access_token: newAccessCookie!.value },
     });
     expect(logout.statusCode).toBe(200);
 
+    // Verify both cookies are cleared in the logout response
+    const clearedAccessCookie = logout.cookies.find((c) => c.name === "access_token");
+    const clearedRefreshCookie = logout.cookies.find((c) => c.name === "refresh_token");
+    expect(clearedAccessCookie?.value).toBe("");
+    expect(clearedRefreshCookie?.value).toBe("");
+
+    // After logout, the access token is revoked in DB — should return 401
     const loggedOutProfile = await app.inject({
       method: "GET",
       url: "/api/v1/users/me",
-      headers: { authorization: `Bearer ${refreshBody.data.accessToken}` },
+      cookies: { access_token: newAccessCookie!.value },
     });
     expect(loggedOutProfile.statusCode).toBe(401);
   });

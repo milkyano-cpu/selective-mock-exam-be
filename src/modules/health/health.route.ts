@@ -5,7 +5,10 @@ import { healthCheck } from "./health.controller.js";
 export async function healthRoutes(fastify: FastifyInstance) {
   fastify.get("/health", {
     schema: {
-      response: { 200: healthRef("healthResponseSchema") },
+      response: {
+        200: healthRef("healthResponseSchema"),
+        503: healthRef("healthDegradedResponseSchema"),
+      },
     },
     handler: healthCheck,
   });

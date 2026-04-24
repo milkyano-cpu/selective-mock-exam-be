@@ -80,22 +80,14 @@ const loginResponseSchema = z.object({
       role: z.string(),
       status: z.string(),
     }),
-    accessToken: z.string(),
-    refreshToken: z.string(),
     expiresIn: z.string(),
   }),
-});
-
-const refreshBodySchema = z.object({
-  refreshToken: z.string({ error: "Refresh token is required" }),
 });
 
 const refreshResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
   data: z.object({
-    accessToken: z.string(),
-    refreshToken: z.string(),
     expiresIn: z.string(),
   }),
 });
@@ -121,19 +113,63 @@ const changePasswordResponseSchema = z.object({
   message: z.string(),
 });
 
+const forgotPasswordBodySchema = z.object({
+  email: z
+    .string({ error: "Email is required" })
+    .email("Invalid email address"),
+});
+
+const forgotPasswordResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+});
+
+const resetPasswordBodySchema = z.object({
+  token: z
+    .string({ error: "Token is required" })
+    .length(64, "Invalid reset token"),
+  newPassword: z
+    .string({ error: "New password is required" })
+    .min(8, "Password must be at least 8 characters")
+    .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
+    .regex(/[a-z]/, "Password must contain at least one lowercase letter")
+    .regex(/[0-9]/, "Password must contain at least one number")
+    .regex(/[^A-Za-z0-9]/, "Password must contain at least one special character"),
+});
+
+const resetPasswordResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+});
+
+const validateResetTokenQuerySchema = z.object({
+  token: z.string({ error: "Token is required" }),
+});
+
+const validateResetTokenResponseSchema = z.object({
+  success: z.boolean(),
+  data: z.object({ valid: z.boolean() }),
+});
+
 export type RegisterInput = z.infer<typeof registerBodySchema>;
 export type LoginInput = z.infer<typeof loginBodySchema>;
-export type RefreshInput = z.infer<typeof refreshBodySchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordBodySchema>;
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordBodySchema>;
+export type ResetPasswordInput = z.infer<typeof resetPasswordBodySchema>;
 
 export const { schemas: authSchemas, $ref: authRef } = buildJsonSchemas({
   registerBodySchema,
   registerResponseSchema,
   loginBodySchema,
   loginResponseSchema,
-  refreshBodySchema,
   refreshResponseSchema,
   logoutResponseSchema,
   changePasswordBodySchema,
   changePasswordResponseSchema,
+  forgotPasswordBodySchema,
+  forgotPasswordResponseSchema,
+  resetPasswordBodySchema,
+  resetPasswordResponseSchema,
+  validateResetTokenQuerySchema,
+  validateResetTokenResponseSchema,
 });

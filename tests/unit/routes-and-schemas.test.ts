@@ -5,6 +5,8 @@ import { healthRoutes } from "../../src/modules/health/health.route.js";
 import { healthRef, healthSchemas } from "../../src/modules/health/health.schema.js";
 import { usersRoutes } from "../../src/modules/users/users.route.js";
 import { userRef, userSchemas } from "../../src/modules/users/users.schema.js";
+import { adminRoutes } from "../../src/modules/admin/admin.route.js";
+import { adminRef, adminSchemas } from "../../src/modules/admin/admin.schema.js";
 
 function fakeFastify() {
   return {
@@ -21,17 +23,25 @@ describe("routes and schemas", () => {
       "registerResponseSchema",
       "loginBodySchema",
       "loginResponseSchema",
-      "refreshBodySchema",
       "refreshResponseSchema",
       "logoutResponseSchema",
       "changePasswordBodySchema",
       "changePasswordResponseSchema",
+      "forgotPasswordBodySchema",
+      "forgotPasswordResponseSchema",
+      "resetPasswordBodySchema",
+      "resetPasswordResponseSchema",
+      "validateResetTokenQuerySchema",
+      "validateResetTokenResponseSchema",
     ]);
     expect(authRef("loginBodySchema")).toEqual({ $ref: "loginBodySchema#" });
   });
 
   it("exports health JSON schemas and refs", () => {
-    expect(healthSchemas.map((schema) => schema.$id)).toEqual(["healthResponseSchema"]);
+    expect(healthSchemas.map((schema) => schema.$id)).toEqual([
+      "healthResponseSchema",
+      "healthDegradedResponseSchema",
+    ]);
     expect(healthRef("healthResponseSchema")).toEqual({ $ref: "healthResponseSchema#" });
   });
 
@@ -48,7 +58,8 @@ describe("routes and schemas", () => {
 
     await authRoutes(fastify as never);
 
-    expect(fastify.post).toHaveBeenCalledTimes(5);
+    expect(fastify.post).toHaveBeenCalledTimes(7);
+    expect(fastify.get).toHaveBeenCalledTimes(1);
     expect(fastify.post).toHaveBeenNthCalledWith(
       1,
       "/register",
@@ -72,7 +83,9 @@ describe("routes and schemas", () => {
       "/refresh",
       expect.objectContaining({
         config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
-        schema: expect.objectContaining({ body: { $ref: "refreshBodySchema#" } }),
+        schema: expect.objectContaining({
+          response: { 200: { $ref: "refreshResponseSchema#" } },
+        }),
         handler: expect.any(Function),
       })
     );
@@ -86,6 +99,33 @@ describe("routes and schemas", () => {
     );
     expect(fastify.post).toHaveBeenNthCalledWith(
       5,
+      "/forgot-password",
+      expect.objectContaining({
+        config: { rateLimit: { max: 5, timeWindow: "15 minutes" } },
+        schema: expect.objectContaining({ body: { $ref: "forgotPasswordBodySchema#" } }),
+        handler: expect.any(Function),
+      })
+    );
+    expect(fastify.get).toHaveBeenNthCalledWith(
+      1,
+      "/validate-reset-token",
+      expect.objectContaining({
+        config: { rateLimit: { max: 30, timeWindow: "15 minutes" } },
+        schema: expect.objectContaining({ querystring: { $ref: "validateResetTokenQuerySchema#" } }),
+        handler: expect.any(Function),
+      })
+    );
+    expect(fastify.post).toHaveBeenNthCalledWith(
+      6,
+      "/reset-password",
+      expect.objectContaining({
+        config: { rateLimit: { max: 10, timeWindow: "15 minutes" } },
+        schema: expect.objectContaining({ body: { $ref: "resetPasswordBodySchema#" } }),
+        handler: expect.any(Function),
+      })
+    );
+    expect(fastify.post).toHaveBeenNthCalledWith(
+      7,
       "/change-password",
       expect.objectContaining({
         config: { rateLimit: { max: 10, timeWindow: "15 minutes" } },
@@ -103,7 +143,12 @@ describe("routes and schemas", () => {
     expect(fastify.get).toHaveBeenCalledWith(
       "/health",
       expect.objectContaining({
-        schema: { response: { 200: { $ref: "healthResponseSchema#" } } },
+        schema: {
+          response: {
+            200: { $ref: "healthResponseSchema#" },
+            503: { $ref: "healthDegradedResponseSchema#" },
+          },
+        },
         handler: expect.any(Function),
       })
     );
@@ -124,6 +169,38 @@ describe("routes and schemas", () => {
           },
         },
         preHandler: [fastify.authenticate],
+        handler: expect.any(Function),
+      })
+    );
+  });
+
+  it("exports admin JSON schemas and refs", () => {
+    expect(adminSchemas.map((schema) => schema.$id)).toEqual([
+      "createStaffBodySchema",
+      "createStaffResponseSchema",
+      "forbiddenResponseSchema",
+    ]);
+    expect(adminRef("createStaffBodySchema")).toEqual({ $ref: "createStaffBodySchema#" });
+  });
+
+  it("registers admin routes with auth and role guards", async () => {
+    const fastify = fakeFastify();
+
+    await adminRoutes(fastify as never);
+
+    expect(fastify.post).toHaveBeenCalledTimes(1);
+    expect(fastify.post).toHaveBeenCalledWith(
+      "/users",
+      expect.objectContaining({
+        config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+        schema: expect.objectContaining({
+          body: { $ref: "createStaffBodySchema#" },
+          response: {
+            201: { $ref: "createStaffResponseSchema#" },
+            403: { $ref: "forbiddenResponseSchema#" },
+          },
+        }),
+        preHandler: [fastify.authenticate, expect.any(Function)],
         handler: expect.any(Function),
       })
     );

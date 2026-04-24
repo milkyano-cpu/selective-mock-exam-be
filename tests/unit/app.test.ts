@@ -20,6 +20,7 @@ const pluginMocks = {
   healthRoutes: jest.fn(),
   authRoutes: jest.fn(),
   usersRoutes: jest.fn(),
+  adminRoutes: jest.fn(),
 };
 
 const mappedError = Object.assign(new Error("Mapped conflict"), { statusCode: 409 });
@@ -47,6 +48,9 @@ jest.unstable_mockModule("../../src/modules/auth/auth.route.js", () => ({
 jest.unstable_mockModule("../../src/modules/users/users.route.js", () => ({
   usersRoutes: pluginMocks.usersRoutes,
 }));
+jest.unstable_mockModule("../../src/modules/admin/admin.route.js", () => ({
+  adminRoutes: pluginMocks.adminRoutes,
+}));
 jest.unstable_mockModule("../../src/modules/auth/auth.schema.js", () => ({
   authSchemas: [{ $id: "auth" }],
 }));
@@ -54,7 +58,10 @@ jest.unstable_mockModule("../../src/modules/users/users.schema.js", () => ({
   userSchemas: [{ $id: "user" }],
 }));
 jest.unstable_mockModule("../../src/modules/health/health.schema.js", () => ({
-  healthSchemas: [{ $id: "health" }],
+  healthSchemas: [{ $id: "health" }, { $id: "healthDegraded" }],
+}));
+jest.unstable_mockModule("../../src/modules/admin/admin.schema.js", () => ({
+  adminSchemas: [{ $id: "admin" }],
 }));
 
 const { buildApp } = await import("../../src/app.js");
@@ -86,12 +93,13 @@ describe("app builder", () => {
     expect(options.trustProxy).toBe(true);
     expect(options.genReqId({ headers: { "x-trace-id": "trace-1" } })).toBe("trace-1");
     expect(options.genReqId({ headers: {} })).toEqual(expect.any(String));
-    expect(fakeApp.addSchema).toHaveBeenCalledTimes(3);
+    expect(fakeApp.addSchema).toHaveBeenCalledTimes(5);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.securityPlugin);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.cleanupPlugin);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.healthRoutes);
     expect(pluginMocks.authRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/auth" });
     expect(pluginMocks.usersRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/users" });
+    expect(pluginMocks.adminRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/admin" });
     expect(fakeApp.setErrorHandler).toHaveBeenCalledWith(expect.any(Function));
     expect(fakeApp.setNotFoundHandler).toHaveBeenCalledWith(expect.any(Function));
   });

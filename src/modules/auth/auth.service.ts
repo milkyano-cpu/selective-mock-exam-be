@@ -283,6 +283,93 @@ export async function invalidateOtherSessions(
   });
 }
 
+export async function createPasswordResetToken(
+  prisma: PrismaClient,
+  email: string,
+  expiresIn: string
+): Promise<{ token: string; fullName: string } | null> {
+  const user = await prisma.user.findUnique({
+    where: { email: normalizeEmail(email) },
+    select: { id: true, fullName: true, status: true },
+  });
+
+  // Return null silently — caller always responds 200 regardless
+  if (!user || user.status !== "ACTIVE") return null;
+
+  // Invalidate any existing unused tokens before creating a new one
+  await prisma.passwordResetToken.updateMany({
+    where: { userId: user.id, usedAt: null, expiresAt: { gt: new Date() } },
+    data: { usedAt: new Date() },
+  });
+
+  const token = randomBytes(32).toString("hex");
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+
+  await prisma.passwordResetToken.create({
+    data: { userId: user.id, tokenHash, expiresAt: expiryToDate(expiresIn) },
+  });
+
+  return { token, fullName: user.fullName };
+}
+
+export async function validatePasswordResetToken(
+  prisma: PrismaClient,
+  token: string
+): Promise<boolean> {
+  if (token.length !== 64) return false;
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const record = await prisma.passwordResetToken.findUnique({
+    where: { tokenHash },
+    include: { user: { select: { status: true } } },
+  });
+  return !!(
+    record &&
+    record.usedAt === null &&
+    record.expiresAt > new Date() &&
+    record.user.status === "ACTIVE"
+  );
+}
+
+export async function consumePasswordResetToken(
+  prisma: PrismaClient,
+  token: string,
+  newPassword: string
+): Promise<void> {
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const now = new Date();
+
+  const record = await prisma.passwordResetToken.findUnique({
+    where: { tokenHash },
+    include: { user: { select: { id: true, status: true } } },
+  });
+
+  if (
+    !record ||
+    record.usedAt !== null ||
+    record.expiresAt <= now ||
+    record.user.status !== "ACTIVE"
+  ) {
+    throw createHttpError(400, "Invalid or expired password reset link.");
+  }
+
+  const newHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+
+  await prisma.$transaction([
+    prisma.passwordResetToken.update({
+      where: { id: record.id },
+      data: { usedAt: now },
+    }),
+    prisma.user.update({
+      where: { id: record.user.id },
+      data: { passwordHash: newHash },
+    }),
+    prisma.refreshToken.updateMany({
+      where: { userId: record.user.id, revokedAt: null },
+      data: { revokedAt: now },
+    }),
+  ]);
+}
+
 export async function changeUserPassword(
   prisma: PrismaClient,
   userId: string,

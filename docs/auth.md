@@ -15,7 +15,7 @@ Every session is represented by one row in `refresh_tokens`. The access-token `j
 
 - Self-registration is only for parents.
 - A parent registration creates the parent account and one or more student accounts in one DB transaction.
-- Tutor and admin accounts are not self-registered; they must be created by admin tooling.
+- Tutor and admin accounts are not self-registered; they must be created by admin tooling — see [admin-accounts.md](./admin-accounts.md) for the seed script and the `POST /api/v1/admin/users` endpoint.
 - Email addresses are normalized with `trim().toLowerCase()` before create/login lookup.
 - Single-device login is intentional: a successful login revokes the user's previous active sessions.
 - v1 onboarding intentionally sends auto-generated passwords by email. This is an accepted v1 risk; production should move to invite/set-password links when that product decision changes.
