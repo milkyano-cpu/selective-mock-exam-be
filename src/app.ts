@@ -17,11 +17,13 @@ import cleanupPlugin from "./plugins/cleanup.plugin.js";
 import { healthRoutes } from "./modules/health/health.route.js";
 import { authRoutes } from "./modules/auth/auth.route.js";
 import { usersRoutes } from "./modules/users/users.route.js";
+import { adminRoutes } from "./modules/admin/admin.route.js";
 
 // Schemas
 import { authSchemas } from "./modules/auth/auth.schema.js";
 import { userSchemas } from "./modules/users/users.schema.js";
 import { healthSchemas } from "./modules/health/health.schema.js";
+import { adminSchemas } from "./modules/admin/admin.schema.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -41,7 +43,12 @@ export async function buildApp() {
   await app.register(cleanupPlugin);    // Expired token cleanup
 
   // ─── Register JSON Schemas (must be before routes) ───────────────
-  for (const schema of [...authSchemas, ...userSchemas, ...healthSchemas]) {
+  for (const schema of [
+    ...authSchemas,
+    ...userSchemas,
+    ...healthSchemas,
+    ...adminSchemas,
+  ]) {
     app.addSchema(schema);
   }
 
@@ -54,6 +61,7 @@ export async function buildApp() {
     async (api) => {
       await api.register(authRoutes, { prefix: "/auth" });
       await api.register(usersRoutes, { prefix: "/users" });
+      await api.register(adminRoutes, { prefix: "/admin" });
     },
     { prefix: env.API_PREFIX }
   );

@@ -28,6 +28,8 @@ const envSchema = z.object({
     .min(1, "RESEND_API_KEY cannot be empty"),
   EMAIL_FROM: z.string({ error: "EMAIL_FROM is required" }).min(1),
   APP_LOGIN_URL: z.string().url().default("http://localhost:3000/login"),
+  APP_URL: z.string().url().default("http://localhost:3000"),
+  PASSWORD_RESET_EXPIRES_IN: z.string().default("1h"),
 
   // CORS
   CORS_ORIGIN: z.string().default("http://localhost:3000"),
