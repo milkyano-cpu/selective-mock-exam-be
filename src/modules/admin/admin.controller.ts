@@ -50,14 +50,15 @@ export async function createStaff(
 
   const message = emailSent
     ? `${user.role} account created and credentials emailed`
-    : `${user.role} account created but email delivery failed — share credentials manually`;
+    : passwordGenerated
+      ? `${user.role} account created but welcome email delivery failed`
+      : `${user.role} account created but email delivery failed — share credentials manually`;
 
   return reply.status(201).send({
     success: true,
     message,
     data: {
       user,
-      generatedPassword: passwordGenerated ? password : null,
       emailSent,
     },
   });

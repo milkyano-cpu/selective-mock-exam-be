@@ -545,7 +545,6 @@ describe("controllers", () => {
           role: "TUTOR",
           status: "ACTIVE",
         },
-        generatedPassword: "GeneratedPass1!",
         emailSent: true,
       },
     });
@@ -579,7 +578,7 @@ describe("controllers", () => {
     expect(reply.status).toHaveBeenCalledWith(201);
     expect(reply.send).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: "TUTOR account created but email delivery failed \u2014 share credentials manually",
+        message: "TUTOR account created but welcome email delivery failed",
         data: expect.objectContaining({ emailSent: false }),
       })
     );

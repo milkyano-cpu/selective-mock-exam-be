@@ -34,8 +34,6 @@ const createStaffResponseSchema = z.object({
       role: z.string(),
       status: z.string(),
     }),
-    // Present only when we auto-generated the password — null if admin supplied one.
-    generatedPassword: z.string().nullable(),
     emailSent: z.boolean(),
   }),
 });
