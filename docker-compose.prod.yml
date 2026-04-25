@@ -1,0 +1,37 @@
+name: aspire-backend-prod
+
+services:
+  api:
+    container_name: aspire-backend-api-prod
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    restart: unless-stopped
+    expose:
+      - "3001"
+    env_file:
+      - .env_prod
+    environment:
+      REDIS_URL: redis://aspire-backend-redis:6379/2
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      backend-shared:
+        aliases:
+          - prod-api
+
+networks:
+  backend-shared:
+    external: true
+    name: aspire-backend-shared

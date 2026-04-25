@@ -24,6 +24,7 @@ WORKDIR /app
 
 COPY package*.json ./
 RUN npm ci
+COPY . .
 
 ENV NODE_ENV=development
 EXPOSE 3001

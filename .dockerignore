@@ -3,6 +3,8 @@ dist
 npm-debug.log
 .git
 .env
+.env_dev
+.env_prod
 .env.*
 !.env.example
 !.env.dev

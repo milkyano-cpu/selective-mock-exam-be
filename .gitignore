@@ -3,6 +3,9 @@ dist
 coverage
 # Keep environment variables out of version control
 .env
+.env.example
+!.env_dev
+!.env_prod
 
 /generated/prisma
 
