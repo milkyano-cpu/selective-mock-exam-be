@@ -31,6 +31,17 @@ const envSchema = z.object({
   APP_URL: z.string().url().default("http://localhost:3000"),
   PASSWORD_RESET_EXPIRES_IN: z.string().default("1h"),
 
+  // Object Storage (MinIO / S3)
+  S3_ENDPOINT: z.string().url({ error: "S3_ENDPOINT must be a valid URL" }),
+  S3_ACCESS_KEY: z.string({ error: "S3_ACCESS_KEY is required" }).min(1),
+  S3_SECRET_KEY: z.string({ error: "S3_SECRET_KEY is required" }).min(1),
+  S3_REGION: z.string().default("us-east-1"),
+  S3_PROFILE_PHOTO_BUCKET: z
+    .string({ error: "S3_PROFILE_PHOTO_BUCKET is required" })
+    .min(1),
+  S3_SIGNED_URL_EXPIRES_IN_SECONDS: z.coerce.number().int().min(60).default(3600),
+  PROFILE_PHOTO_MAX_SIZE_BYTES: z.coerce.number().int().min(1).default(5 * 1024 * 1024),
+
   // CORS
   CORS_ORIGIN: z.string().default("http://localhost:3000"),
 
@@ -41,8 +52,28 @@ const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
+const TEST_ENV_DEFAULTS = {
+  DATABASE_URL: "postgresql://test:test@localhost:5432/aspire_test",
+  REDIS_URL: "redis://localhost:6379",
+  JWT_SECRET: "test-jwt-secret-with-at-least-32-chars",
+  RESEND_API_KEY: "re_test_key",
+  EMAIL_FROM: "Aspire <test@example.com>",
+  S3_ENDPOINT: "http://localhost:9000",
+  S3_ACCESS_KEY: "test-access-key",
+  S3_SECRET_KEY: "test-secret-key",
+  S3_PROFILE_PHOTO_BUCKET: "test-profile-photos",
+} as const;
+
 function parseEnv(): Env {
-  const result = envSchema.safeParse(process.env);
+  const rawEnv =
+    process.env["NODE_ENV"] === "test"
+      ? {
+          ...TEST_ENV_DEFAULTS,
+          ...process.env,
+        }
+      : process.env;
+
+  const result = envSchema.safeParse(rawEnv);
 
   if (!result.success) {
     console.error("❌ Invalid environment variables:");

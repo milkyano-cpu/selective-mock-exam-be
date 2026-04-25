@@ -1,7 +1,7 @@
 import { Queue } from "bullmq";
 import type { Redis } from "ioredis";
 
-export type QueueName = "grading" | "analytics" | "ai-feedback" | "leaderboard";
+export type QueueName = "grading" | "analytics" | "ai-feedback" | "leaderboard" | "storage-cleanup";
 
 const queues = new Map<QueueName, Queue>();
 

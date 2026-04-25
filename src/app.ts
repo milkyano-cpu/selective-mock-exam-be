@@ -11,6 +11,8 @@ import securityPlugin from "./plugins/security.plugin.js";
 import tracePlugin from "./plugins/trace.plugin.js";
 import redisPlugin from "./plugins/redis.plugin.js";
 import rateLimitPlugin from "./plugins/rate-limit.plugin.js";
+import storagePlugin from "./plugins/storage.plugin.js";
+import profilePhotoCleanupPlugin from "./plugins/profile-photo-cleanup.plugin.js";
 import cleanupPlugin from "./plugins/cleanup.plugin.js";
 
 // Routes
@@ -40,6 +42,8 @@ export async function buildApp() {
   await app.register(rateLimitPlugin);  // Rate limit (global: false, per-route opt-in)
   await app.register(prismaPlugin);     // Database
   await app.register(jwtPlugin);        // JWT
+  await app.register(storagePlugin);    // Multipart + object storage
+  await app.register(profilePhotoCleanupPlugin);
   await app.register(cleanupPlugin);    // Expired token cleanup
 
   // ─── Register JSON Schemas (must be before routes) ───────────────

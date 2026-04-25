@@ -16,6 +16,8 @@ const pluginMocks = {
   tracePlugin: jest.fn(),
   redisPlugin: jest.fn(),
   rateLimitPlugin: jest.fn(),
+  storagePlugin: jest.fn(),
+  profilePhotoCleanupPlugin: jest.fn(),
   cleanupPlugin: jest.fn(),
   healthRoutes: jest.fn(),
   authRoutes: jest.fn(),
@@ -38,6 +40,10 @@ jest.unstable_mockModule("../../src/plugins/security.plugin.js", () => ({ defaul
 jest.unstable_mockModule("../../src/plugins/trace.plugin.js", () => ({ default: pluginMocks.tracePlugin }));
 jest.unstable_mockModule("../../src/plugins/redis.plugin.js", () => ({ default: pluginMocks.redisPlugin }));
 jest.unstable_mockModule("../../src/plugins/rate-limit.plugin.js", () => ({ default: pluginMocks.rateLimitPlugin }));
+jest.unstable_mockModule("../../src/plugins/storage.plugin.js", () => ({ default: pluginMocks.storagePlugin }));
+jest.unstable_mockModule("../../src/plugins/profile-photo-cleanup.plugin.js", () => ({
+  default: pluginMocks.profilePhotoCleanupPlugin,
+}));
 jest.unstable_mockModule("../../src/plugins/cleanup.plugin.js", () => ({ default: pluginMocks.cleanupPlugin }));
 jest.unstable_mockModule("../../src/modules/health/health.route.js", () => ({
   healthRoutes: pluginMocks.healthRoutes,
@@ -86,7 +92,12 @@ describe("app builder", () => {
 
   it("builds Fastify with plugins, schemas, routes, and request IDs", async () => {
     const app = await buildApp();
-    const options = Fastify.mock.calls[0]![0];
+    const fastifyOptionsCall = (Fastify as unknown as { mock: { calls: unknown[][] } }).mock.calls[0];
+    const options = fastifyOptionsCall?.[0] as unknown as {
+      requestIdLogLabel: string;
+      trustProxy: boolean;
+      genReqId: (request: { headers: Record<string, string> }) => string;
+    };
 
     expect(app).toBe(fakeApp);
     expect(options.requestIdLogLabel).toBe("traceId");
@@ -95,6 +106,8 @@ describe("app builder", () => {
     expect(options.genReqId({ headers: {} })).toEqual(expect.any(String));
     expect(fakeApp.addSchema).toHaveBeenCalledTimes(5);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.securityPlugin);
+    expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.storagePlugin);
+    expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.profilePhotoCleanupPlugin);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.cleanupPlugin);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.healthRoutes);
     expect(pluginMocks.authRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/auth" });
@@ -106,7 +119,11 @@ describe("app builder", () => {
 
   it("formats client errors", async () => {
     await buildApp();
-    const handler = fakeApp.setErrorHandler.mock.calls[0]![0];
+    const handler = fakeApp.setErrorHandler.mock.calls[0]?.[0] as (
+      error: Error & { statusCode?: number },
+      request: unknown,
+      reply: ReturnType<typeof mockReply>
+    ) => void;
     const reply = mockReply();
 
     handler(Object.assign(new Error("Bad request"), { statusCode: 400 }), {}, reply);
@@ -123,7 +140,11 @@ describe("app builder", () => {
   it("formats mapped Prisma errors", async () => {
     mapPrismaError.mockReturnValue(mappedError);
     await buildApp();
-    const handler = fakeApp.setErrorHandler.mock.calls[0]![0];
+    const handler = fakeApp.setErrorHandler.mock.calls[0]?.[0] as (
+      error: Error & { statusCode?: number },
+      request: unknown,
+      reply: ReturnType<typeof mockReply>
+    ) => void;
     const reply = mockReply();
 
     handler(new Error("Raw Prisma"), {}, reply);
@@ -138,7 +159,11 @@ describe("app builder", () => {
 
   it("formats server errors without leaking messages", async () => {
     await buildApp();
-    const handler = fakeApp.setErrorHandler.mock.calls[0]![0];
+    const handler = fakeApp.setErrorHandler.mock.calls[0]?.[0] as (
+      error: Error & { statusCode?: number },
+      request: unknown,
+      reply: ReturnType<typeof mockReply>
+    ) => void;
     const reply = mockReply();
     const error = new Error("Database password leaked");
 
@@ -155,7 +180,10 @@ describe("app builder", () => {
 
   it("formats not found responses", async () => {
     await buildApp();
-    const handler = fakeApp.setNotFoundHandler.mock.calls[0]![0];
+    const handler = fakeApp.setNotFoundHandler.mock.calls[0]?.[0] as (
+      request: unknown,
+      reply: ReturnType<typeof mockReply>
+    ) => void;
     const reply = mockReply();
 
     handler({}, reply);

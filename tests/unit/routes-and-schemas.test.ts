@@ -13,6 +13,9 @@ function fakeFastify() {
     authenticate: jest.fn(),
     post: jest.fn(),
     get: jest.fn(),
+    put: jest.fn(),
+    patch: jest.fn(),
+    delete: jest.fn(),
   };
 }
 
@@ -48,7 +51,10 @@ describe("routes and schemas", () => {
   it("exports user JSON schemas and refs", () => {
     expect(userSchemas.map((schema) => schema.$id)).toEqual([
       "getMeResponseSchema",
-      "unauthorizedResponseSchema",
+      "userUnauthorizedResponseSchema",
+      "getMyProfilePhotoResponseSchema",
+      "uploadMyProfilePhotoResponseSchema",
+      "userNotFoundResponseSchema",
     ]);
     expect(userRef("getMeResponseSchema")).toEqual({ $ref: "getMeResponseSchema#" });
   });
@@ -159,15 +165,52 @@ describe("routes and schemas", () => {
 
     await usersRoutes(fastify as never);
 
-    expect(fastify.get).toHaveBeenCalledWith(
+    expect(fastify.get).toHaveBeenCalledTimes(2);
+    expect(fastify.post).toHaveBeenCalledTimes(1);
+
+    expect(fastify.get).toHaveBeenNthCalledWith(
+      1,
       "/me",
       expect.objectContaining({
         schema: {
           response: {
             200: { $ref: "getMeResponseSchema#" },
-            401: { $ref: "unauthorizedResponseSchema#" },
+            401: { $ref: "userUnauthorizedResponseSchema#" },
           },
         },
+        preHandler: [fastify.authenticate],
+        handler: expect.any(Function),
+      })
+    );
+
+    expect(fastify.get).toHaveBeenNthCalledWith(
+      2,
+      "/me/profile-photo",
+      expect.objectContaining({
+        schema: {
+          response: {
+            200: { $ref: "getMyProfilePhotoResponseSchema#" },
+            401: { $ref: "userUnauthorizedResponseSchema#" },
+            404: { $ref: "userNotFoundResponseSchema#" },
+          },
+        },
+        preHandler: [fastify.authenticate],
+        handler: expect.any(Function),
+      })
+    );
+
+    expect(fastify.post).toHaveBeenNthCalledWith(
+      1,
+      "/me/profile-photo",
+      expect.objectContaining({
+        config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+        schema: expect.objectContaining({
+          consumes: ["multipart/form-data"],
+          response: {
+            200: { $ref: "uploadMyProfilePhotoResponseSchema#" },
+            401: { $ref: "userUnauthorizedResponseSchema#" },
+          },
+        }),
         preHandler: [fastify.authenticate],
         handler: expect.any(Function),
       })
@@ -179,6 +222,16 @@ describe("routes and schemas", () => {
       "createStaffBodySchema",
       "createStaffResponseSchema",
       "forbiddenResponseSchema",
+      "tutorParamsSchema",
+      "listTutorsQuerySchema",
+      "listTutorsResponseSchema",
+      "getTutorResponseSchema",
+      "updateTutorBodySchema",
+      "updateTutorResponseSchema",
+      "updateTutorStatusBodySchema",
+      "updateTutorStatusResponseSchema",
+      "deleteTutorResponseSchema",
+      "notFoundResponseSchema",
     ]);
     expect(adminRef("createStaffBodySchema")).toEqual({ $ref: "createStaffBodySchema#" });
   });
@@ -189,6 +242,10 @@ describe("routes and schemas", () => {
     await adminRoutes(fastify as never);
 
     expect(fastify.post).toHaveBeenCalledTimes(1);
+    expect(fastify.get).toHaveBeenCalledTimes(2);
+    expect(fastify.put).toHaveBeenCalledTimes(1);
+    expect(fastify.patch).toHaveBeenCalledTimes(1);
+    expect(fastify.delete).toHaveBeenCalledTimes(1);
     expect(fastify.post).toHaveBeenCalledWith(
       "/users",
       expect.objectContaining({
@@ -198,6 +255,84 @@ describe("routes and schemas", () => {
           response: {
             201: { $ref: "createStaffResponseSchema#" },
             403: { $ref: "forbiddenResponseSchema#" },
+          },
+        }),
+        preHandler: [fastify.authenticate, expect.any(Function)],
+        handler: expect.any(Function),
+      })
+    );
+    expect(fastify.get).toHaveBeenNthCalledWith(
+      1,
+      "/tutors",
+      expect.objectContaining({
+        schema: expect.objectContaining({
+          querystring: { $ref: "listTutorsQuerySchema#" },
+          response: {
+            200: { $ref: "listTutorsResponseSchema#" },
+            403: { $ref: "forbiddenResponseSchema#" },
+          },
+        }),
+        preHandler: [fastify.authenticate, expect.any(Function)],
+        handler: expect.any(Function),
+      })
+    );
+    expect(fastify.get).toHaveBeenNthCalledWith(
+      2,
+      "/tutors/:id",
+      expect.objectContaining({
+        schema: expect.objectContaining({
+          params: { $ref: "tutorParamsSchema#" },
+          response: {
+            200: { $ref: "getTutorResponseSchema#" },
+            403: { $ref: "forbiddenResponseSchema#" },
+            404: { $ref: "notFoundResponseSchema#" },
+          },
+        }),
+        preHandler: [fastify.authenticate, expect.any(Function)],
+        handler: expect.any(Function),
+      })
+    );
+    expect(fastify.put).toHaveBeenCalledWith(
+      "/tutors/:id",
+      expect.objectContaining({
+        schema: expect.objectContaining({
+          params: { $ref: "tutorParamsSchema#" },
+          body: { $ref: "updateTutorBodySchema#" },
+          response: {
+            200: { $ref: "updateTutorResponseSchema#" },
+            403: { $ref: "forbiddenResponseSchema#" },
+            404: { $ref: "notFoundResponseSchema#" },
+          },
+        }),
+        preHandler: [fastify.authenticate, expect.any(Function)],
+        handler: expect.any(Function),
+      })
+    );
+    expect(fastify.patch).toHaveBeenCalledWith(
+      "/tutors/:id/status",
+      expect.objectContaining({
+        schema: expect.objectContaining({
+          params: { $ref: "tutorParamsSchema#" },
+          body: { $ref: "updateTutorStatusBodySchema#" },
+          response: {
+            200: { $ref: "updateTutorStatusResponseSchema#" },
+            403: { $ref: "forbiddenResponseSchema#" },
+            404: { $ref: "notFoundResponseSchema#" },
+          },
+        }),
+        preHandler: [fastify.authenticate, expect.any(Function)],
+        handler: expect.any(Function),
+      })
+    );
+    expect(fastify.delete).toHaveBeenCalledWith(
+      "/tutors/:id",
+      expect.objectContaining({
+        schema: expect.objectContaining({
+          params: { $ref: "tutorParamsSchema#" },
+          response: {
+            200: { $ref: "deleteTutorResponseSchema#" },
+            403: { $ref: "forbiddenResponseSchema#" },
+            404: { $ref: "notFoundResponseSchema#" },
           },
         }),
         preHandler: [fastify.authenticate, expect.any(Function)],

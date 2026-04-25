@@ -40,6 +40,11 @@ model User {
   gender       Gender?
   yearLevel    String?    @map("year_level")
   schoolName   String?    @map("student_school_name")
+  profilePhotoKey          String?   @map("profile_photo_key")
+  profilePhotoOriginalName String?   @map("profile_photo_original_name")
+  profilePhotoMimeType     String?   @map("profile_photo_mime_type")
+  profilePhotoSize         Int?      @map("profile_photo_size")
+  profilePhotoUpdatedAt    DateTime? @map("profile_photo_updated_at")
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @updatedAt @map("updated_at")
 

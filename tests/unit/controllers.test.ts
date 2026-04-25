@@ -27,10 +27,17 @@ const healthServiceMocks = {
 
 const usersServiceMocks = {
   getMyProfile: jest.fn(),
+  getMyProfilePhotoAccess: jest.fn(),
+  uploadMyProfilePhoto: jest.fn(),
 };
 
 const adminServiceMocks = {
   createStaffAccount: jest.fn(),
+  listTutors: jest.fn(),
+  getTutorById: jest.fn(),
+  updateTutor: jest.fn(),
+  updateTutorStatus: jest.fn(),
+  deleteTutor: jest.fn(),
 };
 
 jest.unstable_mockModule("../../src/modules/auth/auth.service.js", () => authServiceMocks);
@@ -69,8 +76,8 @@ function mockRequest(overrides: Record<string, unknown> = {}) {
     body: {},
     cookies: {} as Record<string, string>,
     user: { sub: "user-1", jti: "jti-1" },
-    server: { prisma: {} },
-    log: { info: jest.fn(), error: jest.fn() },
+    server: { prisma: {}, storage: {}, redis: {} },
+    log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
     ...overrides,
   };
 }
@@ -385,6 +392,8 @@ describe("controllers", () => {
       fullName: "Jane Doe",
       role: "PARENT",
       status: "ACTIVE",
+      hasProfilePhoto: false,
+      profilePhotoUpdatedAt: null,
     };
     usersServiceMocks.getMyProfile.mockResolvedValue(profile as never);
     const request = mockRequest();
@@ -397,6 +406,100 @@ describe("controllers", () => {
       success: true,
       message: "Profile retrieved successfully",
       data: profile,
+    });
+  });
+
+  it("returns signed access data for the current profile photo", async () => {
+    usersServiceMocks.getMyProfilePhotoAccess.mockResolvedValue({
+      signedUrl: "https://signed.example.com/avatar",
+      originalName: "avatar.png",
+      mimeType: "image/png",
+      size: 2048,
+      updatedAt: new Date("2026-04-25T00:00:00.000Z"),
+      expiresInSeconds: 900,
+    } as never);
+
+    const request = mockRequest();
+    const reply = mockReply();
+
+    await usersController.getMyProfilePhoto(request as never, reply as never);
+
+    expect(usersServiceMocks.getMyProfilePhotoAccess).toHaveBeenCalledWith(
+      request.server.prisma,
+      request.server.storage,
+      "user-1"
+    );
+    expect(reply.send).toHaveBeenCalledWith({
+      success: true,
+      message: "Profile photo retrieved successfully",
+      data: {
+        signedUrl: "https://signed.example.com/avatar",
+        originalName: "avatar.png",
+        mimeType: "image/png",
+        size: 2048,
+        updatedAt: "2026-04-25T00:00:00.000Z",
+        expiresInSeconds: 900,
+      },
+    });
+  });
+
+  it("uploads current user profile photo and warns when previous cleanup fails", async () => {
+    usersServiceMocks.uploadMyProfilePhoto.mockResolvedValue({
+      signedUrl: "https://signed.example.com/new-avatar",
+      originalName: "avatar.webp",
+      mimeType: "image/webp",
+      size: 4096,
+      updatedAt: new Date("2026-04-25T01:00:00.000Z"),
+      expiresInSeconds: 900,
+      profilePhotoKey: "profile-photos/parent/user-1/avatar.webp",
+      previousPhotoCleanupFailed: true,
+    } as never);
+
+    const request = mockRequest({
+      file: jest.fn().mockResolvedValue({
+        filename: "avatar.webp",
+        mimetype: "image/webp",
+        file: (async function* () {
+          yield Buffer.from("avatar-bytes");
+        })(),
+      } as never),
+    });
+    const reply = mockReply();
+
+    await usersController.uploadProfilePhoto(request as never, reply as never);
+
+    expect(usersServiceMocks.uploadMyProfilePhoto).toHaveBeenCalledWith(
+      request.server.prisma,
+      request.server.storage,
+      request.server.redis,
+      request.log,
+      "user-1",
+      expect.objectContaining({
+        originalName: "avatar.webp",
+        mimeType: "image/webp",
+        size: expect.any(Number),
+        buffer: expect.any(Buffer),
+      })
+    );
+    expect(request.log.warn).toHaveBeenCalledWith(
+      {
+        userId: "user-1",
+        profilePhotoKey: "profile-photos/parent/user-1/avatar.webp",
+      },
+      "Previous profile photo cleanup failed after replacement"
+    );
+    expect(reply.send).toHaveBeenCalledWith({
+      success: true,
+      message: "Profile photo updated successfully",
+      data: {
+        signedUrl: "https://signed.example.com/new-avatar",
+        originalName: "avatar.webp",
+        mimeType: "image/webp",
+        size: 4096,
+        updatedAt: "2026-04-25T01:00:00.000Z",
+        expiresInSeconds: 900,
+        previousPhotoCleanupFailed: true,
+      },
     });
   });
 
