@@ -4,6 +4,7 @@ import { healthCheck } from "./health.controller.js";
 
 export async function healthRoutes(fastify: FastifyInstance) {
   fastify.get("/health", {
+    logLevel: "silent",
     schema: {
       response: {
         200: healthRef("healthResponseSchema"),
