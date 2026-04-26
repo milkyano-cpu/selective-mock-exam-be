@@ -86,9 +86,11 @@ model ParentStudentRelation {
 // ==========================================
 
 model Subject {
-  id          String  @id @default(uuid())
-  name        String
+  id          String   @id @default(uuid())
+  name        String   @unique
   description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   topics      Topic[]
   questions   Question[]
@@ -98,10 +100,12 @@ model Subject {
 }
 
 model Topic {
-  id          String  @id @default(uuid())
-  subjectId   String  @map("subject_id")
+  id          String   @id @default(uuid())
+  subjectId   String   @map("subject_id")
   name        String
   description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   subject          Subject             @relation(fields: [subjectId], references: [id])
   questions        Question[]
@@ -110,6 +114,7 @@ model Topic {
   performance      StudentPerformance[]
   resources        StudyResource[]
 
+  @@unique([subjectId, name])
   @@index([subjectId])
   @@map("topics")
 }
