@@ -4,6 +4,7 @@ import { countdownRef } from "./countdowns.schema.js";
 import {
   activateCountdownHandler,
   createCountdownHandler,
+  deactivateCountdownHandler,
   deleteCountdownHandler,
   getActiveCountdownHandler,
   listCountdownsHandler,
@@ -54,6 +55,15 @@ export async function countdownRoutes(fastify: FastifyInstance) {
     },
     preHandler: [fastify.authenticate, requireRole("ADMIN")],
     handler: activateCountdownHandler,
+  });
+
+  fastify.patch("/:id/deactivate", {
+    schema: {
+      params: countdownRef("countdownIdParamSchema"),
+      response: { 200: countdownRef("countdownResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN")],
+    handler: deactivateCountdownHandler,
   });
 
   fastify.delete("/:id", {

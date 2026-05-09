@@ -329,14 +329,27 @@ export async function reorderNodes(
     }
   }
 
-  await prisma.$transaction(
-    input.order.map((item) =>
-      prisma.pathwayNode.update({
-        where: { id: item.nodeId },
-        data: { orderIndex: item.orderIndex },
-      })
-    )
-  );
+  await prisma.$transaction(async (tx) => {
+    const temporaryOffset = input.order.length + existingNodes.length + 1;
+
+    await Promise.all(
+      input.order.map((item, idx) =>
+        tx.pathwayNode.update({
+          where: { id: item.nodeId },
+          data: { orderIndex: -(temporaryOffset + idx) },
+        })
+      )
+    );
+
+    await Promise.all(
+      input.order.map((item) =>
+        tx.pathwayNode.update({
+          where: { id: item.nodeId },
+          data: { orderIndex: item.orderIndex },
+        })
+      )
+    );
+  });
 
   const pathway = await prisma.studentPathway.findUnique({
     where: { id: pathwayId },

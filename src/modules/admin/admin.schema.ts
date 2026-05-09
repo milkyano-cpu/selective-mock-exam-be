@@ -146,6 +146,7 @@ const listUsersQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
   search: z.string().optional(),
   role: z.enum(["STUDENT", "PARENT", "TUTOR", "ADMIN"]),
+  tiers: z.string().optional(),
   sortBy: z.enum(["fullName", "email", "createdAt", "status"]).default("createdAt"),
   order: z.enum(["asc", "desc"]).default("desc"),
 });

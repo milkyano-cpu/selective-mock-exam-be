@@ -2,6 +2,7 @@ import { describe, expect, it, jest, beforeEach } from "@jest/globals";
 import {
   activateCountdown,
   createCountdown,
+  deactivateCountdown,
   deleteCountdown,
   getActiveCountdown,
   listCountdowns,
@@ -214,6 +215,38 @@ describe("countdowns module", () => {
     });
   });
 
+  it("deactivates an active countdown", async () => {
+    const prisma = mockPrisma();
+    prisma.$queryRaw
+      .mockResolvedValueOnce([row({ is_active: true })] as never)
+      .mockResolvedValueOnce([row({ is_active: false })] as never);
+
+    const result = await deactivateCountdown(prisma as never, "countdown-1");
+
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(result).toEqual(serialized({ isActive: false }));
+  });
+
+  it("rejects deactivate for missing countdowns and empty update results", async () => {
+    const missingPrisma = mockPrisma();
+    missingPrisma.$queryRaw.mockResolvedValueOnce([] as never);
+
+    await expect(deactivateCountdown(missingPrisma as never, "missing")).rejects.toMatchObject({
+      statusCode: 404,
+      message: "Countdown not found",
+    });
+
+    const failedPrisma = mockPrisma();
+    failedPrisma.$queryRaw
+      .mockResolvedValueOnce([row({ is_active: true })] as never)
+      .mockResolvedValueOnce([] as never);
+
+    await expect(deactivateCountdown(failedPrisma as never, "countdown-1")).rejects.toMatchObject({
+      statusCode: 500,
+      message: "Failed to deactivate countdown",
+    });
+  });
+
   it("deletes an existing countdown and rejects missing countdowns", async () => {
     const prisma = mockPrisma();
     prisma.$queryRaw.mockResolvedValueOnce([row()] as never);
@@ -252,6 +285,8 @@ describe("countdowns module", () => {
       .mockResolvedValueOnce([row({ title: "Updated" })] as never)
       .mockResolvedValueOnce([row()] as never)
       .mockResolvedValueOnce([row({ is_active: true })] as never)
+      .mockResolvedValueOnce([row({ is_active: true })] as never)
+      .mockResolvedValueOnce([row({ is_active: false })] as never)
       .mockResolvedValueOnce([row()] as never);
     const request = mockRequest(prisma);
     const reply = mockReply();
@@ -263,12 +298,14 @@ describe("countdowns module", () => {
       reply as never
     );
     const activateResponse = await countdownsController.activateCountdownHandler(request as never, reply as never);
+    const deactivateResponse = await countdownsController.deactivateCountdownHandler(request as never, reply as never);
     const deleteResponse = await countdownsController.deleteCountdownHandler(request as never, reply as never);
 
     expect(listResponse).toMatchObject({ success: true, message: "Countdowns retrieved successfully" });
     expect(createResponse).toMatchObject({ success: true, message: "Countdown created successfully" });
     expect(updateResponse).toMatchObject({ success: true, message: "Countdown updated successfully" });
     expect(activateResponse).toMatchObject({ success: true, message: "Countdown activated successfully" });
+    expect(deactivateResponse).toMatchObject({ success: true, message: "Countdown deactivated successfully" });
     expect(deleteResponse).toEqual({ success: true, message: "Countdown deleted successfully" });
   });
 

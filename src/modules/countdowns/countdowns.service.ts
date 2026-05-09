@@ -165,6 +165,28 @@ export async function activateCountdown(prisma: PrismaClient, id: string) {
   return serializeCountdown(updated);
 }
 
+export async function deactivateCountdown(prisma: PrismaClient, id: string) {
+  const existing = await findCountdownById(prisma, id);
+  if (!existing) {
+    throw createHttpError(404, "Countdown not found");
+  }
+
+  const rows = await prisma.$queryRaw<CountdownRow[]>(Prisma.sql`
+    UPDATE exam_countdowns
+    SET is_active = false,
+        updated_at = NOW()
+    WHERE id = ${id}
+    RETURNING id, title, target_at, is_active, created_at, updated_at
+  `);
+
+  const updated = rows[0];
+  if (!updated) {
+    throw createHttpError(500, "Failed to deactivate countdown");
+  }
+
+  return serializeCountdown(updated);
+}
+
 export async function deleteCountdown(prisma: PrismaClient, id: string) {
   const existing = await findCountdownById(prisma, id);
   if (!existing) {

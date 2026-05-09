@@ -7,6 +7,7 @@ import type {
 import {
   activateCountdown,
   createCountdown,
+  deactivateCountdown,
   deleteCountdown,
   getActiveCountdown,
   listCountdowns,
@@ -59,6 +60,16 @@ export async function activateCountdownHandler(request: FastifyRequest, reply: F
   return reply.send({
     success: true,
     message: "Countdown activated successfully",
+    data: countdown,
+  });
+}
+
+export async function deactivateCountdownHandler(request: FastifyRequest, reply: FastifyReply) {
+  const { id } = request.params as { id: string };
+  const countdown = await deactivateCountdown(request.server.prisma, id);
+  return reply.send({
+    success: true,
+    message: "Countdown deactivated successfully",
     data: countdown,
   });
 }

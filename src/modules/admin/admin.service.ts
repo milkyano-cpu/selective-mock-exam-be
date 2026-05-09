@@ -146,10 +146,22 @@ export async function listUsers(
   prisma: PrismaClient,
   query: ListUsersQuery
 ) {
-  const { page, limit, search, role, sortBy, order } = query;
+  const { page, limit, search, role, tiers, sortBy, order } = query;
   const skip = (page - 1) * limit;
 
   const where: Record<string, unknown> = { role, deletedAt: null };
+
+  if (tiers) {
+    const allowedTiers = new Set(["BASIC", "STANDARD", "PREMIUM"]);
+    const selectedTiers = tiers
+      .split(",")
+      .map((tier) => tier.trim().toUpperCase())
+      .filter((tier): tier is "BASIC" | "STANDARD" | "PREMIUM" => allowedTiers.has(tier));
+
+    if (selectedTiers.length > 0) {
+      where.tier = { in: [...new Set(selectedTiers)] };
+    }
+  }
 
   if (search) {
     const nameTokens = search.toLowerCase().split(/\s+/).filter(Boolean).map(computeBlindIndex);

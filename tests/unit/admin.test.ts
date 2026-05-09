@@ -187,6 +187,7 @@ describe("admin module", () => {
       limit: 5,
       search: "Student One",
       role: "STUDENT",
+      tiers: "STANDARD,PREMIUM",
       sortBy: "createdAt",
       order: "desc",
     });
@@ -195,6 +196,7 @@ describe("admin module", () => {
       where: {
         role: "STUDENT",
         deletedAt: null,
+        tier: { in: ["STANDARD", "PREMIUM"] },
         OR: [
           { email: userCrypto.emailToBlindIndex("Student One") },
           { fullNameTokens: { hasEvery: expect.any(Array) } },

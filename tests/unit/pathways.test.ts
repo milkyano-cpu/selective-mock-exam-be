@@ -417,7 +417,11 @@ describe("pathways module", () => {
       order: [{ nodeId: "node-1", orderIndex: 1 }],
     });
 
-    expect(prisma.pathwayNode.update).toHaveBeenCalledWith({
+    expect(prisma.tx.pathwayNode.update).toHaveBeenNthCalledWith(1, {
+      where: { id: "node-1" },
+      data: { orderIndex: -4 },
+    });
+    expect(prisma.tx.pathwayNode.update).toHaveBeenNthCalledWith(2, {
       where: { id: "node-1" },
       data: { orderIndex: 1 },
     });
