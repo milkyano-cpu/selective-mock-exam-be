@@ -29,15 +29,19 @@ const usersServiceMocks = {
   getMyProfile: jest.fn(),
   getMyProfilePhotoAccess: jest.fn(),
   uploadMyProfilePhoto: jest.fn(),
+  softDeleteUser: jest.fn(),
 };
 
 const adminServiceMocks = {
   createStaffAccount: jest.fn(),
+  listUsers: jest.fn(),
+  syncUserTier: jest.fn(),
   listTutors: jest.fn(),
   getTutorById: jest.fn(),
   updateTutor: jest.fn(),
   updateTutorStatus: jest.fn(),
   deleteTutor: jest.fn(),
+  deleteUserById: jest.fn(),
 };
 
 jest.unstable_mockModule("../../src/modules/auth/auth.service.js", () => authServiceMocks);
@@ -194,7 +198,6 @@ describe("controllers", () => {
     );
     expect(reply.jwtSign).toHaveBeenCalledWith({
       sub: "user-1",
-      email: "parent@example.com",
       role: "PARENT",
       jti: expect.any(String),
     });
@@ -249,7 +252,6 @@ describe("controllers", () => {
     );
     expect(reply.jwtSign).toHaveBeenCalledWith({
       sub: "user-1",
-      email: "user@example.com",
       role: "STUDENT",
       jti: expect.any(String),
     });
@@ -266,9 +268,6 @@ describe("controllers", () => {
     expect(reply.send).toHaveBeenCalledWith({
       success: true,
       message: "Token refreshed successfully",
-      data: {
-        expiresIn: expect.any(String),
-      },
     });
   });
 
@@ -503,6 +502,21 @@ describe("controllers", () => {
     });
   });
 
+  it("soft-deletes the current user account", async () => {
+    usersServiceMocks.softDeleteUser.mockResolvedValue(undefined as never);
+    const request = mockRequest();
+    const reply = mockReply();
+
+    await usersController.deleteMyAccount(request as never, reply as never);
+
+    expect(usersServiceMocks.softDeleteUser).toHaveBeenCalledWith(request.server.prisma, "user-1");
+    expect(reply.status).toHaveBeenCalledWith(200);
+    expect(reply.send).toHaveBeenCalledWith({
+      success: true,
+      message: "Account deleted successfully.",
+    });
+  });
+
   it("sends password reset email for existing users and always returns 200", async () => {
     authServiceMocks.createPasswordResetToken.mockResolvedValue({
       token: "reset-token-123",
@@ -685,5 +699,72 @@ describe("controllers", () => {
         data: expect.objectContaining({ emailSent: false }),
       })
     );
+  });
+
+  it("lists users and signs profile photo URLs when available", async () => {
+    adminServiceMocks.listUsers.mockResolvedValue({
+      data: [
+        {
+          id: "student-1",
+          email: "student@example.com",
+          fullName: "Student One",
+          role: "STUDENT",
+          status: "ACTIVE",
+          tier: "BASIC",
+          phoneNumber: null,
+          profilePhotoKey: "profile-photos/student/student-1/avatar.webp",
+          createdAt: "2026-05-08T00:00:00.000Z",
+          updatedAt: "2026-05-08T00:00:00.000Z",
+        },
+      ],
+      meta: { page: 1, limit: 20, total: 1, totalPages: 1 },
+    } as never);
+    const request = mockRequest({
+      query: { role: "STUDENT", page: 1 },
+      server: {
+        prisma: {},
+        storage: {
+          getProfilePhotoSignedUrl: jest.fn().mockResolvedValue("https://signed.example.com/avatar" as never),
+        },
+        redis: {},
+      },
+    });
+    const reply = mockReply();
+
+    await adminController.listUsersHandler(request as never, reply as never);
+
+    expect(adminServiceMocks.listUsers).toHaveBeenCalledWith(request.server.prisma, request.query);
+    expect(request.server.storage.getProfilePhotoSignedUrl).toHaveBeenCalledWith(
+      "profile-photos/student/student-1/avatar.webp"
+    );
+    expect(reply.send).toHaveBeenCalledWith({
+      success: true,
+      message: "Users retrieved successfully",
+      data: [
+        expect.objectContaining({
+          id: "student-1",
+          photoUrl: "https://signed.example.com/avatar",
+        }),
+      ],
+      meta: { page: 1, limit: 20, total: 1, totalPages: 1 },
+    });
+  });
+
+  it("soft-deletes any user from admin", async () => {
+    adminServiceMocks.deleteUserById.mockResolvedValue(undefined as never);
+    const request = mockRequest({ params: { id: "user-2" } });
+    const reply = mockReply();
+
+    await adminController.deleteUserHandler(request as never, reply as never);
+
+    expect(adminServiceMocks.deleteUserById).toHaveBeenCalledWith(request.server.prisma, "user-2");
+    expect(request.log.info).toHaveBeenCalledWith(
+      { userId: "user-2", deletedBy: "user-1" },
+      "User account soft-deleted"
+    );
+    expect(reply.send).toHaveBeenCalledWith({
+      success: true,
+      message: "User deleted successfully.",
+    });
   });
 });

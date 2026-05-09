@@ -18,22 +18,42 @@ const pluginMocks = {
   rateLimitPlugin: jest.fn(),
   storagePlugin: jest.fn(),
   profilePhotoCleanupPlugin: jest.fn(),
+  broadcastPlugin: jest.fn(),
+  gradingPlugin: jest.fn(),
   cleanupPlugin: jest.fn(),
   healthRoutes: jest.fn(),
   authRoutes: jest.fn(),
   usersRoutes: jest.fn(),
   adminRoutes: jest.fn(),
+  subjectRoutes: jest.fn(),
+  questionRoutes: jest.fn(),
+  passageRoutes: jest.fn(),
+  webhookRoutes: jest.fn(),
+  notificationRoutes: jest.fn(),
+  announcementRoutes: jest.fn(),
+  pushSubscriptionRoutes: jest.fn(),
+  bannerRoutes: jest.fn(),
+  countdownRoutes: jest.fn(),
+  examRoutes: jest.fn(),
+  analyticsRoutes: jest.fn(),
+  flashcardRoutes: jest.fn(),
+  forumRoutes: jest.fn(),
+  rubricRoutes: jest.fn(),
+  pathwayRoutes: jest.fn(),
+  practiceRoutes: jest.fn(),
+  billingRoutes: jest.fn(),
 };
 
 const mappedError = Object.assign(new Error("Mapped conflict"), { statusCode: 409 });
 const mapPrismaError = jest.fn();
+const isUniqueConstraintError = jest.fn();
 
 jest.unstable_mockModule("fastify", () => ({ default: Fastify }));
 jest.unstable_mockModule("../../src/config/env.js", () => ({
   env: { API_PREFIX: "/api/v1" },
 }));
 jest.unstable_mockModule("../../src/config/logger.js", () => ({ logger: { level: "silent" } }));
-jest.unstable_mockModule("../../src/utils/prisma-errors.js", () => ({ mapPrismaError }));
+jest.unstable_mockModule("../../src/utils/prisma-errors.js", () => ({ isUniqueConstraintError, mapPrismaError }));
 jest.unstable_mockModule("../../src/plugins/prisma.plugin.js", () => ({ default: pluginMocks.prismaPlugin }));
 jest.unstable_mockModule("../../src/plugins/jwt.plugin.js", () => ({ default: pluginMocks.jwtPlugin }));
 jest.unstable_mockModule("../../src/plugins/security.plugin.js", () => ({ default: pluginMocks.securityPlugin }));
@@ -44,6 +64,8 @@ jest.unstable_mockModule("../../src/plugins/storage.plugin.js", () => ({ default
 jest.unstable_mockModule("../../src/plugins/profile-photo-cleanup.plugin.js", () => ({
   default: pluginMocks.profilePhotoCleanupPlugin,
 }));
+jest.unstable_mockModule("../../src/plugins/broadcast.plugin.js", () => ({ default: pluginMocks.broadcastPlugin }));
+jest.unstable_mockModule("../../src/plugins/grading.plugin.js", () => ({ default: pluginMocks.gradingPlugin }));
 jest.unstable_mockModule("../../src/plugins/cleanup.plugin.js", () => ({ default: pluginMocks.cleanupPlugin }));
 jest.unstable_mockModule("../../src/modules/health/health.route.js", () => ({
   healthRoutes: pluginMocks.healthRoutes,
@@ -57,6 +79,57 @@ jest.unstable_mockModule("../../src/modules/users/users.route.js", () => ({
 jest.unstable_mockModule("../../src/modules/admin/admin.route.js", () => ({
   adminRoutes: pluginMocks.adminRoutes,
 }));
+jest.unstable_mockModule("../../src/modules/subjects/subjects.route.js", () => ({
+  subjectRoutes: pluginMocks.subjectRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/questions/questions.route.js", () => ({
+  questionRoutes: pluginMocks.questionRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/passages/passages.routes.js", () => ({
+  passageRoutes: pluginMocks.passageRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/webhooks/webhooks.route.js", () => ({
+  webhookRoutes: pluginMocks.webhookRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/notifications/notifications.route.js", () => ({
+  notificationRoutes: pluginMocks.notificationRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/announcements/announcements.route.js", () => ({
+  announcementRoutes: pluginMocks.announcementRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/push-subscriptions/push-subscriptions.route.js", () => ({
+  pushSubscriptionRoutes: pluginMocks.pushSubscriptionRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/banners/banners.route.js", () => ({
+  bannerRoutes: pluginMocks.bannerRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/countdowns/countdowns.route.js", () => ({
+  countdownRoutes: pluginMocks.countdownRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/exams/exams.route.js", () => ({
+  examRoutes: pluginMocks.examRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/analytics/analytics.route.js", () => ({
+  analyticsRoutes: pluginMocks.analyticsRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/flashcards/flashcards.route.js", () => ({
+  flashcardRoutes: pluginMocks.flashcardRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/forum/forum.route.js", () => ({
+  forumRoutes: pluginMocks.forumRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/rubrics/rubrics.route.js", () => ({
+  rubricRoutes: pluginMocks.rubricRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/pathways/pathways.route.js", () => ({
+  pathwayRoutes: pluginMocks.pathwayRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/practice/practice.route.js", () => ({
+  practiceRoutes: pluginMocks.practiceRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/billing/billing.route.js", () => ({
+  billingRoutes: pluginMocks.billingRoutes,
+}));
 jest.unstable_mockModule("../../src/modules/auth/auth.schema.js", () => ({
   authSchemas: [{ $id: "auth" }],
 }));
@@ -68,6 +141,54 @@ jest.unstable_mockModule("../../src/modules/health/health.schema.js", () => ({
 }));
 jest.unstable_mockModule("../../src/modules/admin/admin.schema.js", () => ({
   adminSchemas: [{ $id: "admin" }],
+}));
+jest.unstable_mockModule("../../src/modules/subjects/subjects.schema.js", () => ({
+  subjectSchemas: [{ $id: "subject" }],
+}));
+jest.unstable_mockModule("../../src/modules/questions/questions.schema.js", () => ({
+  questionSchemas: [{ $id: "question" }],
+}));
+jest.unstable_mockModule("../../src/modules/passages/passages.schema.js", () => ({
+  passageSchemas: [{ $id: "passage" }],
+}));
+jest.unstable_mockModule("../../src/modules/notifications/notifications.schema.js", () => ({
+  notificationSchemas: [{ $id: "notification" }],
+}));
+jest.unstable_mockModule("../../src/modules/push-subscriptions/push-subscriptions.schema.js", () => ({
+  pushSchemas: [{ $id: "push" }],
+}));
+jest.unstable_mockModule("../../src/modules/announcements/announcements.schema.js", () => ({
+  announcementSchemas: [{ $id: "announcement" }],
+}));
+jest.unstable_mockModule("../../src/modules/banners/banners.schema.js", () => ({
+  bannerSchemas: [{ $id: "banner" }],
+}));
+jest.unstable_mockModule("../../src/modules/countdowns/countdowns.schema.js", () => ({
+  countdownSchemas: [{ $id: "countdown" }],
+}));
+jest.unstable_mockModule("../../src/modules/exams/exams.schema.js", () => ({
+  examSchemas: [{ $id: "exam" }],
+}));
+jest.unstable_mockModule("../../src/modules/analytics/analytics.schema.js", () => ({
+  analyticsSchemas: [{ $id: "analytics" }],
+}));
+jest.unstable_mockModule("../../src/modules/flashcards/flashcards.schema.js", () => ({
+  flashcardSchemas: [{ $id: "flashcard" }],
+}));
+jest.unstable_mockModule("../../src/modules/forum/forum.schema.js", () => ({
+  forumSchemas: [{ $id: "forum" }],
+}));
+jest.unstable_mockModule("../../src/modules/rubrics/rubrics.schema.js", () => ({
+  rubricSchemas: [{ $id: "rubric" }],
+}));
+jest.unstable_mockModule("../../src/modules/pathways/pathways.schema.js", () => ({
+  pathwaySchemas: [{ $id: "pathway" }],
+}));
+jest.unstable_mockModule("../../src/modules/practice/practice.schema.js", () => ({
+  practiceSchemas: [{ $id: "practice" }],
+}));
+jest.unstable_mockModule("../../src/modules/billing/billing.schema.js", () => ({
+  billingSchemas: [{ $id: "billing" }],
 }));
 
 const { buildApp } = await import("../../src/app.js");
@@ -87,6 +208,7 @@ describe("app builder", () => {
         await plugin(fakeApp, options);
       }
     });
+    isUniqueConstraintError.mockReturnValue(false);
     mapPrismaError.mockReturnValue(null);
   });
 
@@ -104,15 +226,20 @@ describe("app builder", () => {
     expect(options.trustProxy).toBe(true);
     expect(options.genReqId({ headers: { "x-trace-id": "trace-1" } })).toBe("trace-1");
     expect(options.genReqId({ headers: {} })).toEqual(expect.any(String));
-    expect(fakeApp.addSchema).toHaveBeenCalledTimes(5);
+    expect(fakeApp.addSchema).toHaveBeenCalledTimes(21);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.securityPlugin);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.storagePlugin);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.profilePhotoCleanupPlugin);
+    expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.broadcastPlugin);
+    expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.gradingPlugin);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.cleanupPlugin);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.healthRoutes);
     expect(pluginMocks.authRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/auth" });
     expect(pluginMocks.usersRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/users" });
     expect(pluginMocks.adminRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/admin" });
+    expect(pluginMocks.questionRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/questions" });
+    expect(pluginMocks.webhookRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/webhooks" });
+    expect(pluginMocks.billingRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/billing" });
     expect(fakeApp.setErrorHandler).toHaveBeenCalledWith(expect.any(Function));
     expect(fakeApp.setNotFoundHandler).toHaveBeenCalledWith(expect.any(Function));
   });

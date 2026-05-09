@@ -30,6 +30,15 @@ const {
   getUserById,
   uploadMyProfilePhoto,
 } = await import("../../src/modules/users/users.service.js");
+const { encryptUserFields } = await import("../../src/utils/user-crypto.js");
+
+function encryptedUser(email: string, fullName: string, overrides: Record<string, unknown> = {}) {
+  const { fullNameTokens: _fullNameTokens, ...fields } = encryptUserFields({ email, fullName });
+  return {
+    ...fields,
+    ...overrides,
+  };
+}
 
 function mockRedis() {
   return {
@@ -71,11 +80,11 @@ describe("service helpers", () => {
 
   it("returns current user profile", async () => {
     const user = {
+      ...encryptedUser("user@example.com", "Jane Doe"),
       id: "user-1",
-      email: "user@example.com",
-      fullName: "Jane Doe",
       role: "PARENT",
       status: "ACTIVE",
+      tier: "BASIC",
       profilePhotoKey: "profile-photos/parent/user-1/avatar.png",
       profilePhotoUpdatedAt: new Date("2026-04-25T00:00:00.000Z"),
       createdAt: new Date(),
@@ -91,6 +100,7 @@ describe("service helpers", () => {
       fullName: "Jane Doe",
       role: "PARENT",
       status: "ACTIVE",
+      tier: "BASIC",
       profilePhotoUpdatedAt: new Date("2026-04-25T00:00:00.000Z"),
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
@@ -102,9 +112,11 @@ describe("service helpers", () => {
       select: {
         id: true,
         email: true,
+        emailEncrypted: true,
         fullName: true,
         role: true,
         status: true,
+        tier: true,
         profilePhotoKey: true,
         profilePhotoUpdatedAt: true,
         createdAt: true,
@@ -128,16 +140,22 @@ describe("service helpers", () => {
 
   it("returns users by id", async () => {
     const user = {
+      ...encryptedUser("user@example.com", "Jane Doe"),
       id: "user-1",
-      email: "user@example.com",
-      fullName: "Jane Doe",
       role: "PARENT",
       status: "ACTIVE",
       createdAt: new Date(),
     };
     const prisma = { user: { findUnique: jest.fn(async () => user) } };
 
-    await expect(getUserById(prisma as never, "user-1")).resolves.toBe(user);
+    await expect(getUserById(prisma as never, "user-1")).resolves.toEqual({
+      id: "user-1",
+      email: "user@example.com",
+      fullName: "Jane Doe",
+      role: "PARENT",
+      status: "ACTIVE",
+      createdAt: user.createdAt,
+    });
   });
 
   it("returns signed access data for an existing current user profile photo", async () => {

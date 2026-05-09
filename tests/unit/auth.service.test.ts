@@ -15,6 +15,7 @@ import {
   rotateRefreshToken,
 } from "../../src/modules/auth/auth.service.js";
 import type { RegisterInput } from "../../src/modules/auth/auth.schema.js";
+import { encryptUserFields, emailToBlindIndex } from "../../src/utils/user-crypto.js";
 
 function baseRegisterInput(overrides: Partial<RegisterInput> = {}): RegisterInput {
   return {
@@ -41,6 +42,13 @@ function tokenHash(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+function encryptedUser(email: string, fullName: string, overrides: Record<string, unknown> = {}) {
+  return {
+    ...encryptUserFields({ email, fullName }),
+    ...overrides,
+  };
+}
+
 describe("auth service hardening", () => {
   it("registers a parent with students successfully and normalizes emails", async () => {
     const tx = {
@@ -62,13 +70,25 @@ describe("auth service hardening", () => {
     expect(tx.user.create).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
-        data: expect.objectContaining({ email: "jane@example.com", role: "PARENT" }),
+        data: expect.objectContaining({
+          email: emailToBlindIndex("jane@example.com"),
+          emailEncrypted: expect.any(String),
+          fullName: expect.any(String),
+          fullNameTokens: expect.any(Array),
+          role: "PARENT",
+        }),
       })
     );
     expect(tx.user.create).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        data: expect.objectContaining({ email: "alex@example.com", role: "STUDENT" }),
+        data: expect.objectContaining({
+          email: emailToBlindIndex("alex@example.com"),
+          emailEncrypted: expect.any(String),
+          fullName: expect.any(String),
+          fullNameTokens: expect.any(Array),
+          role: "STUDENT",
+        }),
       })
     );
     expect(tx.parentStudentRelation.createMany).toHaveBeenCalledWith({
@@ -124,7 +144,9 @@ describe("auth service hardening", () => {
   });
 
   it("rejects emails that already exist in the database", async () => {
-    const findMany = jest.fn().mockResolvedValue([{ email: "jane@example.com" }]);
+    const findMany = jest.fn().mockResolvedValue([
+      encryptedUser("jane@example.com", "Jane Doe"),
+    ]);
     const prisma = { user: { findMany } } as unknown as PrismaClient;
 
     await expect(registerParentWithStudents(prisma, baseRegisterInput())).rejects.toMatchObject({
@@ -132,8 +154,8 @@ describe("auth service hardening", () => {
     });
 
     expect(findMany).toHaveBeenCalledWith({
-      where: { email: { in: ["jane@example.com", "alex@example.com"] } },
-      select: { email: true },
+      where: { email: { in: [emailToBlindIndex("jane@example.com"), emailToBlindIndex("alex@example.com")] } },
+      select: { emailEncrypted: true },
     });
   });
 
@@ -142,12 +164,12 @@ describe("auth service hardening", () => {
     const prisma = {
       user: {
         findUnique: jest.fn().mockResolvedValue({
+          ...encryptedUser("jane@example.com", "Jane Doe"),
           id: "user-1",
-          email: "jane@example.com",
           passwordHash,
-          fullName: "Jane Doe",
           role: "PARENT",
           status: "ACTIVE",
+          deletedAt: null,
         }),
       },
     } as unknown as PrismaClient;
@@ -163,12 +185,12 @@ describe("auth service hardening", () => {
 
   it("allows login only for ACTIVE users and normalizes email lookup", async () => {
     const findUnique = jest.fn().mockResolvedValue({
+      ...encryptedUser("jane@example.com", "Jane Doe"),
       id: "user-1",
-      email: "jane@example.com",
       passwordHash: "not-used",
-      fullName: "Jane Doe",
       role: "PARENT",
       status: "SUSPENDED",
+      deletedAt: null,
     });
     const prisma = { user: { findUnique } } as unknown as PrismaClient;
 
@@ -176,7 +198,7 @@ describe("auth service hardening", () => {
       loginUser(prisma, { email: " Jane@Example.com ", password: "Password1!" })
     ).rejects.toMatchObject({ statusCode: 403 });
 
-    expect(findUnique).toHaveBeenCalledWith({ where: { email: "jane@example.com" } });
+    expect(findUnique).toHaveBeenCalledWith({ where: { email: emailToBlindIndex("jane@example.com") } });
   });
 
   it("rejects missing users and invalid passwords on login", async () => {
@@ -200,15 +222,17 @@ describe("auth service hardening", () => {
 
   it("finds active users by id and rejects missing or inactive users", async () => {
     const activeUser = {
+      ...encryptedUser("user@example.com", "Jane Doe"),
       id: "user-1",
-      email: "user@example.com",
-      fullName: "Jane Doe",
       role: "PARENT",
       status: "ACTIVE",
+      deletedAt: null,
     };
     const prisma = { user: { findUnique: jest.fn().mockResolvedValue(activeUser) } } as unknown as PrismaClient;
 
-    await expect(findUserById(prisma, "user-1")).resolves.toBe(activeUser);
+    await expect(findUserById(prisma, "user-1")).resolves.toEqual(
+      expect.objectContaining({ id: "user-1", email: "user@example.com", fullName: "Jane Doe" })
+    );
     await expect(
       findUserById({ user: { findUnique: jest.fn().mockResolvedValue(null) } } as unknown as PrismaClient, "missing")
     ).rejects.toMatchObject({ statusCode: 404 });

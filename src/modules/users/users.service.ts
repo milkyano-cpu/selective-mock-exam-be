@@ -8,6 +8,7 @@ import sharp from "sharp";
 import type { ObjectStorage } from "../../lib/object-storage.js";
 import { enqueueProfilePhotoCleanup } from "./profile-photo-cleanup.js";
 import { createHttpError } from "../../utils/http-error.js";
+import { decryptUser } from "../../utils/user-crypto.js";
 
 const ALLOWED_PROFILE_PHOTO_MIME_TYPES = new Set([
   "image/jpeg",
@@ -20,9 +21,11 @@ const PROFILE_PHOTO_UPLOAD_LOCK_TTL_SECONDS = 60;
 const PROFILE_SELECT = {
   id: true,
   email: true,
+  emailEncrypted: true,
   fullName: true,
   role: true,
   status: true,
+  tier: true,
   profilePhotoKey: true,
   profilePhotoUpdatedAt: true,
   createdAt: true,
@@ -218,7 +221,7 @@ export async function getMyProfile(prisma: PrismaClient, userId: string) {
     throw createHttpError(404, "User not found");
   }
 
-  const { profilePhotoKey, ...profile } = user;
+  const { profilePhotoKey, ...profile } = decryptUser(user);
 
   return {
     ...profile,
@@ -382,12 +385,25 @@ export async function uploadMyProfilePhoto(
   }
 }
 
+export async function softDeleteUser(prisma: PrismaClient, userId: string) {
+  const now = new Date();
+  await prisma.refreshToken.updateMany({
+    where: { userId, revokedAt: null },
+    data: { revokedAt: now },
+  });
+  await prisma.user.update({
+    where: { id: userId },
+    data: { deletedAt: now },
+  });
+}
+
 export async function getUserById(prisma: PrismaClient, userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
       id: true,
       email: true,
+      emailEncrypted: true,
       fullName: true,
       role: true,
       status: true,
@@ -399,5 +415,5 @@ export async function getUserById(prisma: PrismaClient, userId: string) {
     throw createHttpError(404, "User not found");
   }
 
-  return user;
+  return decryptUser(user);
 }

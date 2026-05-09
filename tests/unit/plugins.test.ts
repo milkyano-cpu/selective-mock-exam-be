@@ -20,6 +20,7 @@ describe("Fastify plugins", () => {
 
   it("purges expired tokens and clears cleanup timer on close", async () => {
     jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-05-08T00:00:00.000Z"));
     const onCloseHooks: Array<() => void> = [];
     const refreshDeleteMany = jest
       .fn()
@@ -40,18 +41,18 @@ describe("Fastify plugins", () => {
 
     await cleanupPlugin(fastify as never, undefined as never);
     await jest.advanceTimersByTimeAsync(60 * 60 * 1000);
-    await jest.advanceTimersByTimeAsync(60 * 60 * 1000);
+    await jest.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
     onCloseHooks[0]!();
 
     expect(refreshDeleteMany).toHaveBeenCalledWith({
-      where: { expiresAt: { lt: expect.any(Date) } },
+      where: { OR: [{ expiresAt: { lt: expect.any(Date) } }, { revokedAt: { not: null } }] },
     });
     expect(resetDeleteMany).toHaveBeenCalledWith({
       where: { OR: [{ expiresAt: { lt: expect.any(Date) } }, { usedAt: { not: null } }] },
     });
     expect(fastify.log.info).toHaveBeenCalledWith(
       { count: 2 },
-      "Purged expired refresh tokens"
+      "Purged expired/revoked refresh tokens"
     );
     expect(fastify.log.info).toHaveBeenCalledWith(
       { count: 1 },
