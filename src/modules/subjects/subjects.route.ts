@@ -4,6 +4,7 @@ import {
   listSubjects,
   getSubject,
   createSubject,
+  ensureSubjectWithTopics,
   updateSubject,
   deleteSubject,
   listTopics,
@@ -18,9 +19,6 @@ export async function subjectRoutes(fastify: FastifyInstance) {
   // ── Subject endpoints ───────────────────────────────────────
 
   fastify.get("/", {
-    config: {
-      rateLimit: { max: 60, timeWindow: "1 minute" },
-    },
     schema: {
       querystring: subjectRef("listSubjectsQuerySchema"),
       response: {
@@ -33,9 +31,6 @@ export async function subjectRoutes(fastify: FastifyInstance) {
   });
 
   fastify.get("/:subjectId", {
-    config: {
-      rateLimit: { max: 60, timeWindow: "1 minute" },
-    },
     schema: {
       params: subjectRef("subjectParamsSchema"),
       response: {
@@ -49,9 +44,6 @@ export async function subjectRoutes(fastify: FastifyInstance) {
   });
 
   fastify.post("/", {
-    config: {
-      rateLimit: { max: 30, timeWindow: "1 minute" },
-    },
     schema: {
       body: subjectRef("createSubjectBodySchema"),
       response: {
@@ -63,10 +55,19 @@ export async function subjectRoutes(fastify: FastifyInstance) {
     handler: createSubject,
   });
 
-  fastify.put("/:subjectId", {
-    config: {
-      rateLimit: { max: 30, timeWindow: "1 minute" },
+  fastify.post("/import/ensure", {
+    schema: {
+      body: subjectRef("ensureSubjectTopicsBodySchema"),
+      response: {
+        200: subjectRef("ensureSubjectTopicsResponseSchema"),
+        403: subjectRef("subjectForbiddenResponseSchema"),
+      },
     },
+    preHandler: [fastify.authenticate, requireRole("ADMIN")],
+    handler: ensureSubjectWithTopics,
+  });
+
+  fastify.put("/:subjectId", {
     schema: {
       params: subjectRef("subjectParamsSchema"),
       body: subjectRef("updateSubjectBodySchema"),
@@ -81,9 +82,6 @@ export async function subjectRoutes(fastify: FastifyInstance) {
   });
 
   fastify.delete("/:subjectId", {
-    config: {
-      rateLimit: { max: 15, timeWindow: "1 minute" },
-    },
     schema: {
       params: subjectRef("subjectParamsSchema"),
       response: {
@@ -99,9 +97,6 @@ export async function subjectRoutes(fastify: FastifyInstance) {
   // ── Topic endpoints (nested under subjects) ────────────────
 
   fastify.get("/:subjectId/topics", {
-    config: {
-      rateLimit: { max: 60, timeWindow: "1 minute" },
-    },
     schema: {
       params: subjectRef("subjectParamsSchema"),
       querystring: subjectRef("listTopicsQuerySchema"),
@@ -116,9 +111,6 @@ export async function subjectRoutes(fastify: FastifyInstance) {
   });
 
   fastify.get("/:subjectId/topics/:topicId", {
-    config: {
-      rateLimit: { max: 60, timeWindow: "1 minute" },
-    },
     schema: {
       params: subjectRef("topicParamsSchema"),
       response: {
@@ -132,9 +124,6 @@ export async function subjectRoutes(fastify: FastifyInstance) {
   });
 
   fastify.post("/:subjectId/topics", {
-    config: {
-      rateLimit: { max: 30, timeWindow: "1 minute" },
-    },
     schema: {
       params: subjectRef("subjectParamsSchema"),
       body: subjectRef("createTopicBodySchema"),
@@ -149,9 +138,6 @@ export async function subjectRoutes(fastify: FastifyInstance) {
   });
 
   fastify.put("/:subjectId/topics/:topicId", {
-    config: {
-      rateLimit: { max: 30, timeWindow: "1 minute" },
-    },
     schema: {
       params: subjectRef("topicParamsSchema"),
       body: subjectRef("updateTopicBodySchema"),
@@ -166,9 +152,6 @@ export async function subjectRoutes(fastify: FastifyInstance) {
   });
 
   fastify.delete("/:subjectId/topics/:topicId", {
-    config: {
-      rateLimit: { max: 15, timeWindow: "1 minute" },
-    },
     schema: {
       params: subjectRef("topicParamsSchema"),
       response: {

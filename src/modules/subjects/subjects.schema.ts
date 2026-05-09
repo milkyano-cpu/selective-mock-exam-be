@@ -6,6 +6,7 @@ import { buildJsonSchemas } from "../../utils/build-schemas.js";
 const subjectItemSchema = z.object({
   id: z.string(),
   name: z.string(),
+  questionCode: z.string().nullable(),
   description: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -52,6 +53,10 @@ const createSubjectBodySchema = z.object({
     .string({ error: "Subject name is required" })
     .min(1, "Subject name must not be empty")
     .max(100, "Subject name must be at most 100 characters"),
+  questionCode: z
+    .string({ error: "Question code is required" })
+    .min(1, "Question code must not be empty")
+    .max(10, "Question code must be at most 10 characters"),
   description: z
     .string()
     .max(500, "Description must be at most 500 characters")
@@ -64,6 +69,11 @@ const updateSubjectBodySchema = z.object({
     .string()
     .min(1, "Subject name must not be empty")
     .max(100, "Subject name must be at most 100 characters")
+    .optional(),
+  questionCode: z
+    .string()
+    .min(1, "Question code must not be empty")
+    .max(10, "Question code must be at most 10 characters")
     .optional(),
   description: z
     .string()
@@ -78,6 +88,7 @@ const listSubjectsQuerySchema = z.object({
   search: z.string().optional(),
   sortBy: z.enum(["name", "createdAt"]).default("name"),
   order: z.enum(["asc", "desc"]).default("asc"),
+  publishedOnly: z.coerce.boolean().optional(),
 });
 
 const listSubjectsResponseSchema = z.object({
@@ -132,6 +143,23 @@ const createTopicBodySchema = z.object({
     .optional(),
 });
 
+const ensureSubjectTopicsBodySchema = z.object({
+  subject: createSubjectBodySchema,
+  topics: z
+    .array(createTopicBodySchema)
+    .max(200, "At most 200 topics can be ensured at once")
+    .default([]),
+});
+
+const ensureSubjectTopicsResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z.object({
+    subject: subjectItemSchema,
+    topics: z.array(topicItemSchema),
+  }),
+});
+
 const updateTopicBodySchema = z.object({
   name: z
     .string()
@@ -151,6 +179,7 @@ const listTopicsQuerySchema = z.object({
   search: z.string().optional(),
   sortBy: z.enum(["name", "createdAt"]).default("name"),
   order: z.enum(["asc", "desc"]).default("asc"),
+  publishedOnly: z.coerce.boolean().optional(),
 });
 
 const listTopicsResponseSchema = z.object({
@@ -187,6 +216,7 @@ const deleteTopicResponseSchema = z.object({
 
 export type SubjectParams = z.infer<typeof subjectParamsSchema>;
 export type CreateSubjectInput = z.infer<typeof createSubjectBodySchema>;
+export type EnsureSubjectTopicsInput = z.infer<typeof ensureSubjectTopicsBodySchema>;
 export type UpdateSubjectInput = z.infer<typeof updateSubjectBodySchema>;
 export type ListSubjectsQuery = z.infer<typeof listSubjectsQuerySchema>;
 export type TopicParams = z.infer<typeof topicParamsSchema>;
@@ -202,6 +232,8 @@ export const { schemas: subjectSchemas, $ref: subjectRef } = buildJsonSchemas({
   listSubjectsResponseSchema,
   getSubjectResponseSchema,
   createSubjectResponseSchema,
+  ensureSubjectTopicsBodySchema,
+  ensureSubjectTopicsResponseSchema,
   updateSubjectResponseSchema,
   deleteSubjectResponseSchema,
   topicParamsSchema,

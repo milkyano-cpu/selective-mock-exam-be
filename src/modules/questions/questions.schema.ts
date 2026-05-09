@@ -1,0 +1,355 @@
+import { z } from "zod";
+import { buildJsonSchemas } from "../../utils/build-schemas.js";
+
+// ── Shared sub-schemas ────────────────────────────────────────────────────────
+
+const MCQ_KEYS = ["A", "B", "C", "D", "E"] as const;
+
+const mcqOptionSchema = z.object({
+  key: z.enum(MCQ_KEYS),
+  text: z.string().min(1),
+});
+
+const mcqOptionsSchema = z
+  .array(mcqOptionSchema)
+  .length(5, "MCQ questions must have exactly 5 options (A–E)")
+  .refine(
+    (opts) => {
+      const keys = opts.map((o) => o.key);
+      return MCQ_KEYS.every((k) => keys.includes(k));
+    },
+    {
+      message: "MCQ options must include all keys A, B, C, D, and E",
+    }
+  );
+
+const questionMarkingTypeSchema = z.enum(["AUTO", "RUBRIC"]);
+
+// ── Request schemas ───────────────────────────────────────────────────────────
+
+const createQuestionBodySchema = z
+  .object({
+    subjectId: z.string().uuid(),
+    topicId: z.string().uuid(),
+    passageId: z.string().uuid().optional(),
+    rubricId: z.string().max(100).nullable().optional(),
+    questionNumber: z.number().int().min(1).optional(),
+    type: z.enum(["MCQ", "ESSAY"]),
+    difficulty: z.enum(["EASY", "MEDIUM", "HARD"]),
+    contentText: z.string().min(1).max(5000),
+    contentLatex: z.string().optional(),
+    isLatexFormat: z.boolean().optional().default(false),
+    markingType: questionMarkingTypeSchema.optional(),
+    maxMarks: z.number().int().min(1).optional(),
+    options: mcqOptionsSchema.optional(),
+    correctAnswer: z.string().optional(),
+    explanation: z.string().max(5000).optional(),
+    timeLimitSeconds: z.number().int().min(5).max(3600),
+    imageUrl: z.string().url().optional(),
+    imageUrls: z.array(z.string().min(1)).optional(),
+    subtopics: z.array(z.string().min(1)).default([]),
+    notes: z.string().max(2000).optional(),
+    questionId: z.string().max(100).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.type === "MCQ") {
+      if (!data.options) {
+        ctx.addIssue({ code: "custom", path: ["options"], message: "options are required for MCQ questions" });
+      }
+      if (!data.correctAnswer) {
+        ctx.addIssue({ code: "custom", path: ["correctAnswer"], message: "correctAnswer is required for MCQ questions" });
+      } else if (!MCQ_KEYS.includes(data.correctAnswer as typeof MCQ_KEYS[number])) {
+        ctx.addIssue({ code: "custom", path: ["correctAnswer"], message: "correctAnswer must be A, B, C, D, or E for MCQ questions" });
+      } else if (data.options) {
+        const optionKeys = data.options.map((o) => o.key);
+        if (!optionKeys.includes(data.correctAnswer as typeof MCQ_KEYS[number])) {
+          ctx.addIssue({ code: "custom", path: ["correctAnswer"], message: "correctAnswer must match one of the provided option keys" });
+        }
+      }
+    }
+    if (data.type === "ESSAY" && data.options !== undefined) {
+      ctx.addIssue({ code: "custom", path: ["options"], message: "options must not be provided for ESSAY questions" });
+    }
+    if (data.type === "MCQ" && data.rubricId) {
+      ctx.addIssue({ code: "custom", path: ["rubricId"], message: "MCQ questions must not use a rubric" });
+    }
+    if (data.type === "MCQ" && data.markingType === "RUBRIC") {
+      ctx.addIssue({ code: "custom", path: ["markingType"], message: "MCQ questions must use AUTO marking" });
+    }
+    if (data.type === "ESSAY" && data.markingType === "AUTO") {
+      ctx.addIssue({ code: "custom", path: ["markingType"], message: "ESSAY questions must use RUBRIC marking" });
+    }
+  });
+
+const updateQuestionBodySchema = z
+  .object({
+    subjectId: z.string().uuid().optional(),
+    topicId: z.string().uuid().optional(),
+    passageId: z.string().uuid().nullable().optional(),
+    rubricId: z.string().max(100).nullable().optional(),
+    questionNumber: z.number().int().min(1).nullable().optional(),
+    type: z.enum(["MCQ", "ESSAY"]).optional(),
+    difficulty: z.enum(["EASY", "MEDIUM", "HARD"]).optional(),
+    contentText: z.string().min(1).max(5000).optional(),
+    contentLatex: z.string().optional(),
+    isLatexFormat: z.boolean().optional(),
+    markingType: questionMarkingTypeSchema.optional(),
+    maxMarks: z.number().int().min(1).optional(),
+    options: mcqOptionsSchema.optional(),
+    correctAnswer: z.string().optional(),
+    explanation: z.string().max(5000).optional(),
+    timeLimitSeconds: z.number().int().min(5).max(3600).optional(),
+    imageUrl: z.string().url().nullable().optional(),
+    imageUrls: z.array(z.string().min(1)).optional(),
+    subtopics: z.array(z.string().min(1)).optional(),
+    notes: z.string().max(2000).nullable().optional(),
+    questionId: z.string().max(100).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.type === "MCQ") {
+      if (data.correctAnswer !== undefined && !MCQ_KEYS.includes(data.correctAnswer as typeof MCQ_KEYS[number])) {
+        ctx.addIssue({ code: "custom", path: ["correctAnswer"], message: "correctAnswer must be A, B, C, D, or E for MCQ questions" });
+      }
+    }
+    if (data.type === "ESSAY" && data.options !== undefined) {
+      ctx.addIssue({ code: "custom", path: ["options"], message: "options must not be provided for ESSAY questions" });
+    }
+    if (data.type === "MCQ" && data.rubricId) {
+      ctx.addIssue({ code: "custom", path: ["rubricId"], message: "MCQ questions must not use a rubric" });
+    }
+    if (data.type === "MCQ" && data.markingType === "RUBRIC") {
+      ctx.addIssue({ code: "custom", path: ["markingType"], message: "MCQ questions must use AUTO marking" });
+    }
+    if (data.type === "ESSAY" && data.markingType === "AUTO") {
+      ctx.addIssue({ code: "custom", path: ["markingType"], message: "ESSAY questions must use RUBRIC marking" });
+    }
+  });
+
+const listQuestionsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  search: z.string().optional(),
+  subjectId: z.string().uuid().optional(),
+  topicId: z.string().uuid().optional(),
+  passageId: z.string().uuid().optional(),
+  type: z.enum(["MCQ", "ESSAY"]).optional(),
+  difficulty: z.enum(["EASY", "MEDIUM", "HARD"]).optional(),
+  status: z.enum(["DRAFT", "PENDING_APPROVAL", "PUBLISHED"]).optional(),
+  hasImage: z.coerce.boolean().optional(),
+});
+
+const nextQuestionIdQuerySchema = z.object({
+  subjectId: z.string().uuid(),
+});
+
+const nextQuestionIdResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    questionId: z.string(),
+    prefix: z.string(),
+    nextNumber: z.number(),
+  }),
+});
+
+const rejectQuestionBodySchema = z.object({
+  rejectionNote: z.string().min(1).max(1000),
+});
+
+const idParamSchema = z.object({
+  id: z.string().uuid(),
+});
+
+// ── Response schemas ──────────────────────────────────────────────────────────
+
+const questionSchema = z.object({
+  id: z.string().uuid(),
+  questionId: z.string().nullable(),
+  questionNumber: z.number().nullable(),
+  subjectId: z.string().uuid(),
+  topicId: z.string().uuid(),
+  subjectName: z.string(),
+  topicName: z.string(),
+  tutorId: z.string().uuid(),
+  passageId: z.string().uuid().nullable(),
+  rubricId: z.string().nullable(),
+  rubric: z.object({
+    id: z.string(),
+    name: z.string(),
+    totalMaxScore: z.number(),
+  }).nullable(),
+  type: z.enum(["MCQ", "ESSAY"]),
+  difficulty: z.enum(["EASY", "MEDIUM", "HARD"]),
+  contentText: z.string(),
+  contentLatex: z.string().nullable(),
+  isLatexFormat: z.boolean(),
+  markingType: questionMarkingTypeSchema,
+  maxMarks: z.number(),
+  options: z.any().nullable(),
+  correctAnswer: z.string(),
+  explanation: z.string().nullable(),
+  timeLimitSeconds: z.number().nullable(),
+  imageUrl: z.string().nullable(),
+  imageUrls: z.array(z.string()),
+  subtopics: z.array(z.string()),
+  notes: z.string().nullable(),
+  status: z.enum(["DRAFT", "PENDING_APPROVAL", "PUBLISHED"]),
+  rejectionNote: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+const singleQuestionResponseSchema = z.object({
+  success: z.literal(true),
+  message: z.string(),
+  data: questionSchema,
+});
+
+const paginatedQuestionsResponseSchema = z.object({
+  success: z.literal(true),
+  message: z.string(),
+  data: z.array(questionSchema),
+  meta: z.object({
+    page: z.number(),
+    limit: z.number(),
+    total: z.number(),
+    totalPages: z.number(),
+  }),
+});
+
+const unresolvedRowDataSchema = z.object({
+  questionId: z.string(),
+  testName: z.string().nullable(),
+  questionNumber: z.number().nullable(),
+  subjectName: z.string(),
+  topicName: z.string(),
+  type: z.string(),
+  difficulty: z.string(),
+  contentText: z.string(),
+  optionA: z.string(),
+  optionB: z.string(),
+  optionC: z.string(),
+  optionD: z.string(),
+  optionE: z.string(),
+  correctAnswer: z.string(),
+  explanation: z.string().nullable(),
+  timeLimitSeconds: z.number().nullable(),
+  imageUrl: z.string().nullable(),
+  imageUrls: z.array(z.string()),
+  passageExternalId: z.string().nullable(),
+  passageText: z.string().nullable(),
+  rubricId: z.string().nullable(),
+  subtopics: z.array(z.string()),
+  notes: z.string().nullable(),
+  isLatexFormat: z.boolean().optional(),
+  markingType: questionMarkingTypeSchema,
+  maxMarks: z.number(),
+});
+
+const unresolvedRowSchema = z.object({
+  rowNumber: z.number(),
+  sectionName: z.string(),
+  topicName: z.string(),
+  reason: z.enum(["SUBJECT_NOT_FOUND", "TOPIC_NOT_FOUND"]),
+  resolvedSubjectId: z.string().uuid().optional(),
+  resolvedTopicId: z.string().uuid().optional(),
+  rowData: unresolvedRowDataSchema,
+});
+
+const importedQuestionItemSchema = z.object({
+  rowNumber: z.number(),
+  question: questionSchema,
+});
+
+const bulkImportResponseSchema = z.object({
+  success: z.literal(true),
+  message: z.string(),
+  data: z.object({
+    total: z.number(),
+    created: z.number(),
+    skipped: z.number(),
+    failed: z.number(),
+    unresolved: z.number(),
+    errors: z.array(z.object({ row: z.number(), reason: z.string() })),
+    skippedErrors: z.array(z.object({ row: z.number(), reason: z.string() })),
+    unresolvedRows: z.array(unresolvedRowSchema),
+    createdQuestions: z.array(importedQuestionItemSchema),
+  }),
+});
+
+const resolveImportBodySchema = z.object({
+  rows: z.array(unresolvedRowSchema).min(1),
+});
+
+const resolveImportResponseSchema = z.object({
+  success: z.literal(true),
+  message: z.string(),
+  data: z.object({
+    saved: z.number(),
+    stillUnresolved: z.array(unresolvedRowSchema),
+    createdQuestions: z.array(importedQuestionItemSchema),
+  }),
+});
+
+const uploadQuestionImageResponseSchema = z.object({
+  success: z.literal(true),
+  message: z.string(),
+  data: questionSchema,
+});
+
+const bulkSubmitBodySchema = z.object({
+  ids: z
+    .array(z.string().uuid())
+    .min(1, "At least one question ID is required")
+    .max(500, "At most 500 questions can be submitted at once"),
+});
+
+const bulkSubmitResponseSchema = z.object({
+  success: z.literal(true),
+  message: z.string(),
+  data: z.object({
+    submitted: z.number(),
+    failed: z.number(),
+    submittedIds: z.array(z.string().uuid()),
+    failures: z.array(z.object({
+      id: z.string().uuid(),
+      reason: z.string(),
+    })),
+  }),
+});
+
+const deleteQuestionResponseSchema = z.object({
+  success: z.literal(true),
+  message: z.string(),
+});
+
+// ── Exports ───────────────────────────────────────────────────────────────────
+
+export const { schemas: questionSchemas, $ref: questionRef } = buildJsonSchemas({
+  createQuestionBodySchema,
+  updateQuestionBodySchema,
+  listQuestionsQuerySchema,
+  nextQuestionIdQuerySchema,
+  nextQuestionIdResponseSchema,
+  rejectQuestionBodySchema,
+  idParamSchema,
+  questionSchema,
+  singleQuestionResponseSchema,
+  paginatedQuestionsResponseSchema,
+  bulkImportResponseSchema,
+  bulkSubmitBodySchema,
+  bulkSubmitResponseSchema,
+  deleteQuestionResponseSchema,
+  resolveImportBodySchema,
+  resolveImportResponseSchema,
+  uploadQuestionImageResponseSchema,
+});
+
+export type BulkSubmitBody = z.infer<typeof bulkSubmitBodySchema>;
+export type CreateQuestionBody = z.infer<typeof createQuestionBodySchema>;
+export type UpdateQuestionBody = z.infer<typeof updateQuestionBodySchema>;
+export type ListQuestionsQuery = z.infer<typeof listQuestionsQuerySchema>;
+export type NextQuestionIdQuery = z.infer<typeof nextQuestionIdQuerySchema>;
+export type RejectQuestionBody = z.infer<typeof rejectQuestionBodySchema>;
+export type ResolveImportBody = z.infer<typeof resolveImportBodySchema>;
+export type UnresolvedRowData = z.infer<typeof unresolvedRowDataSchema>;
+export type UnresolvedRowItem = z.infer<typeof unresolvedRowSchema>;

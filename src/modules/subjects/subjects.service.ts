@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import type {
   CreateSubjectInput,
+  EnsureSubjectTopicsInput,
   UpdateSubjectInput,
   ListSubjectsQuery,
   CreateTopicInput,
@@ -15,6 +16,7 @@ import { isUniqueConstraintError } from "../../utils/prisma-errors.js";
 const SUBJECT_SELECT = {
   id: true,
   name: true,
+  questionCode: true,
   description: true,
   createdAt: true,
   updatedAt: true,
@@ -29,13 +31,15 @@ const TOPIC_SELECT = {
   updatedAt: true,
 } as const;
 
+const normalizeTopicName = (name: string) => name.trim().toLocaleLowerCase();
+
 // ── Subject CRUD ────────────────────────────────────────────
 
 export async function listSubjects(
   prisma: PrismaClient,
   query: ListSubjectsQuery
 ) {
-  const { page, limit, search, sortBy, order } = query;
+  const { page, limit, search, sortBy, order, publishedOnly } = query;
   const skip = (page - 1) * limit;
 
   const where: Record<string, unknown> = {};
@@ -52,7 +56,7 @@ export async function listSubjects(
       where,
       select: {
         ...SUBJECT_SELECT,
-        _count: { select: { topics: true, questions: true } },
+        _count: { select: { topics: true, questions: publishedOnly ? { where: { status: "PUBLISHED" } } : true } },
       },
       orderBy: { [sortBy]: order },
       skip,
@@ -100,13 +104,108 @@ export async function createSubject(
     return await prisma.subject.create({
       data: {
         name: input.name.trim(),
+        questionCode: input.questionCode.trim().toUpperCase(),
         description: input.description ?? null,
       },
       select: SUBJECT_SELECT,
     });
-  } catch (error) {
+  } catch (error: any) {
     if (isUniqueConstraintError(error)) {
+      if (error.message?.includes("question_code")) {
+        throw createHttpError(409, "A subject with this question code already exists");
+      }
       throw createHttpError(409, "A subject with this name already exists");
+    }
+    throw error;
+  }
+}
+
+export async function ensureSubjectWithTopics(
+  prisma: PrismaClient,
+  input: EnsureSubjectTopicsInput
+) {
+  const subjectName = input.subject.name.trim();
+  const questionCode = input.subject.questionCode.trim().toUpperCase();
+  const topicInputs = [...new Map(
+    (input.topics ?? [])
+      .map((topic) => ({
+        name: topic.name.trim(),
+        description: topic.description ?? null,
+      }))
+      .filter((topic) => topic.name.length > 0)
+      .map((topic) => [normalizeTopicName(topic.name), topic])
+  ).values()];
+
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await tx.subject.createMany({
+        data: [{
+          name: subjectName,
+          questionCode,
+          description: input.subject.description ?? null,
+        }],
+        skipDuplicates: true,
+      });
+
+      const subject = await tx.subject.findUnique({
+        where: { name: subjectName },
+        select: SUBJECT_SELECT,
+      });
+
+      if (!subject) {
+        throw createHttpError(409, "A subject with this question code already exists");
+      }
+
+      const existingTopics = topicInputs.length > 0
+        ? await tx.topic.findMany({
+            where: {
+              subjectId: subject.id,
+              OR: topicInputs.map((topic) => ({
+                name: { equals: topic.name, mode: "insensitive" },
+              })),
+            },
+            select: TOPIC_SELECT,
+          })
+        : [];
+      const existingTopicKeys = new Set(existingTopics.map((topic) => normalizeTopicName(topic.name)));
+      const topicsToCreate = topicInputs.filter((topic) => !existingTopicKeys.has(normalizeTopicName(topic.name)));
+
+      if (topicsToCreate.length > 0) {
+        await tx.topic.createMany({
+          data: topicsToCreate.map((topic) => ({
+            subjectId: subject.id,
+            name: topic.name,
+            description: topic.description,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      const topicsByName = topicInputs.length > 0
+        ? await tx.topic.findMany({
+            where: {
+              subjectId: subject.id,
+              OR: topicInputs.map((topic) => ({
+                name: { equals: topic.name, mode: "insensitive" },
+              })),
+            },
+            select: TOPIC_SELECT,
+          })
+        : [];
+      const topicMap = new Map(topicsByName.map((topic) => [normalizeTopicName(topic.name), topic]));
+      const topics = topicInputs.flatMap((topic) => {
+        const createdTopic = topicMap.get(normalizeTopicName(topic.name));
+        return createdTopic ? [createdTopic] : [];
+      });
+
+      return { subject, topics };
+    });
+  } catch (error: any) {
+    if (isUniqueConstraintError(error)) {
+      if (error.message?.includes("question_code")) {
+        throw createHttpError(409, "A subject with this question code already exists");
+      }
+      throw createHttpError(409, "A subject or topic with the same name already exists");
     }
     throw error;
   }
@@ -121,6 +220,7 @@ export async function updateSubject(
 
   const data: Record<string, unknown> = {};
   if (input.name !== undefined) data.name = input.name.trim();
+  if (input.questionCode !== undefined) data.questionCode = input.questionCode.trim().toUpperCase();
   if (input.description !== undefined) data.description = input.description;
 
   if (Object.keys(data).length === 0) {
@@ -133,8 +233,11 @@ export async function updateSubject(
       data,
       select: SUBJECT_SELECT,
     });
-  } catch (error) {
+  } catch (error: any) {
     if (isUniqueConstraintError(error)) {
+      if (error.message?.includes("question_code")) {
+        throw createHttpError(409, "A subject with this question code already exists");
+      }
       throw createHttpError(409, "A subject with this name already exists");
     }
     throw error;
@@ -173,7 +276,7 @@ export async function listTopics(
 ) {
   await assertSubjectExists(prisma, subjectId);
 
-  const { page, limit, search, sortBy, order } = query;
+  const { page, limit, search, sortBy, order, publishedOnly } = query;
   const skip = (page - 1) * limit;
 
   const where: Record<string, unknown> = { subjectId };
@@ -190,7 +293,7 @@ export async function listTopics(
       where,
       select: {
         ...TOPIC_SELECT,
-        _count: { select: { questions: true } },
+        _count: { select: { questions: publishedOnly ? { where: { status: "PUBLISHED" } } : true } },
       },
       orderBy: { [sortBy]: order },
       skip,

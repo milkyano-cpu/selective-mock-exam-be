@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from "fastify";
 import type {
   SubjectParams,
   CreateSubjectInput,
+  EnsureSubjectTopicsInput,
   UpdateSubjectInput,
   ListSubjectsQuery,
   TopicParams,
@@ -13,6 +14,7 @@ import {
   listSubjects as listSubjectsService,
   getSubjectById,
   createSubject as createSubjectService,
+  ensureSubjectWithTopics as ensureSubjectWithTopicsService,
   updateSubject as updateSubjectService,
   deleteSubject as deleteSubjectService,
   listTopics as listTopicsService,
@@ -68,6 +70,29 @@ export async function createSubject(
     success: true,
     message: "Subject created successfully",
     data: subject,
+  });
+}
+
+export async function ensureSubjectWithTopics(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const body = request.body as EnsureSubjectTopicsInput;
+  const result = await ensureSubjectWithTopicsService(request.server.prisma, body);
+
+  request.log.info(
+    {
+      subjectId: result.subject.id,
+      topicCount: result.topics.length,
+      createdBy: request.user.sub,
+    },
+    "Subject and topics ensured"
+  );
+
+  return reply.send({
+    success: true,
+    message: "Subject and topics ensured successfully",
+    data: result,
   });
 }
 
