@@ -11,3 +11,8 @@ npm-debug.log
 !.env.prod
 *.log
 *.md
+tests
+docs
+coverage
+jest.config.cjs
+tsconfig.test.json

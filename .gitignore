@@ -12,5 +12,6 @@ coverage
 # Documentation
 *.md
 !docs/auth.md
+!docs/field-encryption.md
 # Docker
 docker-compose.override.yml
