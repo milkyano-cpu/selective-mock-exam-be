@@ -3,6 +3,7 @@ import {
   getMyProfile,
   getMyProfilePhotoAccess,
   uploadMyProfilePhoto,
+  softDeleteUser,
 } from "./users.service.js";
 
 async function readMultipartFileBuffer(request: FastifyRequest) {
@@ -53,6 +54,11 @@ export async function getMyProfilePhoto(request: FastifyRequest, reply: FastifyR
       updatedAt: profilePhoto.updatedAt.toISOString(),
     },
   });
+}
+
+export async function deleteMyAccount(request: FastifyRequest, reply: FastifyReply) {
+  await softDeleteUser(request.server.prisma, request.user.sub);
+  return reply.status(200).send({ success: true, message: "Account deleted successfully." });
 }
 
 export async function uploadProfilePhoto(request: FastifyRequest, reply: FastifyReply) {

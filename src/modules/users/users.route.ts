@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { userRef } from "./users.schema.js";
-import { getMe, getMyProfilePhoto, uploadProfilePhoto } from "./users.controller.js";
+import { getMe, getMyProfilePhoto, uploadProfilePhoto, deleteMyAccount } from "./users.controller.js";
 
 export async function usersRoutes(fastify: FastifyInstance) {
   fastify.get("/me", {
@@ -27,9 +27,6 @@ export async function usersRoutes(fastify: FastifyInstance) {
   });
 
   fastify.post("/me/profile-photo", {
-    config: {
-      rateLimit: { max: 10, timeWindow: "1 minute" },
-    },
     schema: {
       consumes: ["multipart/form-data"],
       response: {
@@ -39,5 +36,15 @@ export async function usersRoutes(fastify: FastifyInstance) {
     },
     preHandler: [fastify.authenticate],
     handler: uploadProfilePhoto,
+  });
+
+  fastify.delete("/me", {
+    schema: {
+      tags: ["Users"],
+      summary: "Delete own account (soft delete)",
+      response: { 200: userRef("deleteAccountResponseSchema") },
+    },
+    preHandler: [fastify.authenticate],
+    handler: deleteMyAccount,
   });
 }

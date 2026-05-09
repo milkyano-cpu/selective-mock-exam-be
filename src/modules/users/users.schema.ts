@@ -19,6 +19,7 @@ const getMeResponseSchema = z.object({
     fullName: z.string(),
     role: z.string(),
     status: z.string(),
+    tier: z.enum(["BASIC", "STANDARD", "PREMIUM"]),
     hasProfilePhoto: z.boolean(),
     profilePhotoUpdatedAt: z.string().nullable(),
     createdAt: z.string(),
@@ -57,10 +58,16 @@ const userNotFoundResponseSchema = z.object({
   statusCode: z.number(),
 });
 
+const deleteAccountResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+});
+
 export const { schemas: userSchemas, $ref: userRef } = buildJsonSchemas({
   getMeResponseSchema,
   userUnauthorizedResponseSchema,
   getMyProfilePhotoResponseSchema,
   uploadMyProfilePhotoResponseSchema,
   userNotFoundResponseSchema,
+  deleteAccountResponseSchema,
 });
