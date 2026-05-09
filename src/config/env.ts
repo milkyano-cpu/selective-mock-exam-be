@@ -33,14 +33,44 @@ const envSchema = z.object({
 
   // Object Storage (MinIO / S3)
   S3_ENDPOINT: z.string().url({ error: "S3_ENDPOINT must be a valid URL" }),
+  S3_PUBLIC_ENDPOINT: z.string().url({ error: "S3_PUBLIC_ENDPOINT must be a valid URL" }).optional(),
   S3_ACCESS_KEY: z.string({ error: "S3_ACCESS_KEY is required" }).min(1),
   S3_SECRET_KEY: z.string({ error: "S3_SECRET_KEY is required" }).min(1),
   S3_REGION: z.string().default("us-east-1"),
   S3_PROFILE_PHOTO_BUCKET: z
     .string({ error: "S3_PROFILE_PHOTO_BUCKET is required" })
     .min(1),
+  S3_QUESTION_IMAGE_BUCKET: z.string().default("questions"),
+  S3_BANNER_IMAGE_BUCKET: z.string().default("banners"),
+  S3_RESOURCE_BUCKET: z.string().default("resources"),
+  S3_INVOICE_BUCKET: z.string().default("invoices"),
+  S3_BUCKET_INIT_TIMEOUT_MS: z.coerce.number().int().min(500).default(3000),
   S3_SIGNED_URL_EXPIRES_IN_SECONDS: z.coerce.number().int().min(60).default(3600),
   PROFILE_PHOTO_MAX_SIZE_BYTES: z.coerce.number().int().min(1).default(5 * 1024 * 1024),
+  BANNER_IMAGE_MAX_SIZE_BYTES: z.coerce.number().int().min(1).default(10 * 1024 * 1024),
+  RESOURCE_FILE_MAX_SIZE_BYTES: z.coerce.number().int().min(1).default(50 * 1024 * 1024),
+
+  // Stripe
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  STRIPE_STANDARD_PRICE_ID: z.string().optional(),
+  STRIPE_PREMIUM_PRICE_ID: z.string().optional(),
+
+  // VAPID Keys for Web Push
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  VAPID_EMAIL: z.string().optional(),
+
+  // AI (Anthropic) — optional; essay AI grading is disabled if not set
+  ANTHROPIC_API_KEY: z.string().optional(),
+
+  // Field-level encryption
+  FIELD_ENCRYPTION_KEY: z
+    .string({ error: "FIELD_ENCRYPTION_KEY is required" })
+    .length(64, { error: "FIELD_ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)" }),
+  BLIND_INDEX_KEY: z
+    .string({ error: "BLIND_INDEX_KEY is required" })
+    .length(64, { error: "BLIND_INDEX_KEY must be exactly 64 hex characters (32 bytes)" }),
 
   // CORS
   CORS_ORIGIN: z.string().default("http://localhost:3000"),
@@ -62,6 +92,8 @@ const TEST_ENV_DEFAULTS = {
   S3_ACCESS_KEY: "test-access-key",
   S3_SECRET_KEY: "test-secret-key",
   S3_PROFILE_PHOTO_BUCKET: "test-profile-photos",
+  FIELD_ENCRYPTION_KEY: "0".repeat(64),
+  BLIND_INDEX_KEY: "1".repeat(64),
 } as const;
 
 function parseEnv(): Env {

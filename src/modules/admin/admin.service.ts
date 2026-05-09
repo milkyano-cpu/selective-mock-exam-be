@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import type {
   CreateStaffInput,
   ListTutorsQuery,
+  ListUsersQuery,
   UpdateTutorInput,
   UpdateTutorStatusInput,
 } from "./admin.schema.js";
@@ -10,13 +11,17 @@ import { createHttpError } from "../../utils/http-error.js";
 import { generatePassword } from "../../utils/password-generator.js";
 import { normalizeEmail } from "../../utils/normalize.js";
 import { isUniqueConstraintError } from "../../utils/prisma-errors.js";
+import { encryptUserFields, emailToBlindIndex, decryptUser } from "../../utils/user-crypto.js";
+import { computeBlindIndex, encryptField } from "../../utils/field-encryption.js";
 
 const SALT_ROUNDS = 12;
 
 const TUTOR_SELECT = {
   id: true,
   email: true,
+  emailEncrypted: true,
   fullName: true,
+  fullNameTokens: true,
   role: true,
   status: true,
   phoneNumber: true,
@@ -42,10 +47,10 @@ export async function createStaffAccount(
   prisma: PrismaClient,
   input: CreateStaffInput
 ): Promise<CreatedStaff> {
-  const email = normalizeEmail(input.email);
+  const emailBlindIndex = emailToBlindIndex(input.email);
 
   const existing = await prisma.user.findUnique({
-    where: { email },
+    where: { email: emailBlindIndex },
     select: { id: true },
   });
   if (existing) throw createHttpError(409, "Email already registered");
@@ -54,24 +59,32 @@ export async function createStaffAccount(
   const password = input.password ?? generatePassword();
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
+  const encrypted = encryptUserFields({ email: input.email, fullName: input.fullName });
+
   try {
-    const user = await prisma.user.create({
+    const rawUser = await prisma.user.create({
       data: {
-        email,
-        fullName: input.fullName,
+        ...encrypted,
         passwordHash,
         role: input.role,
+        tier: "PREMIUM",
         status: "ACTIVE",
       },
       select: {
         id: true,
         email: true,
+        emailEncrypted: true,
         fullName: true,
         role: true,
         status: true,
       },
     });
 
+    const user = {
+      ...decryptUser(rawUser),
+      role: rawUser.role,
+      status: rawUser.status,
+    };
     return { user, password, passwordGenerated };
   } catch (error) {
     if (isUniqueConstraintError(error)) {
@@ -79,6 +92,91 @@ export async function createStaffAccount(
     }
     throw error;
   }
+}
+
+// ── Tier sync ───────────────────────────────────────────
+
+export async function syncUserTier(
+  prisma: PrismaClient,
+  userId: string
+): Promise<"BASIC" | "STANDARD" | "PREMIUM"> {
+  const now = new Date();
+
+  const activeSubs = await prisma.subscription.findMany({
+    where: {
+      userId,
+      status: { in: ["active", "trialing"] },
+      currentPeriodEnd: { gt: now },
+    },
+    select: { tier: true },
+  });
+
+  const rank = { BASIC: 0, STANDARD: 1, PREMIUM: 2 } as const;
+  const tier = activeSubs.reduce<"BASIC" | "STANDARD" | "PREMIUM">(
+    (best, sub) => (rank[sub.tier] > rank[best] ? sub.tier : best),
+    "BASIC"
+  );
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { tier },
+  });
+
+  return tier;
+}
+
+// ── Generic list users by role ───────────────────────────
+
+const USER_SELECT = {
+  id: true,
+  email: true,
+  emailEncrypted: true,
+  fullName: true,
+  fullNameTokens: true,
+  role: true,
+  status: true,
+  tier: true,
+  phoneNumber: true,
+  profilePhotoKey: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+export async function listUsers(
+  prisma: PrismaClient,
+  query: ListUsersQuery
+) {
+  const { page, limit, search, role, sortBy, order } = query;
+  const skip = (page - 1) * limit;
+
+  const where: Record<string, unknown> = { role, deletedAt: null };
+
+  if (search) {
+    const nameTokens = search.toLowerCase().split(/\s+/).filter(Boolean).map(computeBlindIndex);
+    where.OR = [
+      { email: emailToBlindIndex(search) },
+      { fullNameTokens: { hasEvery: nameTokens } },
+    ];
+  }
+
+  const [rawUsers, total] = await Promise.all([
+    prisma.user.findMany({
+      where,
+      select: USER_SELECT,
+      orderBy: { [sortBy]: order },
+      skip,
+      take: limit,
+    }),
+    prisma.user.count({ where }),
+  ]);
+
+  return {
+    data: rawUsers.map((u) => {
+      const { fullNameTokens, ...rest } = decryptUser(u);
+      return rest;
+    }),
+    meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  };
 }
 
 // ── Tutor CRUD ──────────────────────────────────────────
@@ -90,20 +188,21 @@ export async function listTutors(
   const { page, limit, search, status, sortBy, order } = query;
   const skip = (page - 1) * limit;
 
-  const where: Record<string, unknown> = { role: "TUTOR" as const };
+  const where: Record<string, unknown> = { role: "TUTOR" as const, deletedAt: null };
 
   if (status) {
     where.status = status;
   }
 
   if (search) {
+    const nameTokens = search.toLowerCase().split(/\s+/).filter(Boolean).map(computeBlindIndex);
     where.OR = [
-      { fullName: { contains: search, mode: "insensitive" } },
-      { email: { contains: search, mode: "insensitive" } },
+      { email: emailToBlindIndex(search) },
+      { fullNameTokens: { hasEvery: nameTokens } },
     ];
   }
 
-  const [tutors, total] = await Promise.all([
+  const [rawTutors, total] = await Promise.all([
     prisma.user.findMany({
       where,
       select: TUTOR_SELECT,
@@ -115,7 +214,10 @@ export async function listTutors(
   ]);
 
   return {
-    data: tutors,
+    data: rawTutors.map((t) => {
+      const { fullNameTokens, ...rest } = decryptUser(t);
+      return rest;
+    }),
     meta: {
       page,
       limit,
@@ -132,7 +234,8 @@ export async function getTutorById(prisma: PrismaClient, id: string) {
   });
 
   if (!tutor) throw createHttpError(404, "Tutor not found");
-  return tutor;
+  const { fullNameTokens, ...rest } = decryptUser(tutor);
+  return rest;
 }
 
 export async function updateTutor(
@@ -142,26 +245,44 @@ export async function updateTutor(
 ) {
   await getTutorById(prisma, id);
 
-  if (input.email) {
-    input.email = normalizeEmail(input.email);
+  // Build update data, encrypting PII fields as needed
+  const data: Record<string, unknown> = {};
+
+  if (input.email !== undefined) {
+    const newBlindIndex = emailToBlindIndex(input.email);
     const existing = await prisma.user.findFirst({
-      where: { email: input.email, id: { not: id } },
+      where: { email: newBlindIndex, id: { not: id } },
       select: { id: true },
     });
     if (existing) throw createHttpError(409, "Email already in use");
+    data.email = newBlindIndex;
+    data.emailEncrypted = encryptField(normalizeEmail(input.email));
   }
 
-  const data = Object.fromEntries(
-    Object.entries(input).filter(([, v]) => v !== undefined)
-  );
+  if (input.fullName !== undefined) {
+    const encrypted = encryptUserFields({ email: "", fullName: input.fullName });
+    data.fullName = encrypted.fullName;
+    data.fullNameTokens = encrypted.fullNameTokens;
+  }
+
+  if (input.phoneNumber !== undefined) {
+    data.phoneNumber = input.phoneNumber !== null ? encryptField(input.phoneNumber) : null;
+  }
+
+  if (input.address !== undefined) {
+    data.address = input.address !== null ? encryptField(input.address) : null;
+  }
+
+  if (input.gender !== undefined) data.gender = input.gender;
 
   try {
-    const tutor = await prisma.user.update({
+    const rawTutor = await prisma.user.update({
       where: { id },
       data,
       select: TUTOR_SELECT,
     });
-    return tutor;
+    const { fullNameTokens, ...rest } = decryptUser(rawTutor);
+    return rest;
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw createHttpError(409, "Email already in use");
@@ -177,17 +298,36 @@ export async function updateTutorStatus(
 ) {
   await getTutorById(prisma, id);
 
-  const tutor = await prisma.user.update({
+  const rawTutor = await prisma.user.update({
     where: { id },
     data: { status: input.status },
     select: TUTOR_SELECT,
   });
 
-  return tutor;
+  const { fullNameTokens, ...rest } = decryptUser(rawTutor);
+  return rest;
 }
 
 export async function deleteTutor(prisma: PrismaClient, id: string) {
   await getTutorById(prisma, id);
 
-  await prisma.user.delete({ where: { id } });
+  const now = new Date();
+  await prisma.refreshToken.updateMany({
+    where: { userId: id, revokedAt: null },
+    data: { revokedAt: now },
+  });
+  await prisma.user.update({ where: { id }, data: { deletedAt: now } });
+}
+
+export async function deleteUserById(prisma: PrismaClient, userId: string) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, deletedAt: true } });
+  if (!user) throw createHttpError(404, "User not found");
+  if (user.deletedAt) throw createHttpError(409, "User is already deleted");
+
+  const now = new Date();
+  await prisma.refreshToken.updateMany({
+    where: { userId, revokedAt: null },
+    data: { revokedAt: now },
+  });
+  await prisma.user.update({ where: { id: userId }, data: { deletedAt: now } });
 }

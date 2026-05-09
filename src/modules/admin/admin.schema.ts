@@ -131,6 +131,50 @@ const notFoundResponseSchema = z.object({
   statusCode: z.number(),
 });
 
+const syncTiersResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+});
+
+const deleteUserResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+});
+
+const listUsersQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  search: z.string().optional(),
+  role: z.enum(["STUDENT", "PARENT", "TUTOR", "ADMIN"]),
+  sortBy: z.enum(["fullName", "email", "createdAt", "status"]).default("createdAt"),
+  order: z.enum(["asc", "desc"]).default("desc"),
+});
+
+const userItemSchema = z.object({
+  id: z.string(),
+  email: z.string(),
+  fullName: z.string(),
+  role: z.string(),
+  status: z.string(),
+  tier: z.enum(["BASIC", "STANDARD", "PREMIUM"]),
+  phoneNumber: z.string().nullable(),
+  photoUrl: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const listUsersResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z.array(userItemSchema),
+  meta: z.object({
+    page: z.number(),
+    limit: z.number(),
+    total: z.number(),
+    totalPages: z.number(),
+  }),
+});
+
 // ── Exports ─────────────────────────────────────────────
 
 export type CreateStaffInput = z.infer<typeof createStaffBodySchema>;
@@ -138,6 +182,7 @@ export type ListTutorsQuery = z.infer<typeof listTutorsQuerySchema>;
 export type TutorParams = z.infer<typeof tutorParamsSchema>;
 export type UpdateTutorInput = z.infer<typeof updateTutorBodySchema>;
 export type UpdateTutorStatusInput = z.infer<typeof updateTutorStatusBodySchema>;
+export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>;
 
 export const { schemas: adminSchemas, $ref: adminRef } = buildJsonSchemas({
   createStaffBodySchema,
@@ -153,4 +198,8 @@ export const { schemas: adminSchemas, $ref: adminRef } = buildJsonSchemas({
   updateTutorStatusResponseSchema,
   deleteTutorResponseSchema,
   notFoundResponseSchema,
+  listUsersQuerySchema,
+  listUsersResponseSchema,
+  syncTiersResponseSchema,
+  deleteUserResponseSchema,
 });

@@ -104,7 +104,6 @@ export async function login(request: FastifyRequest, reply: FastifyReply) {
   const jti = randomUUID();
   const accessToken = await reply.jwtSign({
     sub: user.id,
-    email: user.email,
     role: user.role,
     jti,
   });
@@ -159,7 +158,6 @@ export async function refresh(request: FastifyRequest, reply: FastifyReply) {
 
   const accessToken = await reply.jwtSign({
     sub: user.id,
-    email: user.email,
     role: user.role,
     jti,
   });
@@ -183,9 +181,6 @@ export async function refresh(request: FastifyRequest, reply: FastifyReply) {
   return reply.status(200).send({
     success: true,
     message: "Token refreshed successfully",
-    data: {
-      expiresIn: env.JWT_EXPIRES_IN,
-    },
   });
 }
 

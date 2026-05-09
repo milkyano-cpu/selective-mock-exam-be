@@ -2,17 +2,21 @@ import type { FastifyRequest, FastifyReply } from "fastify";
 import type {
   CreateStaffInput,
   ListTutorsQuery,
+  ListUsersQuery,
   TutorParams,
   UpdateTutorInput,
   UpdateTutorStatusInput,
 } from "./admin.schema.js";
 import {
   createStaffAccount,
+  listUsers as listUsersService,
+  syncUserTier,
   listTutors as listTutorsService,
   getTutorById,
   updateTutor as updateTutorService,
   updateTutorStatus as updateTutorStatusService,
   deleteTutor as deleteTutorService,
+  deleteUserById,
 } from "./admin.service.js";
 import { sendStaffWelcomeEmail } from "../../lib/email.js";
 
@@ -61,6 +65,56 @@ export async function createStaff(
       user,
       emailSent,
     },
+  });
+}
+
+export async function listUsersHandler(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const query = request.query as ListUsersQuery;
+  const result = await listUsersService(request.server.prisma, query);
+
+  const data = await Promise.all(
+    result.data.map(async ({ profilePhotoKey, ...user }) => {
+      let photoUrl: string | null = null;
+      if (profilePhotoKey) {
+        try {
+          photoUrl = await request.server.storage.getProfilePhotoSignedUrl(profilePhotoKey);
+        } catch {
+          // silent — photo unavailable
+        }
+      }
+      return { ...user, photoUrl };
+    })
+  );
+
+  return reply.send({
+    success: true,
+    message: "Users retrieved successfully",
+    data,
+    meta: result.meta,
+  });
+}
+
+export async function syncAllTiersHandler(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const students = await request.server.prisma.user.findMany({
+    where: { role: "STUDENT" },
+    select: { id: true },
+  });
+
+  await Promise.all(
+    students.map((s) => syncUserTier(request.server.prisma, s.id))
+  );
+
+  request.log.info({ count: students.length, syncedBy: request.user.sub }, "Bulk tier sync completed");
+
+  return reply.send({
+    success: true,
+    message: `Synced tier for ${students.length} student(s)`,
   });
 }
 
@@ -149,5 +203,23 @@ export async function deleteTutor(
   return reply.send({
     success: true,
     message: "Tutor deleted successfully",
+  });
+}
+
+export async function deleteUserHandler(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const { id } = request.params as { id: string };
+  await deleteUserById(request.server.prisma, id);
+
+  request.log.info(
+    { userId: id, deletedBy: request.user.sub },
+    "User account soft-deleted"
+  );
+
+  return reply.send({
+    success: true,
+    message: "User deleted successfully.",
   });
 }

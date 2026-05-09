@@ -30,13 +30,21 @@ export async function sendParentWelcomeEmail(params: WelcomeParentParams) {
         <p>Your parent account has been created successfully. You also registered the following student(s):</p>
         <ul>${studentList}</ul>
         <p>Each student has been sent their own login credentials separately.</p>
-        <h3>Your login credentials</h3>
-        <p>
-          <strong>Email:</strong> ${escapeHtml(params.to)}<br>
-          <strong>Password:</strong> <code style="background:#f4f4f4;padding:4px 8px;border-radius:4px;">${escapeHtml(params.password)}</code>
-        </p>
-        <p>
-          <a href="${env.APP_LOGIN_URL}" style="background:#2563eb;color:white;padding:10px 20px;text-decoration:none;border-radius:6px;display:inline-block;">Login to ${env.APP_NAME}</a>
+        
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:20px; margin:24px 0;">
+          <h3 style="margin-top:0; color:#1e293b; font-size:16px;">Your login credentials</h3>
+          <div style="margin-bottom:16px;">
+            <span style="color:#64748b; font-size:11px; font-weight:bold; text-transform:uppercase; letter-spacing:0.05em; display:block; margin-bottom:4px;">Email Address</span>
+            <div style="font-family: 'Courier New', Courier, monospace; font-size:15px; color:#0f172a; font-weight: bold;">${escapeHtml(params.to)}</div>
+          </div>
+          <div>
+            <span style="color:#64748b; font-size:11px; font-weight:bold; text-transform:uppercase; letter-spacing:0.05em; display:block; margin-bottom:4px;">Password</span>
+            <div style="font-family: 'Courier New', Courier, monospace; font-size:15px; color:#2563eb; background:#ffffff; border:1px dashed #cbd5e1; padding:8px 12px; border-radius:6px; display:inline-block; font-weight: bold;">${escapeHtml(params.password)}</div>
+          </div>
+        </div>
+
+        <p style="margin-top:24px;">
+          <a href="${env.APP_LOGIN_URL}" style="background:#2563eb;color:white;padding:12px 24px;text-decoration:none;border-radius:8px;display:inline-block;font-weight:bold;">Login to ${env.APP_NAME}</a>
         </p>
         <p style="color:#666;font-size:13px;">For security, please change your password after the first login.</p>
         <span style="display:none; color:transparent; font-size:0px; line-height:0;">${Date.now()}</span>
@@ -63,13 +71,21 @@ export async function sendStaffWelcomeEmail(params: WelcomeStaffParams) {
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2>Welcome to ${env.APP_NAME}, ${escapeHtml(params.fullName)}</h2>
         <p>An <strong>${roleLabel}</strong> account has been created for you.</p>
-        <h3>Your login credentials</h3>
-        <p>
-          <strong>Email:</strong> ${escapeHtml(params.to)}<br>
-          <strong>Password:</strong> <code style="background:#f4f4f4;padding:4px 8px;border-radius:4px;">${escapeHtml(params.password)}</code>
-        </p>
-        <p>
-          <a href="${env.APP_LOGIN_URL}" style="background:#2563eb;color:white;padding:10px 20px;text-decoration:none;border-radius:6px;display:inline-block;">Login to ${env.APP_NAME}</a>
+
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:20px; margin:24px 0;">
+          <h3 style="margin-top:0; color:#1e293b; font-size:16px;">Your login credentials</h3>
+          <div style="margin-bottom:16px;">
+            <span style="color:#64748b; font-size:11px; font-weight:bold; text-transform:uppercase; letter-spacing:0.05em; display:block; margin-bottom:4px;">Email Address</span>
+            <div style="font-family: 'Courier New', Courier, monospace; font-size:15px; color:#0f172a; font-weight: bold;">${escapeHtml(params.to)}</div>
+          </div>
+          <div>
+            <span style="color:#64748b; font-size:11px; font-weight:bold; text-transform:uppercase; letter-spacing:0.05em; display:block; margin-bottom:4px;">Password</span>
+            <div style="font-family: 'Courier New', Courier, monospace; font-size:15px; color:#2563eb; background:#ffffff; border:1px dashed #cbd5e1; padding:8px 12px; border-radius:6px; display:inline-block; font-weight: bold;">${escapeHtml(params.password)}</div>
+          </div>
+        </div>
+
+        <p style="margin-top:24px;">
+          <a href="${env.APP_LOGIN_URL}" style="background:#2563eb;color:white;padding:12px 24px;text-decoration:none;border-radius:8px;display:inline-block;font-weight:bold;">Login to ${env.APP_NAME}</a>
         </p>
         <p style="color:#666;font-size:13px;">For security, please change your password after the first login.</p>
         <span style="display:none; color:transparent; font-size:0px; line-height:0;">${Date.now()}</span>
@@ -87,13 +103,21 @@ export async function sendStudentWelcomeEmail(params: WelcomeStudentParams) {
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2>Welcome to ${env.APP_NAME}, ${escapeHtml(params.fullName)}</h2>
         <p>An account has been created for you by your parent <strong>${escapeHtml(params.parentName)}</strong>.</p>
-        <h3>Your login credentials</h3>
-        <p>
-          <strong>Email:</strong> ${escapeHtml(params.to)}<br>
-          <strong>Password:</strong> <code style="background:#f4f4f4;padding:4px 8px;border-radius:4px;">${escapeHtml(params.password)}</code>
-        </p>
-        <p>
-          <a href="${env.APP_LOGIN_URL}" style="background:#2563eb;color:white;padding:10px 20px;text-decoration:none;border-radius:6px;display:inline-block;">Login to ${env.APP_NAME}</a>
+
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:20px; margin:24px 0;">
+          <h3 style="margin-top:0; color:#1e293b; font-size:16px;">Your login credentials</h3>
+          <div style="margin-bottom:16px;">
+            <span style="color:#64748b; font-size:11px; font-weight:bold; text-transform:uppercase; letter-spacing:0.05em; display:block; margin-bottom:4px;">Email Address</span>
+            <div style="font-family: 'Courier New', Courier, monospace; font-size:15px; color:#0f172a; font-weight: bold;">${escapeHtml(params.to)}</div>
+          </div>
+          <div>
+            <span style="color:#64748b; font-size:11px; font-weight:bold; text-transform:uppercase; letter-spacing:0.05em; display:block; margin-bottom:4px;">Password</span>
+            <div style="font-family: 'Courier New', Courier, monospace; font-size:15px; color:#2563eb; background:#ffffff; border:1px dashed #cbd5e1; padding:8px 12px; border-radius:6px; display:inline-block; font-weight: bold;">${escapeHtml(params.password)}</div>
+          </div>
+        </div>
+
+        <p style="margin-top:24px;">
+          <a href="${env.APP_LOGIN_URL}" style="background:#2563eb;color:white;padding:12px 24px;text-decoration:none;border-radius:8px;display:inline-block;font-weight:bold;">Login to ${env.APP_NAME}</a>
         </p>
         <p style="color:#666;font-size:13px;">For security, please change your password after the first login.</p>
         <span style="display:none; color:transparent; font-size:0px; line-height:0;">${Date.now()}</span>

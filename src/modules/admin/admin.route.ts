@@ -2,19 +2,36 @@ import type { FastifyInstance } from "fastify";
 import { adminRef } from "./admin.schema.js";
 import {
   createStaff,
+  listUsersHandler,
+  syncAllTiersHandler,
   listTutors,
   getTutor,
   updateTutor,
   updateTutorStatus,
   deleteTutor,
+  deleteUserHandler,
 } from "./admin.controller.js";
 import { requireRole } from "../../utils/authz.js";
 
 export async function adminRoutes(fastify: FastifyInstance) {
-  fastify.post("/users", {
-    config: {
-      rateLimit: { max: 30, timeWindow: "1 minute" },
+  fastify.get("/users", {
+    schema: {
+      querystring: adminRef("listUsersQuerySchema"),
+      response: { 200: adminRef("listUsersResponseSchema") },
     },
+    preHandler: [fastify.authenticate, requireRole("ADMIN")],
+    handler: listUsersHandler,
+  });
+
+  fastify.post("/users/sync-tiers", {
+    schema: {
+      response: { 200: adminRef("syncTiersResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN")],
+    handler: syncAllTiersHandler,
+  });
+
+  fastify.post("/users", {
     schema: {
       body: adminRef("createStaffBodySchema"),
       response: {
@@ -26,12 +43,23 @@ export async function adminRoutes(fastify: FastifyInstance) {
     handler: createStaff,
   });
 
+  fastify.delete("/users/:id", {
+    schema: {
+      tags: ["Admin"],
+      summary: "Soft-delete any user by ID",
+      response: {
+        200: adminRef("deleteUserResponseSchema"),
+        403: adminRef("forbiddenResponseSchema"),
+        404: adminRef("notFoundResponseSchema"),
+      },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN")],
+    handler: deleteUserHandler,
+  });
+
   // ── Tutor CRUD ──────────────────────────────────────────
 
   fastify.get("/tutors", {
-    config: {
-      rateLimit: { max: 60, timeWindow: "1 minute" },
-    },
     schema: {
       querystring: adminRef("listTutorsQuerySchema"),
       response: {
@@ -44,9 +72,6 @@ export async function adminRoutes(fastify: FastifyInstance) {
   });
 
   fastify.get("/tutors/:id", {
-    config: {
-      rateLimit: { max: 60, timeWindow: "1 minute" },
-    },
     schema: {
       params: adminRef("tutorParamsSchema"),
       response: {
@@ -60,9 +85,6 @@ export async function adminRoutes(fastify: FastifyInstance) {
   });
 
   fastify.put("/tutors/:id", {
-    config: {
-      rateLimit: { max: 30, timeWindow: "1 minute" },
-    },
     schema: {
       params: adminRef("tutorParamsSchema"),
       body: adminRef("updateTutorBodySchema"),
@@ -77,9 +99,6 @@ export async function adminRoutes(fastify: FastifyInstance) {
   });
 
   fastify.patch("/tutors/:id/status", {
-    config: {
-      rateLimit: { max: 30, timeWindow: "1 minute" },
-    },
     schema: {
       params: adminRef("tutorParamsSchema"),
       body: adminRef("updateTutorStatusBodySchema"),
@@ -94,9 +113,6 @@ export async function adminRoutes(fastify: FastifyInstance) {
   });
 
   fastify.delete("/tutors/:id", {
-    config: {
-      rateLimit: { max: 15, timeWindow: "1 minute" },
-    },
     schema: {
       params: adminRef("tutorParamsSchema"),
       response: {

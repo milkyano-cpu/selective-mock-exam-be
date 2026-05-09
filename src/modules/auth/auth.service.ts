@@ -6,6 +6,8 @@ import { createHttpError } from "../../utils/http-error.js";
 import { generatePassword } from "../../utils/password-generator.js";
 import { normalizeEmail } from "../../utils/normalize.js";
 import { isUniqueConstraintError } from "../../utils/prisma-errors.js";
+import { encryptUserFields, emailToBlindIndex, decryptUser } from "../../utils/user-crypto.js";
+import { decryptField } from "../../utils/field-encryption.js";
 
 const SALT_ROUNDS = 12;
 
@@ -52,16 +54,17 @@ export async function registerParentWithStudents(
     throw createHttpError(400, "Duplicate email addresses in the request");
   }
 
-  // Check all emails against the DB in one query
+  // Check all emails against the DB in one query using blind indexes
+  const allBlindIndexes = allEmails.map((e) => emailToBlindIndex(e));
   const existing = await prisma.user.findMany({
-    where: { email: { in: allEmails } },
-    select: { email: true },
+    where: { email: { in: allBlindIndexes } },
+    select: { emailEncrypted: true },
   });
 
   if (existing.length > 0) {
     throw createHttpError(
       409,
-      `Email already registered: ${existing.map((u) => u.email).join(", ")}`
+      `Email already registered: ${existing.map((u) => decryptField(u.emailEncrypted)).join(", ")}`
     );
   }
 
@@ -76,39 +79,42 @@ export async function registerParentWithStudents(
 
   // Create everything atomically. If a unique constraint wins a race, return 409.
   let result: {
-    parent: { id: string; email: string; fullName: string };
-    students: { id: string; email: string; fullName: string }[];
+    parent: { id: string };
+    students: { id: string }[];
   };
 
   try {
     result = await prisma.$transaction(async (tx) => {
+      const parentEncrypted = encryptUserFields({
+        email: parentInput.email,
+        fullName: parentInput.fullName,
+        ...(parentInput.phoneNumber !== undefined ? { phoneNumber: parentInput.phoneNumber } : {}),
+        ...(parentInput.address !== undefined ? { address: parentInput.address } : {}),
+      });
       const parent = await tx.user.create({
         data: {
-          email: parentInput.email,
-          fullName: parentInput.fullName,
+          ...parentEncrypted,
           passwordHash: parentHash,
           role: "PARENT",
-          phoneNumber: parentInput.phoneNumber,
-          address: parentInput.address,
         },
-        select: { id: true, email: true, fullName: true },
+        select: { id: true },
       });
 
       const students = await Promise.all(
-        studentInputs.map((s, i) =>
-          tx.user.create({
+        studentInputs.map((s, i) => {
+          const studentEncrypted = encryptUserFields({ email: s.email, fullName: s.fullName });
+          return tx.user.create({
             data: {
-              email: s.email,
-              fullName: s.fullName,
+              ...studentEncrypted,
               passwordHash: studentHashes[i]!,
               role: "STUDENT",
               gender: s.gender,
               yearLevel: s.yearLevel,
               schoolName: s.schoolName,
             },
-            select: { id: true, email: true, fullName: true },
-          })
-        )
+            select: { id: true },
+          });
+        })
       );
 
       await tx.parentStudentRelation.createMany({
@@ -128,9 +134,16 @@ export async function registerParentWithStudents(
   }
 
   return {
-    parent: { ...result.parent, password: parentPassword },
+    parent: {
+      id: result.parent.id,
+      email: parentInput.email,
+      fullName: parentInput.fullName,
+      password: parentPassword,
+    },
     students: result.students.map((s, i) => ({
-      ...s,
+      id: s.id,
+      email: studentInputs[i]!.email,
+      fullName: studentInputs[i]!.fullName,
       password: studentPasswords[i]!,
     })),
   };
@@ -138,11 +151,15 @@ export async function registerParentWithStudents(
 
 export async function loginUser(prisma: PrismaClient, input: LoginInput) {
   const user = await prisma.user.findUnique({
-    where: { email: normalizeEmail(input.email) },
+    where: { email: emailToBlindIndex(input.email) },
   });
 
   if (!user) {
     throw createHttpError(401, "Invalid email or password");
+  }
+
+  if (user.deletedAt) {
+    throw createHttpError(403, "This account has been deleted.");
   }
 
   if (user.status !== "ACTIVE") {
@@ -158,22 +175,27 @@ export async function loginUser(prisma: PrismaClient, input: LoginInput) {
     throw createHttpError(401, "Invalid email or password");
   }
 
-  return {
+  return decryptUser({
     id: user.id,
     email: user.email,
+    emailEncrypted: user.emailEncrypted,
     fullName: user.fullName,
     role: user.role,
     status: user.status,
-  };
+  });
 }
 
 export async function findUserById(prisma: PrismaClient, userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, email: true, fullName: true, role: true, status: true },
+    select: { id: true, email: true, emailEncrypted: true, fullName: true, role: true, status: true, deletedAt: true },
   });
 
   if (!user) throw createHttpError(404, "User not found");
+
+  if (user.deletedAt) {
+    throw createHttpError(403, "This account has been deleted.");
+  }
 
   if (user.status !== "ACTIVE") {
     throw createHttpError(
@@ -182,7 +204,7 @@ export async function findUserById(prisma: PrismaClient, userId: string) {
     );
   }
 
-  return user;
+  return decryptUser(user);
 }
 
 // Marks all active sessions for the user as revoked.
@@ -289,7 +311,7 @@ export async function createPasswordResetToken(
   expiresIn: string
 ): Promise<{ token: string; fullName: string } | null> {
   const user = await prisma.user.findUnique({
-    where: { email: normalizeEmail(email) },
+    where: { email: emailToBlindIndex(email) },
     select: { id: true, fullName: true, status: true },
   });
 
@@ -309,7 +331,7 @@ export async function createPasswordResetToken(
     data: { userId: user.id, tokenHash, expiresAt: expiryToDate(expiresIn) },
   });
 
-  return { token, fullName: user.fullName };
+  return { token, fullName: decryptField(user.fullName) };
 }
 
 export async function validatePasswordResetToken(
@@ -354,20 +376,28 @@ export async function consumePasswordResetToken(
 
   const newHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
 
-  await prisma.$transaction([
-    prisma.passwordResetToken.update({
-      where: { id: record.id },
+  await prisma.$transaction(async (tx) => {
+    // Guard against concurrent reuse of the same reset token.
+    // updateMany with usedAt: null ensures exactly one request wins.
+    const consumed = await tx.passwordResetToken.updateMany({
+      where: { id: record.id, usedAt: null },
       data: { usedAt: now },
-    }),
-    prisma.user.update({
+    });
+
+    if (consumed.count !== 1) {
+      throw createHttpError(400, "Invalid or expired password reset link.");
+    }
+
+    await tx.user.update({
       where: { id: record.user.id },
       data: { passwordHash: newHash },
-    }),
-    prisma.refreshToken.updateMany({
+    });
+
+    await tx.refreshToken.updateMany({
       where: { userId: record.user.id, revokedAt: null },
       data: { revokedAt: now },
-    }),
-  ]);
+    });
+  });
 }
 
 export async function changeUserPassword(

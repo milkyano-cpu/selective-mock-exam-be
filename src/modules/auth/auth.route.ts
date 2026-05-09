@@ -16,7 +16,7 @@ export async function authRoutes(fastify: FastifyInstance) {
 
   fastify.post("/login", {
     config: {
-      rateLimit: { max: 20, timeWindow: "1 minute" },
+      rateLimit: { max: 10, timeWindow: "1 minute" },
     },
     schema: {
       body: authRef("loginBodySchema"),
@@ -26,9 +26,6 @@ export async function authRoutes(fastify: FastifyInstance) {
   });
 
   fastify.post("/refresh", {
-    config: {
-      rateLimit: { max: 20, timeWindow: "1 minute" },
-    },
     schema: {
       response: { 200: authRef("refreshResponseSchema") },
     },
@@ -55,9 +52,6 @@ export async function authRoutes(fastify: FastifyInstance) {
   });
 
   fastify.get("/validate-reset-token", {
-    config: {
-      rateLimit: { max: 30, timeWindow: "15 minutes" },
-    },
     schema: {
       querystring: authRef("validateResetTokenQuerySchema"),
       response: { 200: authRef("validateResetTokenResponseSchema") },
@@ -77,9 +71,6 @@ export async function authRoutes(fastify: FastifyInstance) {
   });
 
   fastify.post("/change-password", {
-    config: {
-      rateLimit: { max: 10, timeWindow: "15 minutes" },
-    },
     schema: {
       body: authRef("changePasswordBodySchema"),
       response: { 200: authRef("changePasswordResponseSchema") },

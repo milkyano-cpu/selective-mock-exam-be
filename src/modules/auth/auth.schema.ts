@@ -87,9 +87,6 @@ const loginResponseSchema = z.object({
 const refreshResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
-  data: z.object({
-    expiresIn: z.string(),
-  }),
 });
 
 const logoutResponseSchema = z.object({
