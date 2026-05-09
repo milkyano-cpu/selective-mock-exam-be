@@ -1,0 +1,9 @@
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ExamStatus') THEN
+    CREATE TYPE "ExamStatus" AS ENUM ('DRAFT', 'PUBLISHED');
+  END IF;
+END $$;
+
+ALTER TABLE "exams"
+ADD COLUMN IF NOT EXISTS "status" "ExamStatus" NOT NULL DEFAULT 'DRAFT';

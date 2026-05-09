@@ -2,6 +2,7 @@ import "dotenv/config";
 import bcrypt from "bcryptjs";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import { encryptUserFields, emailToBlindIndex } from "../src/utils/user-crypto.js";
 
 const SALT_ROUNDS = 12;
 
@@ -64,7 +65,8 @@ async function main(): Promise<void> {
   }
 
   const email = normalizeEmail(emailRaw);
-  const existing = await prisma.user.findUnique({ where: { email } });
+  const emailBlindIndex = emailToBlindIndex(emailRaw);
+  const existing = await prisma.user.findUnique({ where: { email: emailBlindIndex } });
 
   if (existing) {
     if (existing.role !== "ADMIN") {
@@ -83,11 +85,17 @@ async function main(): Promise<void> {
 
     const hash = await bcrypt.hash(password, SALT_ROUNDS);
     const now = new Date();
+    const encrypted = encryptUserFields({ email: emailRaw, fullName });
 
     await prisma.$transaction([
       prisma.user.update({
         where: { id: existing.id },
-        data: { passwordHash: hash, fullName, status: "ACTIVE" },
+        data: {
+          passwordHash: hash,
+          fullName: encrypted.fullName,
+          fullNameTokens: encrypted.fullNameTokens,
+          status: "ACTIVE",
+        },
       }),
       // Invalidate any active sessions after password reset
       prisma.refreshToken.updateMany({
@@ -101,18 +109,20 @@ async function main(): Promise<void> {
   }
 
   const hash = await bcrypt.hash(password, SALT_ROUNDS);
+  const encrypted = encryptUserFields({ email: emailRaw, fullName });
+
   const created = await prisma.user.create({
     data: {
-      email,
-      fullName,
+      ...encrypted,
       passwordHash: hash,
       role: "ADMIN",
+      tier: "PREMIUM",
       status: "ACTIVE",
     },
-    select: { id: true, email: true, fullName: true },
+    select: { id: true },
   });
 
-  console.log(`[seed] Admin created: ${created.email} (id: ${created.id}).`);
+  console.log(`[seed] Admin created: ${email} (id: ${created.id}).`);
 }
 
 main()

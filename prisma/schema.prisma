@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -28,15 +29,34 @@ enum Gender {
   FEMALE
 }
 
+enum Tier {
+  BASIC
+  STANDARD
+  PREMIUM
+}
+
+enum AnnouncementPriority {
+  NORMAL
+  URGENT
+}
+
+enum AnnouncementStatus {
+  SCHEDULED
+  SENT
+}
+
 model User {
-  id           String     @id @default(uuid())
-  email        String     @unique
-  passwordHash String     @map("password_hash")
-  fullName     String     @map("full_name")
-  role         Role
-  status       UserStatus @default(ACTIVE)
-  phoneNumber  String?    @map("phone_number")
-  address      String?
+  id                String     @id @default(uuid())
+  email             String     @unique                 // HMAC-SHA256 blind index of normalized email
+  emailEncrypted    String     @map("email_encrypted") // AES-256-GCM encrypted actual email
+  passwordHash      String     @map("password_hash")
+  fullName          String     @map("full_name")        // AES-256-GCM encrypted
+  fullNameTokens    String[]   @default([]) @map("full_name_tokens") // HMAC blind indexes per word
+  role              Role
+  status            UserStatus @default(ACTIVE)
+  tier              Tier       @default(BASIC)
+  phoneNumber       String?    @map("phone_number")    // AES-256-GCM encrypted if set
+  address           String?                            // AES-256-GCM encrypted if set
   gender       Gender?
   yearLevel    String?    @map("year_level")
   schoolName   String?    @map("student_school_name")
@@ -45,6 +65,7 @@ model User {
   profilePhotoMimeType     String?   @map("profile_photo_mime_type")
   profilePhotoSize         Int?      @map("profile_photo_size")
   profilePhotoUpdatedAt    DateTime? @map("profile_photo_updated_at")
+  deletedAt    DateTime?  @map("deleted_at")
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @updatedAt @map("updated_at")
 
@@ -60,12 +81,77 @@ model User {
   performance       StudentPerformance[]
   leaderboards      Leaderboard[]
   flashcards        Flashcard[]
-  posts             ForumPost[]
+  forumThreads      ForumThread[]           @relation("ForumThreadAuthor")
+  forumPosts        ForumPost[]             @relation("ForumPostAuthor")
+  forumFlagsReported ForumFlag[]            @relation("ForumFlagReporter")
+  forumFlagsReviewed ForumFlag[]            @relation("ForumFlagReviewer")
+  forumWarnings     ForumWarning[]          @relation("ForumWarningUser")
+  forumWarningsGiven ForumWarning[]         @relation("ForumWarningAdmin")
   subscriptions     Subscription[]
+  billingInvoices   BillingInvoice[]
+  pushSubscriptions PushSubscription[]
+  notifications        Notification[]
+  announcements        Announcement[]     @relation("AuthorAnnouncements")
   refreshTokens        RefreshToken[]
   passwordResetTokens  PasswordResetToken[]
+  studentPathways      StudentPathway[]     @relation("StudentPathways")
+  tutorPathways        StudentPathway[]     @relation("TutorPathways")
+  pathwayProgress      PathwayNodeProgress[]
+  uploadedResources    Resource[]             @relation("uploadedResources")
 
   @@map("users")
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  type      String
+  title     String
+  message   String
+  data      Json?
+  isRead    Boolean   @default(false) @map("is_read")
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+model PushSubscription {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_subscriptions")
+}
+
+model Announcement {
+  id          String               @id @default(uuid())
+  authorId    String               @map("author_id")
+  title       String
+  message     String
+  priority    AnnouncementPriority @default(NORMAL)
+  target      String[]
+  status      AnnouncementStatus   @default(SENT)
+  scheduledAt DateTime?            @map("scheduled_at")
+  sentAt      DateTime?            @map("sent_at")
+  createdAt   DateTime             @default(now()) @map("created_at")
+
+  author User @relation("AuthorAnnouncements", fields: [authorId], references: [id])
+
+  @@index([status, scheduledAt])
+  @@index([createdAt])
+  @@map("announcements")
 }
 
 model ParentStudentRelation {
@@ -86,15 +172,17 @@ model ParentStudentRelation {
 // ==========================================
 
 model Subject {
-  id          String   @id @default(uuid())
-  name        String   @unique
-  description String?
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id           String   @id @default(uuid())
+  name         String   @unique
+  questionCode String?  @unique @map("question_code")
+  description  String?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
   topics      Topic[]
   questions   Question[]
   performance StudentPerformance[]
+  pathways    StudentPathway[]
 
   @@map("subjects")
 }
@@ -113,10 +201,37 @@ model Topic {
   recommendations  Recommendation[]
   performance      StudentPerformance[]
   resources        StudyResource[]
+  pathwayNodes     PathwayNode[]
 
   @@unique([subjectId, name])
   @@index([subjectId])
   @@map("topics")
+}
+
+enum PassageType {
+  TEXT
+  IMAGE
+  TEXT_IMAGE
+}
+
+model Passage {
+  id           String       @id @default(uuid())
+  externalId   String?      @unique @map("external_id")
+  title        String?
+  content      String?
+  imageUrl     String?      @map("image_url")
+  passageType  PassageType? @map("passage_type")
+  section      String?
+  difficulty   String?
+  topic        String?
+  latexEnabled Boolean      @default(false) @map("latex_enabled")
+  notes        String?
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  questions Question[]
+
+  @@map("passages")
 }
 
 enum QuestionType {
@@ -136,31 +251,108 @@ enum QuestionStatus {
   PUBLISHED
 }
 
+enum QuestionMarkingType {
+  AUTO
+  RUBRIC
+}
+
+model Rubric {
+  id            String   @id
+  name          String
+  description   String?
+  writingType   String?  @map("writing_type")
+  isDefault     Boolean  @default(false) @map("is_default")
+  isActive      Boolean  @default(true) @map("is_active")
+  totalMaxScore Int      @map("total_max_score")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  criteria     RubricCriterion[]
+  questions    Question[]
+  answerScores EssayAnswerScore[]
+
+  @@index([isDefault, isActive])
+  @@index([writingType])
+  @@map("rubrics")
+}
+
+model RubricCriterion {
+  id                   String   @id @default(uuid())
+  rubricId             String   @map("rubric_id")
+  criterionName        String   @map("criterion_name")
+  criterionDescription String   @map("criterion_description")
+  maxScore             Int      @map("max_score")
+  sortOrder            Int      @default(0) @map("sort_order")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  rubric          Rubric                 @relation(fields: [rubricId], references: [id], onDelete: Cascade)
+  bandDescriptors RubricBandDescriptor[]
+  answerScores    EssayAnswerScore[]
+
+  @@index([rubricId, sortOrder])
+  @@map("rubric_criteria")
+}
+
+model RubricBandDescriptor {
+  id          String   @id @default(uuid())
+  criterionId String   @map("criterion_id")
+  scoreMin    Int      @map("score_min")
+  scoreMax    Int      @map("score_max")
+  descriptor  String
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  criterion RubricCriterion @relation(fields: [criterionId], references: [id], onDelete: Cascade)
+
+  @@index([criterionId, scoreMin, scoreMax])
+  @@map("rubric_band_descriptors")
+}
+
 model Question {
-  id            String         @id @default(uuid())
-  subjectId     String         @map("subject_id")
-  topicId       String         @map("topic_id")
-  tutorId       String         @map("tutor_id")
-  type          QuestionType
-  difficulty    Difficulty
-  contentText   String         @map("content_text")
-  contentLatex  String?        @map("content_latex")
-  options       Json?
-  correctAnswer String         @map("correct_answer")
-  status        QuestionStatus @default(DRAFT)
-  createdAt     DateTime       @default(now()) @map("created_at")
-  updatedAt     DateTime       @updatedAt @map("updated_at")
+  id               String         @id @default(uuid())
+  questionId       String?        @map("question_id")
+  questionNumber   Int?           @map("question_number")
+  subjectId        String         @map("subject_id")
+  topicId          String         @map("topic_id")
+  tutorId          String         @map("tutor_id")
+  passageId        String?        @map("passage_id")
+  rubricId         String?        @map("rubric_id")
+  type             QuestionType
+  difficulty       Difficulty
+  contentText      String         @map("content_text")
+  contentLatex     String?        @map("content_latex")
+  options          Json?
+  correctAnswer    String         @map("correct_answer")
+  explanation      String?
+  timeLimitSeconds Int?           @map("time_limit_seconds")
+  imageUrl         String?        @map("image_url")
+  imageUrls        String[]       @default([]) @map("image_urls")
+  subtopics        String[]       @default([])
+  notes            String?
+  isLatexFormat    Boolean        @default(false) @map("is_latex_format")
+  markingType      QuestionMarkingType @default(AUTO) @map("marking_type")
+  maxMarks         Int            @default(1) @map("max_marks")
+  status           QuestionStatus @default(DRAFT)
+  rejectionNote    String?        @map("rejection_note")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
 
   subject         Subject          @relation(fields: [subjectId], references: [id])
   topic           Topic            @relation(fields: [topicId], references: [id])
   tutor           User             @relation("TutorQuestions", fields: [tutorId], references: [id])
-  examQuestions   ExamQuestion[]
-  answers         StudentAnswer[]
-  practiceAnswers PracticeAnswer[]
-  flashcards      Flashcard[]
+  passage         Passage?         @relation(fields: [passageId], references: [id])
+  rubric          Rubric?          @relation(fields: [rubricId], references: [id])
+  examQuestions            ExamQuestion[]
+  answers                  StudentAnswer[]
+  practiceAnswers          PracticeAnswer[]
+  practiceSessionQuestions PracticeSessionQuestion[]
+  flashcards               Flashcard[]
 
   @@index([subjectId, topicId, status, difficulty])
   @@index([tutorId, status])
+  @@index([passageId])
+  @@index([rubricId])
   @@map("questions")
 }
 
@@ -179,12 +371,18 @@ enum GradingType {
   MIXED
 }
 
+enum ExamStatus {
+  DRAFT
+  PUBLISHED
+}
+
 model Exam {
   id              String      @id @default(uuid())
   title           String
   examType        ExamType    @map("exam_type")
-  durationMinutes Int         @map("duration_minutes")
+  durationMinutes Int?        @map("duration_minutes")
   gradingType     GradingType @map("grading_type")
+  status          ExamStatus  @default(DRAFT) @map("status")
   createdBy       String      @map("created_by")
   createdAt       DateTime    @default(now()) @map("created_at")
   updatedAt       DateTime    @updatedAt @map("updated_at")
@@ -228,8 +426,14 @@ model ExamSession {
   studentId        String        @map("student_id")
   status           SessionStatus @default(IN_PROGRESS)
   startTime        DateTime      @default(now()) @map("start_time")
+  expiresAt        DateTime?     @map("expires_at")
   endTime          DateTime?     @map("end_time")
   totalTimeSeconds Int?          @map("total_time_seconds")
+  activeTimeSeconds Int          @default(0) @map("active_time_seconds")
+  idleTimeSeconds   Int          @default(0) @map("idle_time_seconds")
+  lastActivityAt    DateTime?    @map("last_activity_at")
+  lastHeartbeatAt   DateTime?    @map("last_heartbeat_at")
+  activeQuestionId  String?      @map("active_question_id")
   finalScore       Decimal?      @map("final_score") @db.Decimal(5, 2)
   rankingLevel     RankingLevel? @map("ranking_level")
 
@@ -239,6 +443,8 @@ model ExamSession {
 
   @@index([studentId, examId, status])
   @@index([examId, status])
+  @@index([expiresAt])
+  @@index([lastHeartbeatAt])
   @@map("exam_sessions")
 }
 
@@ -249,15 +455,39 @@ model StudentAnswer {
   studentAnswer    String   @map("student_answer")
   isCorrect        Boolean  @default(false) @map("is_correct")
   timeSpentSeconds Int      @map("time_spent_seconds")
+  awardedMarks     Decimal? @map("awarded_marks") @db.Decimal(7, 2)
   manualScore      Decimal? @map("manual_score") @db.Decimal(5, 2)
   tutorFeedback    String?  @map("tutor_feedback")
   aiFeedback       Json?    @map("ai_feedback")
 
-  session  ExamSession @relation(fields: [sessionId], references: [id])
-  question Question    @relation(fields: [questionId], references: [id])
+  session           ExamSession        @relation(fields: [sessionId], references: [id])
+  question          Question           @relation(fields: [questionId], references: [id])
+  essayAnswerScores EssayAnswerScore[]
 
   @@index([sessionId, questionId])
   @@map("student_answers")
+}
+
+model EssayAnswerScore {
+  id              String   @id @default(uuid())
+  studentAnswerId String   @map("student_answer_id")
+  rubricId        String?  @map("rubric_id")
+  criterionId     String?  @map("criterion_id")
+  criterionName   String   @map("criterion_name")
+  score           Decimal  @db.Decimal(7, 2)
+  maxScore        Decimal  @map("max_score") @db.Decimal(7, 2)
+  feedback        String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  studentAnswer StudentAnswer    @relation(fields: [studentAnswerId], references: [id], onDelete: Cascade)
+  rubric        Rubric?          @relation(fields: [rubricId], references: [id], onDelete: SetNull)
+  criterion     RubricCriterion? @relation(fields: [criterionId], references: [id], onDelete: SetNull)
+
+  @@index([studentAnswerId])
+  @@index([rubricId])
+  @@index([criterionId])
+  @@map("essay_answer_scores")
 }
 
 // ==========================================
@@ -271,21 +501,33 @@ enum PracticeSource {
   RECOMMENDATION
 }
 
-model PracticeSession {
-  id         String         @id @default(uuid())
-  studentId  String         @map("student_id")
-  topicId    String?        @map("topic_id")
-  sourceType PracticeSource @map("source_type")
-  assignedBy String?        @map("assigned_by")
-  startedAt  DateTime       @default(now()) @map("started_at")
-  endedAt    DateTime?      @map("ended_at")
+enum PracticeSessionStatus {
+  IN_PROGRESS
+  COMPLETED
+}
 
-  student User             @relation(fields: [studentId], references: [id])
-  topic   Topic?           @relation(fields: [topicId], references: [id])
-  tutor   User?            @relation("TutorAssigned", fields: [assignedBy], references: [id])
-  answers PracticeAnswer[]
+model PracticeSession {
+  id             String                @id @default(uuid())
+  studentId      String                @map("student_id")
+  topicId        String?               @map("topic_id")
+  sourceType     PracticeSource        @map("source_type")
+  assignedBy     String?               @map("assigned_by")
+  pathwayNodeId  String?               @map("pathway_node_id")
+  startedAt      DateTime              @default(now()) @map("started_at")
+  endedAt        DateTime?             @map("ended_at")
+  status         PracticeSessionStatus @default(IN_PROGRESS) @map("status")
+  difficulty     Difficulty?           @map("difficulty")
+  questionCount  Int                   @default(10) @map("question_count")
+
+  student          User                    @relation(fields: [studentId], references: [id])
+  topic            Topic?                  @relation(fields: [topicId], references: [id])
+  tutor            User?                   @relation("TutorAssigned", fields: [assignedBy], references: [id])
+  pathwayNode      PathwayNode?            @relation(fields: [pathwayNodeId], references: [id])
+  answers          PracticeAnswer[]
+  sessionQuestions PracticeSessionQuestion[]
 
   @@index([studentId, topicId, sourceType])
+  @@index([studentId, status])
   @@index([assignedBy])
   @@map("practice_sessions")
 }
@@ -303,6 +545,20 @@ model PracticeAnswer {
 
   @@index([sessionId, questionId])
   @@map("practice_answers")
+}
+
+model PracticeSessionQuestion {
+  id         String @id @default(uuid())
+  sessionId  String @map("session_id")
+  questionId String @map("question_id")
+  order      Int
+
+  session  PracticeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  question Question        @relation(fields: [questionId], references: [id])
+
+  @@unique([sessionId, questionId])
+  @@index([sessionId, order])
+  @@map("practice_session_questions")
 }
 
 enum RecommendationStatus {
@@ -348,6 +604,68 @@ model StudentPerformance {
 
   @@unique([studentId, topicId])
   @@map("student_performances")
+}
+
+// ==========================================
+// DOMAIN 5b: LEARNING PATHWAYS
+// ==========================================
+
+model StudentPathway {
+  id               String   @id @default(uuid())
+  studentId        String   @map("student_id")
+  subjectId        String   @map("subject_id")
+  tutorId          String   @map("tutor_id")
+  thresholdCorrect Int      @default(3) @map("threshold_correct")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  student User          @relation("StudentPathways", fields: [studentId], references: [id])
+  tutor   User          @relation("TutorPathways", fields: [tutorId], references: [id])
+  subject Subject       @relation(fields: [subjectId], references: [id])
+  nodes   PathwayNode[]
+
+  @@unique([studentId, subjectId])
+  @@index([studentId])
+  @@index([tutorId])
+  @@map("student_pathways")
+}
+
+model PathwayNode {
+  id         String   @id @default(uuid())
+  pathwayId  String   @map("pathway_id")
+  topicId    String   @map("topic_id")
+  orderIndex Int      @map("order_index")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  pathway          StudentPathway        @relation(fields: [pathwayId], references: [id], onDelete: Cascade)
+  topic            Topic                 @relation(fields: [topicId], references: [id])
+  progress         PathwayNodeProgress[]
+  practiceSessions PracticeSession[]
+
+  @@unique([pathwayId, topicId])
+  @@unique([pathwayId, orderIndex])
+  @@index([pathwayId])
+  @@map("pathway_nodes")
+}
+
+model PathwayNodeProgress {
+  id             String    @id @default(uuid())
+  nodeId         String    @map("node_id")
+  studentId      String    @map("student_id")
+  correctAnswers Int       @default(0) @map("correct_answers")
+  totalAttempts  Int       @default(0) @map("total_attempts")
+  isUnlocked     Boolean   @default(false) @map("is_unlocked")
+  completedAt    DateTime? @map("completed_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  node    PathwayNode @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  student User        @relation(fields: [studentId], references: [id])
+
+  @@unique([nodeId, studentId])
+  @@index([studentId])
+  @@map("pathway_node_progress")
 }
 
 enum LeaderboardPeriod {
@@ -408,6 +726,11 @@ model FlashcardReview {
 // DOMAIN 7: SYSTEM, SOCIAL & PAYMENTS
 // ==========================================
 
+enum ForumSegment {
+  STUDENT
+  PARENT
+}
+
 enum ForumStatus {
   ACTIVE
   FLAGGED
@@ -415,24 +738,110 @@ enum ForumStatus {
   REJECTED
 }
 
+enum FlagReason {
+  INAPPROPRIATE
+  SPAM
+  OFF_TOPIC
+  MISINFORMATION
+  OTHER
+}
+
+enum FlagStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum WarningLevel {
+  WARNING
+  SUSPEND
+}
+
+model ForumThread {
+  id          String        @id @default(uuid())
+  authorId    String        @map("author_id")
+  segment     ForumSegment
+  title       String
+  isPinned    Boolean       @default(false) @map("is_pinned")
+  isLocked    Boolean       @default(false) @map("is_locked")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  author User        @relation("ForumThreadAuthor", fields: [authorId], references: [id])
+  posts  ForumPost[]
+
+  @@index([segment, createdAt])
+  @@index([isPinned, segment])
+  @@map("forum_threads")
+}
+
 model ForumPost {
-  id             String      @id @default(uuid())
-  authorId       String      @map("author_id")
-  targetAudience Role        @map("target_audience")
-  isAnonymous    Boolean     @default(false) @map("is_anonymous")
-  content        String
-  status         ForumStatus @default(ACTIVE)
-  createdAt      DateTime    @default(now()) @map("created_at")
+  id          String      @id @default(uuid())
+  threadId    String      @map("thread_id")
+  authorId    String      @map("author_id")
+  isAnonymous Boolean     @default(false) @map("is_anonymous")
+  content     String
+  status      ForumStatus @default(ACTIVE)
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
 
-  author User @relation(fields: [authorId], references: [id])
+  thread  ForumThread  @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  author  User         @relation("ForumPostAuthor", fields: [authorId], references: [id])
+  flags   ForumFlag[]
 
+  @@index([threadId, status, createdAt])
+  @@index([authorId])
   @@map("forum_posts")
 }
 
+model ForumFlag {
+  id         String     @id @default(uuid())
+  postId     String     @map("post_id")
+  reporterId String     @map("reporter_id")
+  reason     FlagReason
+  note       String?
+  status     FlagStatus @default(PENDING)
+  reviewedBy String?    @map("reviewed_by")
+  reviewedAt DateTime?  @map("reviewed_at")
+  createdAt  DateTime   @default(now()) @map("created_at")
+
+  post     ForumPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  reporter User      @relation("ForumFlagReporter", fields: [reporterId], references: [id])
+  reviewer User?     @relation("ForumFlagReviewer", fields: [reviewedBy], references: [id])
+
+  @@unique([postId, reporterId])
+  @@index([status, createdAt])
+  @@map("forum_flags")
+}
+
+model ForumWarning {
+  id        String       @id @default(uuid())
+  userId    String       @map("user_id")
+  adminId   String       @map("admin_id")
+  level     WarningLevel
+  reason    String
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  user  User @relation("ForumWarningUser", fields: [userId], references: [id])
+  admin User @relation("ForumWarningAdmin", fields: [adminId], references: [id])
+
+  @@index([userId, createdAt])
+  @@map("forum_warnings")
+}
+
+model ForumBannedWord {
+  id        String   @id @default(uuid())
+  word      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("forum_banned_words")
+}
+
 enum ResourceType {
+  FILE
+  VIDEO
   PDF
   WORD
-  VIDEO
 }
 
 model StudyResource {
@@ -455,6 +864,19 @@ model SystemSetting {
   @@map("system_settings")
 }
 
+model ExamCountdown {
+  id        String   @id @default(uuid())
+  title     String
+  targetAt  DateTime @map("target_at")
+  isActive  Boolean  @default(false) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, targetAt])
+  @@index([targetAt])
+  @@map("exam_countdowns")
+}
+
 model Banner {
   id        String   @id @default(uuid())
   imageUrl  String   @map("image_url")
@@ -470,13 +892,51 @@ model Subscription {
   userId               String   @map("user_id")
   stripeCustomerId     String   @map("stripe_customer_id")
   stripeSubscriptionId String   @map("stripe_subscription_id")
+  stripePriceId        String?  @map("stripe_price_id")
+  stripeProductId      String?  @map("stripe_product_id")
+  tier                 Tier     @default(STANDARD)
   status               String
+  cancelAtPeriodEnd    Boolean  @default(false) @map("cancel_at_period_end")
   currentPeriodEnd     DateTime @map("current_period_end")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id])
 
+  @@unique([stripeSubscriptionId])
   @@index([userId])
+  @@index([stripeCustomerId])
   @@map("subscriptions")
+}
+
+model BillingInvoice {
+  id                    String    @id @default(uuid())
+  userId                String    @map("user_id")
+  stripeInvoiceId       String    @map("stripe_invoice_id")
+  stripeCustomerId      String    @map("stripe_customer_id")
+  stripeSubscriptionId  String?   @map("stripe_subscription_id")
+  invoiceNumber         String?   @map("invoice_number")
+  status                String
+  currency              String
+  amountDue             Int       @default(0) @map("amount_due")
+  amountPaid            Int       @default(0) @map("amount_paid")
+  hostedInvoiceUrl      String?   @map("hosted_invoice_url")
+  stripeInvoicePdfUrl   String?   @map("stripe_invoice_pdf_url")
+  minioObjectKey        String?   @map("minio_object_key")
+  periodStart           DateTime? @map("period_start")
+  periodEnd             DateTime? @map("period_end")
+  paidAt                DateTime? @map("paid_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([stripeInvoiceId])
+  @@index([userId, createdAt])
+  @@index([stripeCustomerId])
+  @@index([stripeSubscriptionId])
+  @@index([status])
+  @@map("billing_invoices")
 }
 
 // ==========================================
@@ -512,4 +972,25 @@ model PasswordResetToken {
 
   @@index([userId])
   @@map("password_reset_tokens")
+}
+
+model Resource {
+  id          String       @id @default(uuid())
+  title       String
+  description String       @default("")
+  type        ResourceType
+  fileUrl     String?      @map("file_url")
+  videoUrl    String?      @map("video_url")
+  fileName    String?      @map("file_name")
+  fileSize    Int?         @map("file_size")
+  mimeType    String?      @map("mime_type")
+  uploadedBy  String       @map("uploaded_by")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  uploader User @relation("uploadedResources", fields: [uploadedBy], references: [id], onDelete: Cascade)
+
+  @@index([uploadedBy])
+  @@index([type])
+  @@map("resources")
 }
