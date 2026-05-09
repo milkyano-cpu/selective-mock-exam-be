@@ -22,7 +22,6 @@ export interface ApiError {
 
 export type JwtPayload = {
   sub: string;
-  email: string;
   role: string;
   jti: string;
   iat?: number;
