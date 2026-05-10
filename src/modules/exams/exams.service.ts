@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { createHttpError } from "../../utils/http-error.js";
 import { decryptField } from "../../utils/field-encryption.js";
 import { createNotification } from "../../lib/notify.js";
+import { generateSessionInsightsWithAi } from "../../utils/ai-insights.js";
 import type {
   CreateExamBody,
   UpdateExamBody,
@@ -9,6 +10,7 @@ import type {
   PublishExamBody,
   AddExamQuestionsBody,
   SubmitAnswerBody,
+  BatchAnswersBody,
   SubmitSessionBody,
   SessionHeartbeatBody,
   ListSessionsQuery,
@@ -853,9 +855,8 @@ export async function upsertAnswer(
 
   await assertQuestionBelongsToExam(prisma, session.examId, body.questionId);
 
-  // Manual upsert since StudentAnswer has no unique constraint on (sessionId, questionId)
-  const existing = await prisma.studentAnswer.findFirst({
-    where: { sessionId, questionId: body.questionId },
+  const existing = await prisma.studentAnswer.findUnique({
+    where: { sessionId_questionId: { sessionId, questionId: body.questionId } },
     select: { id: true, timeSpentSeconds: true },
   });
   const nextTimeSpentSeconds = getNextTimeSpentSeconds(
@@ -865,25 +866,20 @@ export async function upsertAnswer(
   );
   const timeSpentDeltaSeconds = clampDeltaSeconds(body.timeSpentDeltaSeconds);
 
-  if (existing) {
-    await prisma.studentAnswer.update({
-      where: { id: existing.id },
-      data: {
-        studentAnswer: body.studentAnswer,
-        timeSpentSeconds: nextTimeSpentSeconds,
-      },
-    });
-  } else {
-    await prisma.studentAnswer.create({
-      data: {
-        sessionId,
-        questionId: body.questionId,
-        studentAnswer: body.studentAnswer,
-        isCorrect: false,
-        timeSpentSeconds: nextTimeSpentSeconds,
-      },
-    });
-  }
+  await prisma.studentAnswer.upsert({
+    where: { sessionId_questionId: { sessionId, questionId: body.questionId } },
+    update: {
+      studentAnswer: body.studentAnswer,
+      timeSpentSeconds: nextTimeSpentSeconds,
+    },
+    create: {
+      sessionId,
+      questionId: body.questionId,
+      studentAnswer: body.studentAnswer,
+      isCorrect: false,
+      timeSpentSeconds: nextTimeSpentSeconds,
+    },
+  });
 
   await prisma.examSession.update({
     where: { id: sessionId },
@@ -900,6 +896,81 @@ export async function upsertAnswer(
     studentAnswer: body.studentAnswer,
     timeSpentSeconds: nextTimeSpentSeconds,
   };
+}
+
+export async function batchUpsertAnswers(
+  prisma: PrismaClient,
+  sessionId: string,
+  studentId: string,
+  body: BatchAnswersBody
+) {
+  const now = new Date();
+  const session = await prisma.examSession.findUnique({
+    where: { id: sessionId },
+    select: {
+      id: true,
+      studentId: true,
+      status: true,
+      examId: true,
+      startTime: true,
+      expiresAt: true,
+      exam: { select: { durationMinutes: true } },
+    },
+  });
+  if (!session) throw createHttpError(404, "Session not found");
+  if (session.studentId !== studentId) throw createHttpError(403, "Forbidden");
+  if (session.status !== "IN_PROGRESS") {
+    throw createHttpError(409, "Exam session is no longer active");
+  }
+  if (session.exam.durationMinutes === null || session.exam.durationMinutes === undefined) {
+    throw createHttpError(422, "Exam duration has not been set");
+  }
+  const expiresAt = await ensureSessionExpiresAt(prisma, session, session.exam.durationMinutes);
+  assertSessionCanAcceptWork(expiresAt, now);
+
+  // Validate all questionIds belong to the exam in a single query
+  const validQuestionIds = await prisma.examQuestion.findMany({
+    where: {
+      examId: session.examId,
+      questionId: { in: body.answers.map((a) => a.questionId) },
+    },
+    select: { questionId: true },
+  });
+  const validSet = new Set(validQuestionIds.map((q) => q.questionId));
+  const invalidIds = body.answers.filter((a) => !validSet.has(a.questionId));
+  if (invalidIds.length > 0) {
+    throw createHttpError(400, `Questions not in exam: ${invalidIds.map((a) => a.questionId).join(", ")}`);
+  }
+
+  // Batch upsert all answers in a single transaction
+  await prisma.$transaction(async (tx) => {
+    for (const answer of body.answers) {
+      await tx.studentAnswer.upsert({
+        where: { sessionId_questionId: { sessionId, questionId: answer.questionId } },
+        update: {
+          studentAnswer: answer.studentAnswer,
+          timeSpentSeconds: answer.timeSpentSeconds,
+        },
+        create: {
+          sessionId,
+          questionId: answer.questionId,
+          studentAnswer: answer.studentAnswer,
+          isCorrect: false,
+          timeSpentSeconds: answer.timeSpentSeconds,
+        },
+      });
+    }
+
+    await tx.examSession.update({
+      where: { id: sessionId },
+      data: {
+        lastActivityAt: now,
+        lastHeartbeatAt: now,
+      },
+    });
+  });
+
+  return { savedCount: body.answers.length };
 }
 
 export async function recordSessionHeartbeat(
@@ -936,60 +1007,20 @@ export async function recordSessionHeartbeat(
   const expiresAt = await ensureSessionExpiresAt(prisma, session, session.exam.durationMinutes);
   const expired = isSessionExpired(expiresAt, now);
   const activeQuestionId = body.activeQuestionId ?? null;
-  const questionTimeDeltaSeconds = expired ? 0 : clampDeltaSeconds(body.questionTimeDeltaSeconds);
   const activeTimeDeltaSeconds = expired ? 0 : clampDeltaSeconds(body.activeTimeDeltaSeconds);
   const idleTimeDeltaSeconds = expired ? 0 : clampDeltaSeconds(body.idleTimeDeltaSeconds);
-  let questionTimeSpentSeconds: number | null = null;
 
-  if (activeQuestionId) {
-    await assertQuestionBelongsToExam(prisma, session.examId, activeQuestionId);
-  }
-
-  await prisma.$transaction(async (tx) => {
-    if (activeQuestionId && questionTimeDeltaSeconds > 0) {
-      const existing = await tx.studentAnswer.findFirst({
-        where: { sessionId, questionId: activeQuestionId },
-        select: { id: true, timeSpentSeconds: true },
-      });
-
-      if (existing) {
-        const updated = await tx.studentAnswer.update({
-          where: { id: existing.id },
-          data: { timeSpentSeconds: { increment: questionTimeDeltaSeconds } },
-          select: { timeSpentSeconds: true },
-        });
-        questionTimeSpentSeconds = updated.timeSpentSeconds;
-      } else {
-        const created = await tx.studentAnswer.create({
-          data: {
-            sessionId,
-            questionId: activeQuestionId,
-            studentAnswer: "",
-            isCorrect: false,
-            timeSpentSeconds: questionTimeDeltaSeconds,
-          },
-          select: { timeSpentSeconds: true },
-        });
-        questionTimeSpentSeconds = created.timeSpentSeconds;
-      }
-    } else if (activeQuestionId) {
-      const existing = await tx.studentAnswer.findFirst({
-        where: { sessionId, questionId: activeQuestionId },
-        select: { timeSpentSeconds: true },
-      });
-      questionTimeSpentSeconds = existing?.timeSpentSeconds ?? null;
-    }
-
-    await tx.examSession.update({
-      where: { id: sessionId },
-      data: {
-        activeQuestionId,
-        lastHeartbeatAt: now,
-        ...(activeTimeDeltaSeconds > 0 ? { lastActivityAt: now } : {}),
-        activeTimeSeconds: { increment: activeTimeDeltaSeconds },
-        idleTimeSeconds: { increment: idleTimeDeltaSeconds },
-      },
-    });
+  // Heartbeat only updates session-level time tracking.
+  // Per-question time is written exclusively by batch sync / submit.
+  await prisma.examSession.update({
+    where: { id: sessionId },
+    data: {
+      activeQuestionId,
+      lastHeartbeatAt: now,
+      ...(activeTimeDeltaSeconds > 0 ? { lastActivityAt: now } : {}),
+      activeTimeSeconds: { increment: activeTimeDeltaSeconds },
+      idleTimeSeconds: { increment: idleTimeDeltaSeconds },
+    },
   });
 
   return {
@@ -999,7 +1030,6 @@ export async function recordSessionHeartbeat(
     expiresAt: expiresAt.toISOString(),
     secondsRemaining: getSecondsRemaining(expiresAt, now),
     activeQuestionId,
-    questionTimeSpentSeconds,
     activeTimeSeconds: session.activeTimeSeconds + activeTimeDeltaSeconds,
     idleTimeSeconds: session.idleTimeSeconds + idleTimeDeltaSeconds,
     expired,
@@ -1041,18 +1071,38 @@ export async function submitExamSession(
     where: { examId: session.examId },
     select: { questionId: true },
   });
-
-  const existingAnswers = await prisma.studentAnswer.findMany({
-    where: { sessionId },
-    select: { questionId: true },
-  });
-
-  const existingAnswerIds = new Set(existingAnswers.map((answer) => answer.questionId));
-  const missingQuestionIds = examQuestionIds
-    .map((examQuestion) => examQuestion.questionId)
-    .filter((questionId) => !existingAnswerIds.has(questionId));
+  const allQuestionIds = new Set(examQuestionIds.map((eq) => eq.questionId));
 
   await prisma.$transaction(async (tx) => {
+    // Upsert any inline final answers sent with the submit call
+    if (body.answers && body.answers.length > 0) {
+      for (const answer of body.answers) {
+        if (!allQuestionIds.has(answer.questionId)) continue;
+        await tx.studentAnswer.upsert({
+          where: { sessionId_questionId: { sessionId, questionId: answer.questionId } },
+          update: {
+            studentAnswer: answer.studentAnswer,
+            timeSpentSeconds: answer.timeSpentSeconds,
+          },
+          create: {
+            sessionId,
+            questionId: answer.questionId,
+            studentAnswer: answer.studentAnswer,
+            isCorrect: false,
+            timeSpentSeconds: answer.timeSpentSeconds,
+          },
+        });
+      }
+    }
+
+    // Fill empty answers for unanswered questions
+    const existingAnswers = await tx.studentAnswer.findMany({
+      where: { sessionId },
+      select: { questionId: true },
+    });
+    const existingAnswerIds = new Set(existingAnswers.map((a) => a.questionId));
+    const missingQuestionIds = [...allQuestionIds].filter((qid) => !existingAnswerIds.has(qid));
+
     if (missingQuestionIds.length > 0) {
       await tx.studentAnswer.createMany({
         data: missingQuestionIds.map((questionId) => ({
@@ -1085,6 +1135,71 @@ export async function submitExamSession(
     totalTimeSeconds,
     message: "Your exam has been submitted and is being graded.",
   };
+}
+
+export async function getSessionInsights(
+  prisma: PrismaClient,
+  sessionId: string,
+  studentId: string
+) {
+  // Use getSessionResult to reuse all the existing formatting logic
+  const result = await getSessionResult(prisma, sessionId, studentId);
+  
+  if (result.status !== "GRADED" && result.status !== "SUBMITTED") {
+    throw createHttpError(400, "Insights are only available for submitted exams.");
+  }
+
+  // Find the subject and topic details for the questions
+  const questions = await prisma.examSession.findUnique({
+    where: { id: sessionId },
+    select: {
+      exam: {
+        select: {
+          questions: {
+            select: {
+              questionId: true,
+              question: {
+                select: {
+                  difficulty: true,
+                  subject: { select: { name: true } },
+                  topic: { select: { name: true } },
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  if (!questions) throw createHttpError(404, "Session data not found");
+  
+  const questionMap = new Map(questions.exam.questions.map(q => [q.questionId, q.question]));
+
+  const aiInput = {
+    examTitle: result.examTitle,
+    totalQuestions: result.totalQuestions,
+    correctCount: result.correctCount,
+    totalTimeSeconds: result.totalTimeSeconds ?? 0,
+    answers: result.answers.map(a => {
+      const qMeta = questionMap.get(a.questionId);
+      return {
+        questionId: a.questionId,
+        isCorrect: a.isCorrect,
+        timeSpentSeconds: a.timeSpentSeconds,
+        difficulty: qMeta?.difficulty as "EASY" | "MEDIUM" | "HARD" ?? "MEDIUM",
+        subjectName: qMeta?.subject.name ?? "Unknown",
+        topicName: qMeta?.topic.name ?? "Unknown",
+      };
+    })
+  };
+
+  const insights = await generateSessionInsightsWithAi(aiInput);
+  if (!insights) {
+    throw createHttpError(500, "Failed to generate AI insights.");
+  }
+
+  return insights;
 }
 
 export async function listExamSubmissions(

@@ -4,6 +4,9 @@
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
+const directUrl = process.env["DIRECT_URL"]?.trim();
+const databaseUrl = process.env["DATABASE_URL"]?.trim();
+
 export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {
@@ -11,7 +14,7 @@ export default defineConfig({
     seed: "tsx prisma/seed.ts",
   },
   datasource: {
-    // Gunakan DIRECT_URL untuk migrate (non-pooler), DATABASE_URL untuk runtime
-    url: process.env["DIRECT_URL"] ?? process.env["DATABASE_URL"],
+    // Gunakan DIRECT_URL untuk migrate (non-pooler), DATABASE_URL untuk runtime.
+    url: directUrl || databaseUrl,
   },
 });

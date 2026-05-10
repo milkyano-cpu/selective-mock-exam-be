@@ -32,6 +32,8 @@ const PRACTICE_QUESTION_SELECT = {
       options: true,
       imageUrl: true,
       imageUrls: true,
+      correctAnswer: true,
+      explanation: true,
     },
   },
 } as const;
@@ -88,6 +90,8 @@ function formatQuestion(sq: {
     options: sq.question.options as Array<{ key: string; text: string }> | null,
     imageUrl: sq.question.imageUrl,
     imageUrls: sq.question.imageUrls,
+    correctAnswer: (sq.question as any).correctAnswer as string,
+    explanation: (sq.question as any).explanation as string | null,
   };
 }
 

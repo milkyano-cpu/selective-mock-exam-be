@@ -7,6 +7,7 @@ import type {
   PublishExamBody,
   AddExamQuestionsBody,
   SubmitAnswerBody,
+  BatchAnswersBody,
   SubmitSessionBody,
   SessionHeartbeatBody,
   ListSessionsQuery,
@@ -24,6 +25,7 @@ import {
   removeQuestionFromExam,
   startOrResumeSession,
   upsertAnswer,
+  batchUpsertAnswers,
   recordSessionHeartbeat,
   submitExamSession,
   getSessionResult,
@@ -31,6 +33,7 @@ import {
   listExamSubmissions,
   getReviewSession,
   submitManualGrades,
+  getSessionInsights,
 } from "./exams.service.js";
 
 // ── Exam CRUD ─────────────────────────────────────────────────────────────────
@@ -166,6 +169,18 @@ export async function submitAnswerHandler(request: FastifyRequest, reply: Fastif
   return reply.send({ success: true, message: "Answer saved", data });
 }
 
+export async function batchAnswersHandler(request: FastifyRequest, reply: FastifyReply) {
+  const { sessionId } = request.params as { sessionId: string };
+  const body = request.body as BatchAnswersBody;
+  const data = await batchUpsertAnswers(
+    request.server.prisma,
+    sessionId,
+    request.user.sub,
+    body
+  );
+  return reply.send({ success: true, message: "Answers saved", data });
+}
+
 export async function sessionHeartbeatHandler(request: FastifyRequest, reply: FastifyReply) {
   const { sessionId } = request.params as { sessionId: string };
   const body = request.body as SessionHeartbeatBody;
@@ -242,4 +257,13 @@ export async function submitManualGradesHandler(
   const body = request.body as SubmitManualGradesBody;
   const data = await submitManualGrades(request.server.prisma, sessionId, body);
   return reply.send({ success: true, message: "Manual grades saved", data });
+}
+
+export async function getSessionInsightsHandler(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const { sessionId } = request.params as { sessionId: string };
+  const data = await getSessionInsights(request.server.prisma, sessionId, request.user.sub);
+  return reply.send({ success: true, message: "AI Insights generated successfully", data });
 }

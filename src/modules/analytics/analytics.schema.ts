@@ -49,6 +49,7 @@ const myAnalyticsResponseSchema = z.object({
 
 const leaderboardQuerySchema = z.object({
   period: z.enum(["WEEKLY", "MONTHLY", "ALL_TIME"]).default("ALL_TIME"),
+  examId: z.string().uuid().optional(),
 });
 
 const leaderboardEntrySchema = z.object({

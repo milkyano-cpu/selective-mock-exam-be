@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import type { LeaderboardQuery } from "./analytics.schema.js";
+import { decryptField } from "../../utils/field-encryption.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -114,15 +115,15 @@ export async function getMyAnalytics(prisma: PrismaClient, studentId: string) {
 export async function getStudentAnalytics(prisma: PrismaClient, studentId: string) {
   const student = await prisma.user.findUnique({
     where: { id: studentId },
-    select: { id: true, firstName: true, lastName: true, profilePhoto: true },
+    select: { id: true, fullName: true, profilePhotoKey: true },
   });
   if (!student) return null;
 
   const analytics = await buildStudentAnalytics(prisma, studentId);
   return {
     studentId:   student.id,
-    studentName: `${student.firstName} ${student.lastName}`.trim(),
-    avatarUrl:   student.profilePhoto ?? null,
+    studentName: decryptField(student.fullName).trim(),
+    avatarUrl:   student.profilePhotoKey ?? null,
     ...analytics,
   };
 }
@@ -142,12 +143,13 @@ export async function getLeaderboard(
       status: "GRADED",
       finalScore: { not: null },
       ...(since ? { endTime: { gte: since } } : {}),
+      ...(query.examId ? { examId: query.examId } : {}),
     },
     select: {
       studentId: true,
       finalScore: true,
       student: {
-        select: { id: true, firstName: true, lastName: true, profilePhoto: true, role: true },
+        select: { id: true, fullName: true, profilePhotoKey: true, role: true },
       },
     },
   });
@@ -164,8 +166,8 @@ export async function getLeaderboard(
     if (s.student.role !== "STUDENT") continue;
     const score = Number(s.finalScore!);
     const entry = studentMap.get(s.studentId) ?? {
-      name: `${s.student.firstName} ${s.student.lastName}`.trim(),
-      avatarUrl: s.student.profilePhoto ?? null,
+      name: decryptField(s.student.fullName).trim(),
+      avatarUrl: s.student.profilePhotoKey ?? null,
       total: 0,
       count: 0,
     };

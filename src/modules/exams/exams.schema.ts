@@ -237,13 +237,31 @@ const submitAnswerResponseSchema = z.object({
   }),
 });
 
+const batchAnswerItemSchema = z.object({
+  questionId: z.string().uuid(),
+  studentAnswer: z.string().max(5000),
+  timeSpentSeconds: z.number().int().min(0),
+});
+
+const batchAnswersBodySchema = z.object({
+  answers: z.array(batchAnswerItemSchema).min(1).max(200),
+});
+
+const batchAnswersResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z.object({
+    savedCount: z.number(),
+  }),
+});
+
 const submitSessionBodySchema = z.object({
   totalTimeSeconds: z.number().int().min(0).optional(),
+  answers: z.array(batchAnswerItemSchema).max(200).optional(),
 });
 
 const sessionHeartbeatBodySchema = z.object({
   activeQuestionId: z.string().uuid().nullable().optional(),
-  questionTimeDeltaSeconds: z.number().int().min(0).max(300).default(0),
   activeTimeDeltaSeconds: z.number().int().min(0).max(300).default(0),
   idleTimeDeltaSeconds: z.number().int().min(0).max(300).default(0),
 });
@@ -258,7 +276,6 @@ const sessionHeartbeatResponseSchema = z.object({
     expiresAt: z.string(),
     secondsRemaining: z.number(),
     activeQuestionId: z.string().nullable(),
-    questionTimeSpentSeconds: z.number().nullable(),
     activeTimeSeconds: z.number(),
     idleTimeSeconds: z.number(),
     expired: z.boolean(),
@@ -462,6 +479,17 @@ const paginatedSessionsResponseSchema = z.object({
   }),
 });
 
+const sessionInsightsResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z.object({
+    summary: z.string(),
+    strengths: z.array(z.string()),
+    weaknesses: z.array(z.string()),
+    advice: z.array(z.string()),
+  }),
+});
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type CreateExamBody = z.infer<typeof createExamBodySchema>;
@@ -470,6 +498,7 @@ export type ListExamsQuery = z.infer<typeof listExamsQuerySchema>;
 export type PublishExamBody = z.infer<typeof publishExamBodySchema>;
 export type AddExamQuestionsBody = z.infer<typeof addExamQuestionsBodySchema>;
 export type SubmitAnswerBody = z.infer<typeof submitAnswerBodySchema>;
+export type BatchAnswersBody = z.infer<typeof batchAnswersBodySchema>;
 export type SubmitSessionBody = z.infer<typeof submitSessionBodySchema>;
 export type SessionHeartbeatBody = z.infer<typeof sessionHeartbeatBodySchema>;
 export type ListSessionsQuery = z.infer<typeof listSessionsQuerySchema>;
@@ -497,6 +526,9 @@ export const { schemas: examSchemas, $ref: examRef } = buildJsonSchemas({
   examSessionParamSchema,
   submitAnswerBodySchema,
   submitAnswerResponseSchema,
+  batchAnswerItemSchema,
+  batchAnswersBodySchema,
+  batchAnswersResponseSchema,
   submitSessionBodySchema,
   submitSessionResponseSchema,
   sessionHeartbeatBodySchema,
@@ -516,4 +548,5 @@ export const { schemas: examSchemas, $ref: examRef } = buildJsonSchemas({
   paginatedSessionsResponseSchema,
   publishExamBodySchema,
   publishExamResponseSchema,
+  sessionInsightsResponseSchema,
 });

@@ -14,12 +14,14 @@ import {
   startSessionHandler,
   getSessionHandler,
   submitAnswerHandler,
+  batchAnswersHandler,
   sessionHeartbeatHandler,
   submitSessionHandler,
   getSessionResultHandler,
   listExamSubmissionsHandler,
   getReviewSessionHandler,
   submitManualGradesHandler,
+  getSessionInsightsHandler,
 } from "./exams.controller.js";
 
 export async function examRoutes(fastify: FastifyInstance) {
@@ -62,6 +64,19 @@ export async function examRoutes(fastify: FastifyInstance) {
     handler: submitAnswerHandler,
   });
 
+  // PUT /exams/sessions/:sessionId/answers/batch — batch upsert answers
+  fastify.put("/sessions/:sessionId/answers/batch", {
+    schema: {
+      tags: ["Exams"],
+      summary: "Batch save/update student answers in an active session",
+      params: examRef("examSessionParamSchema"),
+      body: examRef("batchAnswersBodySchema"),
+      response: { 200: examRef("batchAnswersResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("STUDENT")],
+    handler: batchAnswersHandler,
+  });
+
   // POST /exams/sessions/:sessionId/heartbeat — record timer heartbeat and active question time
   fastify.post("/sessions/:sessionId/heartbeat", {
     schema: {
@@ -98,6 +113,18 @@ export async function examRoutes(fastify: FastifyInstance) {
     },
     preHandler: [fastify.authenticate, requireRole("STUDENT")],
     handler: getSessionResultHandler,
+  });
+
+  // GET /exams/sessions/:sessionId/insights — get AI analysis
+  fastify.get("/sessions/:sessionId/insights", {
+    schema: {
+      tags: ["Exams"],
+      summary: "Get AI generated performance insights for a session",
+      params: examRef("examSessionParamSchema"),
+      response: { 200: examRef("sessionInsightsResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("STUDENT")],
+    handler: getSessionInsightsHandler,
   });
 
   // GET /exams/sessions/:sessionId/review — get a session for tutor/admin manual grading

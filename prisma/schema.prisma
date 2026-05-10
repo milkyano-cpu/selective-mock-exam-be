@@ -464,7 +464,7 @@ model StudentAnswer {
   question          Question           @relation(fields: [questionId], references: [id])
   essayAnswerScores EssayAnswerScore[]
 
-  @@index([sessionId, questionId])
+  @@unique([sessionId, questionId])
   @@map("student_answers")
 }
 
