@@ -1,4 +1,4 @@
-import type { PrismaClient, ResourceType } from "@prisma/client";
+import type { PrismaClient, ResourceType, Role, Tier } from "@prisma/client";
 import { env } from "../../config/env.js";
 import type { ObjectStorage } from "../../lib/object-storage.js";
 import { createHttpError } from "../../utils/http-error.js";
@@ -14,6 +14,7 @@ const RESOURCE_SELECT = {
   fileName: true,
   fileSize: true,
   mimeType: true,
+  allowedTiers: true,
   uploadedBy: true,
   createdAt: true,
   updatedAt: true,
@@ -54,6 +55,7 @@ function mapResource(resource: Record<string, unknown>) {
     fileName: string | null;
     fileSize: number | null;
     mimeType: string | null;
+    allowedTiers: Tier[];
     uploadedBy: string;
     createdAt: Date;
     updatedAt: Date;
@@ -70,6 +72,7 @@ function mapResource(resource: Record<string, unknown>) {
     fileName: r.fileName,
     fileSize: r.fileSize,
     mimeType: r.mimeType,
+    allowedTiers: r.allowedTiers,
     uploadedBy: r.uploadedBy,
     uploaderName: r.uploader?.fullName ?? "",
     createdAt: r.createdAt.toISOString(),
@@ -95,12 +98,25 @@ function getResourceObjectKey(fileUrl: string) {
   }
 }
 
-export async function findAllResources(prisma: PrismaClient, query: ListResourcesQuery) {
+function applyTierAccessFilter(where: Record<string, unknown>, user: { role: Role; tier: Tier }) {
+  if (user.role === "STUDENT") {
+    where.allowedTiers = { has: user.tier };
+  }
+}
+
+function assertResourceTierAccess(allowedTiers: readonly Tier[], user: { role: Role; tier: Tier }) {
+  if (user.role === "STUDENT" && !allowedTiers.includes(user.tier)) {
+    throw createHttpError(403, "You do not have access to this resource");
+  }
+}
+
+export async function findAllResources(prisma: PrismaClient, query: ListResourcesQuery, user: { role: Role; tier: Tier }) {
   const { page, limit, type, search } = query;
   const skip = (page - 1) * limit;
 
   const where: Record<string, unknown> = {};
   if (type) where.type = type;
+  applyTierAccessFilter(where, user);
   if (search) {
     where.OR = [
       { title: { contains: search, mode: "insensitive" } },
@@ -130,18 +146,19 @@ export async function findAllResources(prisma: PrismaClient, query: ListResource
   };
 }
 
-export async function findResourceById(prisma: PrismaClient, id: string) {
+export async function findResourceById(prisma: PrismaClient, id: string, user: { role: Role; tier: Tier }) {
   const resource = await prisma.resource.findUnique({
     where: { id },
     select: RESOURCE_SELECT,
   });
 
   if (!resource) throw createHttpError(404, "Resource not found");
+  assertResourceTierAccess((resource as { allowedTiers: Tier[] }).allowedTiers, user);
 
   return mapResource(resource);
 }
 
-export async function getResourcePreviewFile(prisma: PrismaClient, storage: ObjectStorage, id: string) {
+export async function getResourcePreviewFile(prisma: PrismaClient, storage: ObjectStorage, id: string, user: { role: Role; tier: Tier }) {
   const resource = await prisma.resource.findUnique({
     where: { id },
     select: {
@@ -149,10 +166,12 @@ export async function getResourcePreviewFile(prisma: PrismaClient, storage: Obje
       fileUrl: true,
       fileName: true,
       mimeType: true,
+      allowedTiers: true,
     },
   });
 
   if (!resource) throw createHttpError(404, "Resource not found");
+  assertResourceTierAccess((resource as { allowedTiers: Tier[] }).allowedTiers, user);
   if (!resource.fileUrl) throw createHttpError(404, "Resource file not found");
 
   const key = getResourceObjectKey(resource.fileUrl);
@@ -178,6 +197,7 @@ export async function createResourceRecord(
       description: input.description ?? "",
       type: input.type as ResourceType,
       videoUrl: input.type === "VIDEO" ? (input.videoUrl ?? null) : null,
+      allowedTiers: input.allowedTiers,
       uploadedBy,
     },
     select: RESOURCE_SELECT,
@@ -202,6 +222,7 @@ export async function updateResourceRecord(
     data: {
       ...(input.title !== undefined && { title: input.title }),
       ...(input.description !== undefined && { description: input.description }),
+      ...(input.allowedTiers !== undefined && { allowedTiers: input.allowedTiers }),
       ...(input.fileUrl !== undefined && { fileUrl: input.fileUrl }),
       ...(input.fileName !== undefined && { fileName: input.fileName }),
       ...(input.fileSize !== undefined && { fileSize: input.fileSize }),

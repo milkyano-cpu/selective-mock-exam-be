@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
+import type { PrismaClient, Role, Tier } from "@prisma/client";
 import type { CreateResourceInput, UpdateResourceInput, ListResourcesQuery } from "./resources.schema.js";
 import {
   findAllResources,
@@ -24,9 +25,24 @@ function resolvePreviewContentType(fileName: string, mimeType: string) {
   return mimeType;
 }
 
+async function getResourceAccessUser(prisma: PrismaClient, requestUser: FastifyRequest["user"]): Promise<{ role: Role; tier: Tier }> {
+  const role = requestUser.role as Role;
+  if (role !== "STUDENT") {
+    return { role, tier: "BASIC" };
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: requestUser.sub },
+    select: { tier: true },
+  });
+
+  return { role, tier: user?.tier ?? "BASIC" };
+}
+
 export async function listResourcesHandler(request: FastifyRequest, reply: FastifyReply) {
   const query = request.query as ListResourcesQuery;
-  const result = await findAllResources(request.server.prisma, query);
+  const accessUser = await getResourceAccessUser(request.server.prisma, request.user);
+  const result = await findAllResources(request.server.prisma, query, accessUser);
   return reply.send({
     success: true,
     message: "Resources retrieved successfully",
@@ -36,7 +52,8 @@ export async function listResourcesHandler(request: FastifyRequest, reply: Fasti
 
 export async function getResourceHandler(request: FastifyRequest, reply: FastifyReply) {
   const { id } = request.params as { id: string };
-  const resource = await findResourceById(request.server.prisma, id);
+  const accessUser = await getResourceAccessUser(request.server.prisma, request.user);
+  const resource = await findResourceById(request.server.prisma, id, accessUser);
   return reply.send({
     success: true,
     message: "Resource retrieved successfully",
@@ -46,7 +63,8 @@ export async function getResourceHandler(request: FastifyRequest, reply: Fastify
 
 export async function previewResourceFileHandler(request: FastifyRequest, reply: FastifyReply) {
   const { id } = request.params as { id: string };
-  const file = await getResourcePreviewFile(request.server.prisma, request.server.storage, id);
+  const accessUser = await getResourceAccessUser(request.server.prisma, request.user);
+  const file = await getResourcePreviewFile(request.server.prisma, request.server.storage, id, accessUser);
   const fileName = sanitizeFilename(file.fileName);
   const contentType = resolvePreviewContentType(fileName, file.mimeType);
 

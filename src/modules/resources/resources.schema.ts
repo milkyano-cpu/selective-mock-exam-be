@@ -2,17 +2,21 @@ import { z } from "zod";
 import { buildJsonSchemas } from "../../utils/build-schemas.js";
 
 const resourceTypeEnum = z.enum(["FILE", "VIDEO"]);
+const tierEnum = z.enum(["BASIC", "STANDARD", "PREMIUM"]);
+const allowedTiersSchema = z.array(tierEnum).min(1, "Select at least one tier").default(["BASIC", "STANDARD", "PREMIUM"]);
 
 const createResourceBodySchema = z.object({
   title: z.string().min(1, "Title is required").max(200),
   description: z.string().max(1000).default(""),
   type: resourceTypeEnum,
   videoUrl: z.string().url("Invalid video URL").optional().nullable(),
+  allowedTiers: allowedTiersSchema,
 });
 
 const updateResourceBodySchema = z.object({
   title: z.string().min(1).max(200).optional(),
   description: z.string().max(1000).optional(),
+  allowedTiers: allowedTiersSchema.optional(),
 });
 
 const resourceItemSchema = z.object({
@@ -25,6 +29,7 @@ const resourceItemSchema = z.object({
   fileName: z.string().nullable(),
   fileSize: z.number().nullable(),
   mimeType: z.string().nullable(),
+  allowedTiers: z.array(tierEnum),
   uploadedBy: z.string(),
   uploaderName: z.string().optional(),
   createdAt: z.string(),

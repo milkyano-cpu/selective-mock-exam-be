@@ -73,6 +73,16 @@ export async function listUsersHandler(
   reply: FastifyReply
 ) {
   const query = request.query as ListUsersQuery;
+
+  // Tutors can only list students
+  if (request.user?.role === "TUTOR" && query.role !== "STUDENT") {
+    return reply.status(403).send({
+      success: false,
+      message: "Forbidden",
+      statusCode: 403,
+    });
+  }
+
   const result = await listUsersService(request.server.prisma, query);
 
   const data = await Promise.all(

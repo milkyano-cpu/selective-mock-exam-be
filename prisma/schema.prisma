@@ -984,6 +984,7 @@ model Resource {
   fileName    String?      @map("file_name")
   fileSize    Int?         @map("file_size")
   mimeType    String?      @map("mime_type")
+  allowedTiers Tier[]      @default([BASIC, STANDARD, PREMIUM]) @map("allowed_tiers")
   uploadedBy  String       @map("uploaded_by")
   createdAt   DateTime     @default(now()) @map("created_at")
   updatedAt   DateTime     @updatedAt @map("updated_at")
@@ -992,5 +993,6 @@ model Resource {
 
   @@index([uploadedBy])
   @@index([type])
+  @@index([allowedTiers], type: Gin)
   @@map("resources")
 }

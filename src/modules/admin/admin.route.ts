@@ -19,7 +19,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
       querystring: adminRef("listUsersQuerySchema"),
       response: { 200: adminRef("listUsersResponseSchema") },
     },
-    preHandler: [fastify.authenticate, requireRole("ADMIN")],
+    preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
     handler: listUsersHandler,
   });
 

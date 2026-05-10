@@ -98,6 +98,25 @@ const studentAnalyticsResponseSchema = z.object({
   }),
 });
 
+const childrenAnalyticsResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z.array(
+    z.object({
+      studentId:    z.string(),
+      studentName:  z.string(),
+      avatarUrl:    z.string().nullable(),
+      overallAvg:   z.number().nullable(),
+      totalExams:   z.number(),
+      totalTimeSeconds: z.number(),
+      rankingLevel: z.string().nullable(),
+      examHistory:  z.array(examHistoryItemSchema),
+      topicPerformance: z.array(topicPerformanceItemSchema),
+      subjectPerformance: z.array(subjectPerformanceItemSchema),
+    })
+  ),
+});
+
 // ── Export ────────────────────────────────────────────────────────────────────
 
 export const { schemas: analyticsSchemas, $ref: analyticsRef } = buildJsonSchemas({
@@ -106,6 +125,7 @@ export const { schemas: analyticsSchemas, $ref: analyticsRef } = buildJsonSchema
   leaderboardResponseSchema,
   studentAnalyticsParamsSchema,
   studentAnalyticsResponseSchema,
+  childrenAnalyticsResponseSchema,
 });
 
 export type LeaderboardQuery = z.infer<typeof leaderboardQuerySchema>;

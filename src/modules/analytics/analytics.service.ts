@@ -128,6 +128,34 @@ export async function getStudentAnalytics(prisma: PrismaClient, studentId: strin
   };
 }
 
+export async function getChildrenAnalytics(prisma: PrismaClient, parentId: string) {
+  const relations = await prisma.parentStudentRelation.findMany({
+    where: { parentId },
+    orderBy: { createdAt: "asc" },
+    select: {
+      student: {
+        select: {
+          id: true,
+          fullName: true,
+          profilePhotoKey: true,
+        },
+      },
+    },
+  });
+
+  return Promise.all(
+    relations.map(async ({ student }) => {
+      const analytics = await buildStudentAnalytics(prisma, student.id);
+      return {
+        studentId: student.id,
+        studentName: decryptField(student.fullName).trim(),
+        avatarUrl: student.profilePhotoKey ?? null,
+        ...analytics,
+      };
+    })
+  );
+}
+
 // ── GET /analytics/leaderboard ────────────────────────────────────────────────
 
 export async function getLeaderboard(
