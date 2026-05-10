@@ -396,7 +396,8 @@ async function getOrCreateCustomerId(prisma: PrismaClient, stripe: Stripe, userI
 export async function createCheckoutSession(
   prisma: PrismaClient,
   userId: string,
-  tier: BillingTier
+  tier: BillingTier,
+  origin: string = env.APP_URL
 ) {
   const stripe = getStripe();
   const priceId = getPriceIdForTier(tier);
@@ -406,8 +407,8 @@ export async function createCheckoutSession(
     mode: "subscription",
     customer: customerId,
     line_items: [{ price: priceId, quantity: 1 }],
-    success_url: `${env.APP_URL}/dashboard/billing?checkout=success`,
-    cancel_url: `${env.APP_URL}/dashboard/billing?checkout=cancelled`,
+    success_url: `${origin}/dashboard/billing?checkout=success`,
+    cancel_url: `${origin}/dashboard/billing?checkout=cancelled`,
     client_reference_id: userId,
     metadata: { userId, tier },
     subscription_data: {
@@ -422,7 +423,11 @@ export async function createCheckoutSession(
   return { sessionId: session.id, url: session.url };
 }
 
-export async function createCustomerPortalSession(prisma: PrismaClient, userId: string) {
+export async function createCustomerPortalSession(
+  prisma: PrismaClient,
+  userId: string,
+  origin: string = env.APP_URL
+) {
   const stripe = getStripe();
   const existing = await prisma.subscription.findFirst({
     where: { userId },
@@ -436,7 +441,7 @@ export async function createCustomerPortalSession(prisma: PrismaClient, userId: 
 
   const session = await stripe.billingPortal.sessions.create({
     customer: existing.stripeCustomerId,
-    return_url: `${env.APP_URL}/dashboard/billing`,
+    return_url: `${origin}/dashboard/billing`,
   });
 
   return { url: session.url };

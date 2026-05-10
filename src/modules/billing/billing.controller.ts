@@ -7,6 +7,7 @@ import {
   getBillingInvoiceDownload,
   listBillingInvoices,
 } from "./billing.service.js";
+import { env } from "../../config/env.js";
 
 export async function getBillingOverviewHandler(request: FastifyRequest, reply: FastifyReply) {
   const data = await getBillingOverview(request.server.prisma, request.user.sub);
@@ -15,12 +16,14 @@ export async function getBillingOverviewHandler(request: FastifyRequest, reply: 
 
 export async function createCheckoutSessionHandler(request: FastifyRequest, reply: FastifyReply) {
   const body = request.body as BillingCheckoutBody;
-  const data = await createCheckoutSession(request.server.prisma, request.user.sub, body.tier);
+  const origin = request.headers.origin || env.APP_URL;
+  const data = await createCheckoutSession(request.server.prisma, request.user.sub, body.tier, origin);
   return reply.status(201).send({ success: true, message: "Checkout session created", data });
 }
 
 export async function createCustomerPortalSessionHandler(request: FastifyRequest, reply: FastifyReply) {
-  const data = await createCustomerPortalSession(request.server.prisma, request.user.sub);
+  const origin = request.headers.origin || env.APP_URL;
+  const data = await createCustomerPortalSession(request.server.prisma, request.user.sub, origin);
   return reply.send({ success: true, message: "Customer portal session created", data });
 }
 
