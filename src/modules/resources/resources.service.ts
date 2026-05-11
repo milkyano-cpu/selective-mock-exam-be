@@ -23,6 +23,8 @@ const RESOURCE_SELECT = {
   },
 };
 
+const TIER_ORDER: Tier[] = ["BASIC", "STANDARD", "PREMIUM"];
+
 function toPublicFileUrl(fileUrl: string | null) {
   if (!fileUrl) return null;
   if (!env.S3_PUBLIC_ENDPOINT || env.S3_PUBLIC_ENDPOINT === env.S3_ENDPOINT) {
@@ -108,6 +110,15 @@ function assertResourceTierAccess(allowedTiers: readonly Tier[], user: { role: R
   if (user.role === "STUDENT" && !allowedTiers.includes(user.tier)) {
     throw createHttpError(403, "You do not have access to this resource");
   }
+}
+
+function normalizeAllowedTiersByMinimumTier(allowedTiers: readonly Tier[] | undefined) {
+  if (!allowedTiers || allowedTiers.length === 0) return TIER_ORDER;
+  const minimumTierIndex = Math.min(
+    ...allowedTiers.map((tier) => TIER_ORDER.indexOf(tier)).filter((index) => index >= 0)
+  );
+  if (!Number.isFinite(minimumTierIndex)) return TIER_ORDER;
+  return TIER_ORDER.slice(minimumTierIndex);
 }
 
 export async function findAllResources(prisma: PrismaClient, query: ListResourcesQuery, user: { role: Role; tier: Tier }) {
@@ -197,7 +208,7 @@ export async function createResourceRecord(
       description: input.description ?? "",
       type: input.type as ResourceType,
       videoUrl: input.type === "VIDEO" ? (input.videoUrl ?? null) : null,
-      allowedTiers: input.allowedTiers,
+      allowedTiers: normalizeAllowedTiersByMinimumTier(input.allowedTiers),
       uploadedBy,
     },
     select: RESOURCE_SELECT,
@@ -222,7 +233,7 @@ export async function updateResourceRecord(
     data: {
       ...(input.title !== undefined && { title: input.title }),
       ...(input.description !== undefined && { description: input.description }),
-      ...(input.allowedTiers !== undefined && { allowedTiers: input.allowedTiers }),
+      ...(input.allowedTiers !== undefined && { allowedTiers: normalizeAllowedTiersByMinimumTier(input.allowedTiers) }),
       ...(input.fileUrl !== undefined && { fileUrl: input.fileUrl }),
       ...(input.fileName !== undefined && { fileName: input.fileName }),
       ...(input.fileSize !== undefined && { fileSize: input.fileSize }),
