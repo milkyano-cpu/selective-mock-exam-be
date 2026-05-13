@@ -3,17 +3,17 @@ import { buildJsonSchemas } from "../../utils/build-schemas.js";
 
 const dateKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must use YYYY-MM-DD format");
 
-const reminderDateParamSchema = z.object({
-  date: dateKeySchema,
+const reminderIdParamSchema = z.object({
+  id: z.string().uuid(),
 });
 
-const upsertReminderBodySchema = z.object({
+const createReminderBodySchema = z.object({
   date: dateKeySchema,
   note: z.string().trim().min(1).max(500),
 });
 
 const bulkUpsertRemindersBodySchema = z.object({
-  reminders: z.array(upsertReminderBodySchema).min(1).max(365),
+  reminders: z.array(createReminderBodySchema).min(1).max(365),
 });
 
 const reminderItemSchema = z.object({
@@ -47,13 +47,13 @@ const deleteReminderResponseSchema = z.object({
   message: z.string(),
 });
 
-export type ReminderDateParam = z.infer<typeof reminderDateParamSchema>;
-export type UpsertReminderBody = z.infer<typeof upsertReminderBodySchema>;
+export type ReminderIdParam = z.infer<typeof reminderIdParamSchema>;
+export type CreateReminderBody = z.infer<typeof createReminderBodySchema>;
 export type BulkUpsertRemindersBody = z.infer<typeof bulkUpsertRemindersBodySchema>;
 
 export const { schemas: studentCalendarSchemas, $ref: studentCalendarRef } = buildJsonSchemas({
-  reminderDateParamSchema,
-  upsertReminderBodySchema,
+  reminderIdParamSchema,
+  createReminderBodySchema,
   bulkUpsertRemindersBodySchema,
   reminderItemSchema,
   remindersListResponseSchema,

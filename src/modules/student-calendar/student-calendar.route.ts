@@ -3,9 +3,9 @@ import { requireRole } from "../../utils/authz.js";
 import { studentCalendarRef } from "./student-calendar.schema.js";
 import {
   bulkUpsertStudentRemindersHandler,
+  createStudentReminderHandler,
   deleteStudentReminderHandler,
   listStudentRemindersHandler,
-  upsertStudentReminderHandler,
 } from "./student-calendar.controller.js";
 
 export async function studentCalendarRoutes(fastify: FastifyInstance) {
@@ -17,13 +17,13 @@ export async function studentCalendarRoutes(fastify: FastifyInstance) {
     handler: listStudentRemindersHandler,
   });
 
-  fastify.put("/reminders", {
+  fastify.post("/reminders", {
     schema: {
-      body: studentCalendarRef("upsertReminderBodySchema"),
-      response: { 200: studentCalendarRef("reminderResponseSchema") },
+      body: studentCalendarRef("createReminderBodySchema"),
+      response: { 201: studentCalendarRef("reminderResponseSchema") },
     },
     preHandler: [fastify.authenticate, requireRole("STUDENT")],
-    handler: upsertStudentReminderHandler,
+    handler: createStudentReminderHandler,
   });
 
   fastify.post("/reminders/bulk", {
@@ -35,9 +35,9 @@ export async function studentCalendarRoutes(fastify: FastifyInstance) {
     handler: bulkUpsertStudentRemindersHandler,
   });
 
-  fastify.delete("/reminders/:date", {
+  fastify.delete("/reminders/:id", {
     schema: {
-      params: studentCalendarRef("reminderDateParamSchema"),
+      params: studentCalendarRef("reminderIdParamSchema"),
       response: { 200: studentCalendarRef("deleteReminderResponseSchema") },
     },
     preHandler: [fastify.authenticate, requireRole("STUDENT")],

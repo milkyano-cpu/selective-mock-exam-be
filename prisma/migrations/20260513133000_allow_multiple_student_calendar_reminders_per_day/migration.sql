@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS "student_calendar_reminders_student_id_reminder_date_key";

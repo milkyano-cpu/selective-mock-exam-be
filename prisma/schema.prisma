@@ -889,7 +889,6 @@ model StudentCalendarReminder {
 
   student User @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
-  @@unique([studentId, reminderDate])
   @@index([studentId, reminderDate])
   @@map("student_calendar_reminders")
 }

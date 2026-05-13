@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { createHttpError } from "../../utils/http-error.js";
-import type { UpsertReminderBody } from "./student-calendar.schema.js";
+import type { CreateReminderBody } from "./student-calendar.schema.js";
 
 type ReminderRow = {
   id: string;
@@ -35,16 +35,16 @@ export async function listStudentReminders(prisma: PrismaClient, studentId: stri
     SELECT id, student_id, reminder_date, note, created_at, updated_at
     FROM student_calendar_reminders
     WHERE student_id = ${studentId}
-    ORDER BY reminder_date ASC
+    ORDER BY reminder_date ASC, created_at ASC
   `);
 
   return rows.map(serializeReminder);
 }
 
-export async function upsertStudentReminder(
+export async function createStudentReminder(
   prisma: PrismaClient,
   studentId: string,
-  body: UpsertReminderBody
+  body: CreateReminderBody
 ) {
   const reminderDate = parseDateKey(body.date);
   const note = body.note.trim();
@@ -53,9 +53,6 @@ export async function upsertStudentReminder(
   const rows = await prisma.$queryRaw<ReminderRow[]>(Prisma.sql`
     INSERT INTO student_calendar_reminders (id, student_id, reminder_date, note, created_at, updated_at)
     VALUES (${id}, ${studentId}, ${reminderDate}::date, ${note}, NOW(), NOW())
-    ON CONFLICT (student_id, reminder_date)
-    DO UPDATE SET note = EXCLUDED.note,
-                  updated_at = NOW()
     RETURNING id, student_id, reminder_date, note, created_at, updated_at
   `);
 
@@ -70,23 +67,22 @@ export async function upsertStudentReminder(
 export async function bulkUpsertStudentReminders(
   prisma: PrismaClient,
   studentId: string,
-  reminders: UpsertReminderBody[]
+  reminders: CreateReminderBody[]
 ) {
   const saved = [];
 
   for (const reminder of reminders) {
-    saved.push(await upsertStudentReminder(prisma, studentId, reminder));
+    saved.push(await createStudentReminder(prisma, studentId, reminder));
   }
 
   return saved;
 }
 
-export async function deleteStudentReminder(prisma: PrismaClient, studentId: string, date: string) {
-  const reminderDate = parseDateKey(date);
+export async function deleteStudentReminder(prisma: PrismaClient, studentId: string, id: string) {
   const deleted = await prisma.$executeRaw(Prisma.sql`
     DELETE FROM student_calendar_reminders
     WHERE student_id = ${studentId}
-      AND reminder_date = ${reminderDate}::date
+      AND id = ${id}
   `);
 
   if (deleted === 0) {
