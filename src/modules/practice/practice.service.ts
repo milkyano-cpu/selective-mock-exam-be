@@ -437,6 +437,7 @@ export async function getPracticeSession(
       questionCount: true,
       startedAt: true,
       endedAt: true,
+      totalTimeSeconds: true,
       topic: { select: { id: true, name: true, subject: { select: { id: true, name: true } } } },
       sessionQuestions: {
         orderBy: { order: "asc" },
@@ -500,6 +501,7 @@ export async function getPracticeSession(
     status: session.status as "IN_PROGRESS" | "COMPLETED",
     startedAt: session.startedAt.toISOString(),
     endedAt: session.endedAt?.toISOString() ?? null,
+    totalTimeSeconds: session.totalTimeSeconds ?? null,
     questions,
     answers: resultAnswers,
   };
@@ -518,9 +520,12 @@ export async function submitPracticeSession(
       id: true,
       studentId: true,
       topicId: true,
+      sourceType: true,
+      pathwayNodeId: true,
       status: true,
       difficulty: true,
       questionCount: true,
+      startedAt: true,
       topic: { select: { id: true, name: true, subjectId: true } },
       sessionQuestions: {
         select: {
@@ -563,6 +568,11 @@ export async function submitPracticeSession(
   const correctAnswerMap = new Map(
     session.sessionQuestions.map((sq) => [sq.questionId, sq.question.correctAnswer])
   );
+  const endedAt = new Date();
+  const elapsedSessionSeconds = Math.max(
+    0,
+    Math.round((endedAt.getTime() - session.startedAt.getTime()) / 1000)
+  );
 
   const gradedAnswers = body.answers.map((a) => ({
     sessionId,
@@ -571,20 +581,20 @@ export async function submitPracticeSession(
     isCorrect:
       a.studentAnswer.trim().toUpperCase() ===
       (correctAnswerMap.get(a.questionId) ?? "").trim().toUpperCase(),
-    timeSpentSeconds: a.timeSpentSeconds,
+    timeSpentSeconds: Math.min(a.timeSpentSeconds, elapsedSessionSeconds),
   }));
+  const totalTimeSeconds = elapsedSessionSeconds;
 
   const correctCount = gradedAnswers.filter((a) => a.isCorrect).length;
   const totalQuestions = session.sessionQuestions.length;
   const scorePercent = totalQuestions > 0 ? (correctCount / totalQuestions) * 100 : 0;
-  const endedAt = new Date();
 
   // 4. Persist answers + complete session
   await prisma.$transaction(async (tx) => {
     await tx.practiceAnswer.createMany({ data: gradedAnswers });
     await tx.practiceSession.update({
       where: { id: sessionId },
-      data: { status: "COMPLETED", endedAt },
+      data: { status: "COMPLETED", endedAt, totalTimeSeconds },
     });
   });
 
@@ -621,6 +631,16 @@ export async function submitPracticeSession(
       const topicScore = total > 0 ? (correct / total) * 100 : 0;
       await upsertTopicPerformance(prisma, studentId, topicId, subjectId, topicScore);
     }
+  }
+
+  if (session.sourceType === "PATHWAY" && session.pathwayNodeId) {
+    await completePathwayNodePractice(
+      prisma,
+      studentId,
+      session.pathwayNodeId,
+      correctCount,
+      totalQuestions
+    );
   }
 
   // 6. Build result
@@ -661,6 +681,7 @@ export async function submitPracticeSession(
     correctCount,
     scorePercent,
     endedAt: endedAt.toISOString(),
+    totalTimeSeconds,
     answers: resultAnswers,
   };
 }
@@ -694,6 +715,7 @@ export async function listPracticeSessions(
         difficulty: true,
         questionCount: true,
         status: true,
+        totalTimeSeconds: true,
         startedAt: true,
         endedAt: true,
         topic: { select: { id: true, name: true, subject: { select: { id: true, name: true } } } },
@@ -724,6 +746,7 @@ export async function listPracticeSessions(
       correctCount,
       startedAt: s.startedAt.toISOString(),
       endedAt: s.endedAt?.toISOString() ?? null,
+      totalTimeSeconds: s.totalTimeSeconds ?? null,
     };
   });
 
@@ -901,15 +924,78 @@ export async function listTutorAssignments(
 
 function normalizeSourceType(
   sourceType: string
-): "SELF_SELECTED" | "TUTOR_ASSIGNED" | "RECOMMENDATION" {
+): "SELF_SELECTED" | "TUTOR_ASSIGNED" | "PATHWAY" | "RECOMMENDATION" {
   if (
     sourceType === "SELF_SELECTED" ||
     sourceType === "TUTOR_ASSIGNED" ||
+    sourceType === "PATHWAY" ||
     sourceType === "RECOMMENDATION"
   ) {
     return sourceType;
   }
   return "SELF_SELECTED";
+}
+
+async function completePathwayNodePractice(
+  prisma: PrismaClient,
+  studentId: string,
+  nodeId: string,
+  correctAnswers: number,
+  totalAttempts: number
+) {
+  const node = await prisma.pathwayNode.findUnique({
+    where: { id: nodeId },
+    select: {
+      id: true,
+      pathwayId: true,
+      orderIndex: true,
+      pathway: { select: { id: true, thresholdCorrect: true } },
+    },
+  });
+
+  if (!node) return;
+
+  const completedAt = correctAnswers >= node.pathway.thresholdCorrect ? new Date() : null;
+
+  await prisma.pathwayNodeProgress.upsert({
+    where: { nodeId_studentId: { nodeId, studentId } },
+    create: {
+      nodeId,
+      studentId,
+      correctAnswers,
+      totalAttempts,
+      isUnlocked: true,
+      completedAt,
+    },
+    update: {
+      correctAnswers,
+      totalAttempts,
+      completedAt,
+    },
+  });
+
+  if (!completedAt) return;
+
+  const nextNode = await prisma.pathwayNode.findFirst({
+    where: { pathwayId: node.pathway.id, orderIndex: node.orderIndex + 1 },
+    select: { id: true, topic: { select: { name: true } } },
+  });
+
+  if (!nextNode) return;
+
+  await prisma.pathwayNodeProgress.upsert({
+    where: { nodeId_studentId: { nodeId: nextNode.id, studentId } },
+    create: { nodeId: nextNode.id, studentId, isUnlocked: true },
+    update: { isUnlocked: true },
+  });
+
+  void createNotification(prisma, {
+    userId: studentId,
+    type: "PATHWAY_NODE_UNLOCKED",
+    title: "New Topic Unlocked!",
+    message: `Great job! You've unlocked the next topic: ${nextNode.topic.name}`,
+    data: { pathwayId: node.pathwayId, nodeId: nextNode.id, topicName: nextNode.topic.name },
+  }).catch(() => undefined);
 }
 
 async function upsertTopicPerformance(

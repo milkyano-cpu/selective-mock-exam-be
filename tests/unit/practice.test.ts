@@ -42,6 +42,7 @@ function practiceSession(overrides: Record<string, unknown> = {}) {
     questionCount: 2,
     startedAt: now,
     endedAt: null,
+    totalTimeSeconds: null,
     topic: {
       id: "topic-1",
       name: "Analogies",
@@ -351,11 +352,20 @@ describe("practice service", () => {
       where: { studentId_topicId: { studentId: "student-1", topicId: "topic-1" } },
       data: { scoreAvg: 50, attemptCount: { increment: 1 } },
     });
+    expect(prisma.tx.practiceSession.update).toHaveBeenCalledWith({
+      where: { id: "session-1" },
+      data: expect.objectContaining({
+        status: "COMPLETED",
+        endedAt: expect.any(Date),
+        totalTimeSeconds: expect.any(Number),
+      }),
+    });
     expect(result).toMatchObject({
       status: "COMPLETED",
       totalQuestions: 2,
       correctCount: 1,
       scorePercent: 50,
+      totalTimeSeconds: expect.any(Number),
     });
   });
 

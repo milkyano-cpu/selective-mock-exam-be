@@ -115,6 +115,13 @@ function createTx() {
       create: jest.fn(async () => undefined),
       upsert: jest.fn(async () => undefined),
     },
+    practiceSession: {
+      findFirst: jest.fn(async () => null),
+      create: jest.fn(async () => ({ id: "practice-1", topicId: "topic-1" })),
+    },
+    practiceSessionQuestion: {
+      createMany: jest.fn(async () => ({ count: 2 })),
+    },
   };
 }
 
@@ -157,8 +164,15 @@ function mockPrisma(overrides: Record<string, unknown> = {}) {
         completedAt,
       })),
     },
+    question: {
+      findMany: jest.fn(async () => [{ id: "question-1" }, { id: "question-2" }]),
+    },
     practiceSession: {
+      findFirst: jest.fn(async () => null),
       create: jest.fn(async () => ({ id: "practice-1", topicId: "topic-1" })),
+    },
+    practiceSessionQuestion: {
+      createMany: jest.fn(async () => ({ count: 2 })),
     },
     ...overrides,
   };
@@ -442,14 +456,27 @@ describe("pathways module", () => {
 
     const result = await pathwaysService.startNodePractice(prisma as never, "pathway-1", "node-1", "student-1");
 
-    expect(prisma.practiceSession.create).toHaveBeenCalledWith({
+    expect(prisma.question.findMany).toHaveBeenCalledWith({
+      where: { topicId: "topic-1", type: "MCQ", status: "PUBLISHED" },
+      select: { id: true },
+      take: 10,
+    });
+    expect(prisma.tx.practiceSession.create).toHaveBeenCalledWith({
       data: {
         studentId: "student-1",
         topicId: "topic-1",
         sourceType: "PATHWAY",
         pathwayNodeId: "node-1",
+        status: "IN_PROGRESS",
+        questionCount: 2,
       },
       select: { id: true, topicId: true },
+    });
+    expect(prisma.tx.practiceSessionQuestion.createMany).toHaveBeenCalledWith({
+      data: [
+        { sessionId: "practice-1", questionId: "question-1", order: 1 },
+        { sessionId: "practice-1", questionId: "question-2", order: 2 },
+      ],
     });
     expect(result).toEqual({ sessionId: "practice-1", topicId: "topic-1", nodeId: "node-1" });
 

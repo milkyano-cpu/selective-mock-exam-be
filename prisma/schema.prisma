@@ -517,6 +517,7 @@ model PracticeSession {
   pathwayNodeId  String?               @map("pathway_node_id")
   startedAt      DateTime              @default(now()) @map("started_at")
   endedAt        DateTime?             @map("ended_at")
+  totalTimeSeconds Int?                @map("total_time_seconds")
   status         PracticeSessionStatus @default(IN_PROGRESS) @map("status")
   difficulty     Difficulty?           @map("difficulty")
   questionCount  Int                   @default(10) @map("question_count")

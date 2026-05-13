@@ -390,14 +390,60 @@ export async function startNodePractice(
   const isUnlocked = node.progress[0]?.isUnlocked ?? false;
   if (!isUnlocked) throw createHttpError(403, "This node is locked. Complete the previous node first.");
 
-  const session = await prisma.practiceSession.create({
-    data: {
+  const existingSession = await prisma.practiceSession.findFirst({
+    where: {
       studentId,
-      topicId: node.topicId,
       sourceType: "PATHWAY",
       pathwayNodeId: node.id,
+      status: "IN_PROGRESS",
     },
-    select: { id: true, topicId: true },
+    select: {
+      id: true,
+      topicId: true,
+      _count: { select: { sessionQuestions: true } },
+    },
+  });
+
+  if (existingSession && existingSession._count.sessionQuestions > 0) {
+    return {
+      sessionId: existingSession.id,
+      topicId: existingSession.topicId ?? "",
+      nodeId: node.id,
+    };
+  }
+
+  const questions = await prisma.question.findMany({
+    where: { topicId: node.topicId, type: "MCQ", status: "PUBLISHED" },
+    select: { id: true },
+    take: 10,
+  });
+
+  if (questions.length === 0) {
+    throw createHttpError(422, "No published MCQ questions available for this pathway topic");
+  }
+
+  const session = await prisma.$transaction(async (tx) => {
+    const created = await tx.practiceSession.create({
+      data: {
+        studentId,
+        topicId: node.topicId,
+        sourceType: "PATHWAY",
+        pathwayNodeId: node.id,
+        status: "IN_PROGRESS",
+        questionCount: questions.length,
+      },
+      select: { id: true, topicId: true },
+    });
+
+    await tx.practiceSessionQuestion.createMany({
+      data: questions.map((question, index) => ({
+        sessionId: created.id,
+        questionId: question.id,
+        order: index + 1,
+      })),
+    });
+
+    return created;
   });
 
   return {

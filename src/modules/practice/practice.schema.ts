@@ -6,7 +6,7 @@ import { buildJsonSchemas } from "../../utils/build-schemas.js";
 const practiceStatusEnum = z.enum(["IN_PROGRESS", "COMPLETED"]);
 const difficultyEnum = z.enum(["EASY", "MEDIUM", "HARD"]);
 const difficultyFilterEnum = z.enum(["ALL", "EASY", "MEDIUM", "HARD"]);
-const practiceSourceEnum = z.enum(["SELF_SELECTED", "TUTOR_ASSIGNED", "RECOMMENDATION"]);
+const practiceSourceEnum = z.enum(["SELF_SELECTED", "TUTOR_ASSIGNED", "PATHWAY", "RECOMMENDATION"]);
 
 const mcqOptionSchema = z.object({
   key: z.string(),
@@ -15,7 +15,7 @@ const mcqOptionSchema = z.object({
 
 // ── Shared question schemas ───────────────────────────────────────────────────
 
-// Questions without correct answers (shown during IN_PROGRESS session)
+// Practice mode gives instant feedback after each local submission, so active questions include answer metadata.
 const practiceQuestionSchema = z.object({
   questionId: z.string(),
   order: z.number(),
@@ -25,6 +25,8 @@ const practiceQuestionSchema = z.object({
   options: z.array(mcqOptionSchema).nullable(),
   imageUrl: z.string().nullable(),
   imageUrls: z.array(z.string()),
+  correctAnswer: z.string(),
+  explanation: z.string().nullable(),
 });
 
 // Questions with correct answers and student responses (shown after COMPLETED)
@@ -82,7 +84,7 @@ const submitPracticeBodySchema = z.object({
       z.object({
         questionId: z.string().uuid(),
         studentAnswer: z.string().min(1).max(10),
-        timeSpentSeconds: z.number().int().min(0),
+        timeSpentSeconds: z.number().int().min(0).max(24 * 60 * 60),
       })
     )
     .min(1)
@@ -209,13 +211,14 @@ const getPracticeSessionResponseSchema = z.object({
     subjectName: z.string().nullable(),
     sourceType: practiceSourceEnum,
     difficulty: difficultyFilterEnum,
-    questionCount: z.number(),
-    status: practiceStatusEnum,
-    startedAt: z.string(),
-    endedAt: z.string().nullable(),
-    questions: z.array(practiceQuestionSchema),
-    answers: z.array(practiceResultAnswerSchema).nullable(),
-  }),
+        questionCount: z.number(),
+        status: practiceStatusEnum,
+        startedAt: z.string(),
+        endedAt: z.string().nullable(),
+        totalTimeSeconds: z.number().nullable(),
+        questions: z.array(practiceQuestionSchema),
+        answers: z.array(practiceResultAnswerSchema).nullable(),
+      }),
 });
 
 const submitPracticeResponseSchema = z.object({
@@ -230,6 +233,7 @@ const submitPracticeResponseSchema = z.object({
     correctCount: z.number(),
     scorePercent: z.number(),
     endedAt: z.string(),
+    totalTimeSeconds: z.number(),
     answers: z.array(practiceResultAnswerSchema),
   }),
 });
@@ -248,6 +252,7 @@ const practiceSessionSummarySchema = z.object({
   correctCount: z.number().nullable(),
   startedAt: z.string(),
   endedAt: z.string().nullable(),
+  totalTimeSeconds: z.number().nullable(),
 });
 
 const listPracticeSessionsResponseSchema = z.object({

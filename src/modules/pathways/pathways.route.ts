@@ -125,6 +125,7 @@ export async function pathwayRoutes(fastify: FastifyInstance) {
         201: pathwayRef("pathwayStartPracticeResponseSchema"),
         403: pathwayRef("pathwayErrorResponseSchema"),
         404: pathwayRef("pathwayErrorResponseSchema"),
+        422: pathwayRef("pathwayErrorResponseSchema"),
       },
     },
     preHandler: [fastify.authenticate, requireRole("STUDENT"), premiumPathways],
