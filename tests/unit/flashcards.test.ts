@@ -377,7 +377,7 @@ describe("flashcards module", () => {
           {
             question: {
               id: "question-1",
-              contentText: "What is 2+2?",
+              questionText: "What is 2+2?",
               correctAnswer: "B",
               explanation: "Two plus two is four.",
               options: [
@@ -389,7 +389,7 @@ describe("flashcards module", () => {
           {
             question: {
               id: "question-blank",
-              contentText: "   ",
+              questionText: "   ",
               correctAnswer: "",
               explanation: null,
               options: null,
@@ -398,7 +398,7 @@ describe("flashcards module", () => {
           {
             question: {
               id: "question-existing",
-              contentText: "Existing card?",
+              questionText: "Existing card?",
               correctAnswer: "A",
               explanation: null,
               options: [{ key: "A", text: "Yes" }],

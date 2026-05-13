@@ -23,7 +23,7 @@ const mcqOptionsSchema = z
     }
   );
 
-const questionMarkingTypeSchema = z.enum(["AUTO", "RUBRIC"]);
+const questionMarkingTypeSchema = z.enum(["AUTO", "AI_RUBRIC"]);
 
 // ── Request schemas ───────────────────────────────────────────────────────────
 
@@ -32,13 +32,14 @@ const createQuestionBodySchema = z
     subjectId: z.string().uuid(),
     topicId: z.string().uuid(),
     passageId: z.string().uuid().optional(),
-    rubricId: z.string().max(100).nullable().optional(),
+    aiRubricId: z.string().max(100).nullable().optional(),
     questionNumber: z.number().int().min(1).optional(),
     type: z.enum(["MCQ", "ESSAY"]),
     difficulty: z.enum(["EASY", "MEDIUM", "HARD"]),
-    contentText: z.string().min(1).max(5000),
-    contentLatex: z.string().optional(),
-    isLatexFormat: z.boolean().optional().default(false),
+    questionText: z.string().min(1).max(5000),
+    latexEnabled: z.boolean().optional().default(false),
+    adaptiveTags: z.string().max(2000).nullable().optional(),
+    skillTags: z.string().max(2000).nullable().optional(),
     markingType: questionMarkingTypeSchema.optional(),
     maxMarks: z.number().int().min(1).optional(),
     options: mcqOptionsSchema.optional(),
@@ -70,14 +71,14 @@ const createQuestionBodySchema = z
     if (data.type === "ESSAY" && data.options !== undefined) {
       ctx.addIssue({ code: "custom", path: ["options"], message: "options must not be provided for ESSAY questions" });
     }
-    if (data.type === "MCQ" && data.rubricId) {
-      ctx.addIssue({ code: "custom", path: ["rubricId"], message: "MCQ questions must not use a rubric" });
+    if (data.type === "MCQ" && data.aiRubricId) {
+      ctx.addIssue({ code: "custom", path: ["aiRubricId"], message: "MCQ questions must not use a aiRubric" });
     }
-    if (data.type === "MCQ" && data.markingType === "RUBRIC") {
+    if (data.type === "MCQ" && data.markingType === "AI_RUBRIC") {
       ctx.addIssue({ code: "custom", path: ["markingType"], message: "MCQ questions must use AUTO marking" });
     }
     if (data.type === "ESSAY" && data.markingType === "AUTO") {
-      ctx.addIssue({ code: "custom", path: ["markingType"], message: "ESSAY questions must use RUBRIC marking" });
+      ctx.addIssue({ code: "custom", path: ["markingType"], message: "ESSAY questions must use AI_RUBRIC marking" });
     }
   });
 
@@ -86,13 +87,14 @@ const updateQuestionBodySchema = z
     subjectId: z.string().uuid().optional(),
     topicId: z.string().uuid().optional(),
     passageId: z.string().uuid().nullable().optional(),
-    rubricId: z.string().max(100).nullable().optional(),
+    aiRubricId: z.string().max(100).nullable().optional(),
     questionNumber: z.number().int().min(1).nullable().optional(),
     type: z.enum(["MCQ", "ESSAY"]).optional(),
     difficulty: z.enum(["EASY", "MEDIUM", "HARD"]).optional(),
-    contentText: z.string().min(1).max(5000).optional(),
-    contentLatex: z.string().optional(),
-    isLatexFormat: z.boolean().optional(),
+    questionText: z.string().min(1).max(5000).optional(),
+    latexEnabled: z.boolean().optional(),
+    adaptiveTags: z.string().max(2000).nullable().optional(),
+    skillTags: z.string().max(2000).nullable().optional(),
     markingType: questionMarkingTypeSchema.optional(),
     maxMarks: z.number().int().min(1).optional(),
     options: mcqOptionsSchema.optional(),
@@ -114,14 +116,14 @@ const updateQuestionBodySchema = z
     if (data.type === "ESSAY" && data.options !== undefined) {
       ctx.addIssue({ code: "custom", path: ["options"], message: "options must not be provided for ESSAY questions" });
     }
-    if (data.type === "MCQ" && data.rubricId) {
-      ctx.addIssue({ code: "custom", path: ["rubricId"], message: "MCQ questions must not use a rubric" });
+    if (data.type === "MCQ" && data.aiRubricId) {
+      ctx.addIssue({ code: "custom", path: ["aiRubricId"], message: "MCQ questions must not use a aiRubric" });
     }
-    if (data.type === "MCQ" && data.markingType === "RUBRIC") {
+    if (data.type === "MCQ" && data.markingType === "AI_RUBRIC") {
       ctx.addIssue({ code: "custom", path: ["markingType"], message: "MCQ questions must use AUTO marking" });
     }
     if (data.type === "ESSAY" && data.markingType === "AUTO") {
-      ctx.addIssue({ code: "custom", path: ["markingType"], message: "ESSAY questions must use RUBRIC marking" });
+      ctx.addIssue({ code: "custom", path: ["markingType"], message: "ESSAY questions must use AI_RUBRIC marking" });
     }
   });
 
@@ -171,17 +173,18 @@ const questionSchema = z.object({
   topicName: z.string(),
   tutorId: z.string().uuid(),
   passageId: z.string().uuid().nullable(),
-  rubricId: z.string().nullable(),
-  rubric: z.object({
+  aiRubricId: z.string().nullable(),
+  aiRubric: z.object({
     id: z.string(),
     name: z.string(),
     totalMaxScore: z.number(),
   }).nullable(),
   type: z.enum(["MCQ", "ESSAY"]),
   difficulty: z.enum(["EASY", "MEDIUM", "HARD"]),
-  contentText: z.string(),
-  contentLatex: z.string().nullable(),
-  isLatexFormat: z.boolean(),
+  questionText: z.string(),
+  latexEnabled: z.boolean(),
+  adaptiveTags: z.string().nullable(),
+  skillTags: z.string().nullable(),
   markingType: questionMarkingTypeSchema,
   maxMarks: z.number(),
   options: z.any().nullable(),
@@ -224,7 +227,7 @@ const unresolvedRowDataSchema = z.object({
   topicName: z.string(),
   type: z.string(),
   difficulty: z.string(),
-  contentText: z.string(),
+  questionText: z.string(),
   optionA: z.string(),
   optionB: z.string(),
   optionC: z.string(),
@@ -236,11 +239,12 @@ const unresolvedRowDataSchema = z.object({
   imageUrl: z.string().nullable(),
   imageUrls: z.array(z.string()),
   passageExternalId: z.string().nullable(),
-  passageText: z.string().nullable(),
-  rubricId: z.string().nullable(),
+  aiRubricId: z.string().nullable(),
   subtopics: z.array(z.string()),
   notes: z.string().nullable(),
-  isLatexFormat: z.boolean().optional(),
+  latexEnabled: z.boolean().optional(),
+  adaptiveTags: z.string().nullable().optional(),
+  skillTags: z.string().nullable().optional(),
   markingType: questionMarkingTypeSchema,
   maxMarks: z.number(),
 });

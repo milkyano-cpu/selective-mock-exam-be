@@ -66,7 +66,7 @@ const relatedQuestionSchema = z.object({
   type:        z.enum(["MCQ", "ESSAY"]),
   difficulty:  z.enum(["EASY", "MEDIUM", "HARD"]),
   status:      z.enum(["DRAFT", "PENDING_APPROVAL", "PUBLISHED"]),
-  contentText: z.string(),
+  questionText: z.string(),
   createdAt:   z.string().datetime(),
   updatedAt:   z.string().datetime(),
 });

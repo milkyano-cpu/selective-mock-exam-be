@@ -36,7 +36,7 @@ const CSV_HEADERS = [
   "QuestionType",
   "MarkingType",
   "MaxMarks",
-  "RubricID",
+  "AIRubricID",
 ] as const;
 
 const DEFAULT_CSV_ROW: Record<(typeof CSV_HEADERS)[number], string> = {
@@ -62,7 +62,7 @@ const DEFAULT_CSV_ROW: Record<(typeof CSV_HEADERS)[number], string> = {
   QuestionType: "MCQ",
   MarkingType: "Auto",
   MaxMarks: "1",
-  RubricID: "",
+  AIRubricID: "",
 };
 
 function csvEscape(value: unknown) {
@@ -91,11 +91,10 @@ function mockQuestionRecord(overrides: AnyRecord = {}) {
     topicId: TOPIC_ID,
     tutorId: CREATOR_ID,
     passageId: null,
-    rubricId: null,
+    aiRubricId: null,
     type: "MCQ",
     difficulty: "EASY",
-    contentText: "Complete the analogy.",
-    contentLatex: null,
+    questionText: "Complete the analogy.",
     options: [
       { key: "A", text: "A" },
       { key: "B", text: "B" },
@@ -110,7 +109,7 @@ function mockQuestionRecord(overrides: AnyRecord = {}) {
     imageUrls: [],
     subtopics: [],
     notes: null,
-    isLatexFormat: false,
+    latexEnabled: false,
     markingType: "AUTO",
     maxMarks: 1,
     status: "DRAFT",
@@ -119,7 +118,7 @@ function mockQuestionRecord(overrides: AnyRecord = {}) {
     updatedAt: now,
     subject: { name: "Verbal Reasoning" },
     topic: { name: "Analogies" },
-    rubric: null,
+    aiRubric: null,
     ...overrides,
   };
 }
@@ -133,7 +132,7 @@ function mockPendingRow(overrides: Partial<UnresolvedRowData> = {}): ResolveImpo
     topicName: "Analogies",
     type: "MCQ",
     difficulty: "EASY",
-    contentText: "Complete the analogy.",
+    questionText: "Complete the analogy.",
     optionA: "A",
     optionB: "B",
     optionC: "C",
@@ -146,10 +145,10 @@ function mockPendingRow(overrides: Partial<UnresolvedRowData> = {}): ResolveImpo
     imageUrls: [],
     passageExternalId: null,
     passageText: null,
-    rubricId: null,
+    aiRubricId: null,
     subtopics: [],
     notes: null,
-    isLatexFormat: false,
+    latexEnabled: false,
     markingType: "AUTO",
     maxMarks: 1,
     ...overrides,
@@ -173,7 +172,7 @@ function mockPrisma(overrides: AnyRecord = {}) {
   const existingExams = overrides.existingExams ?? [];
   const existingExamQuestions = overrides.existingExamQuestions ?? [];
   const existingStandaloneQuestions = overrides.existingStandaloneQuestions ?? [];
-  const rubrics = overrides.rubrics ?? [];
+  const aiRubrics = overrides.aiRubrics ?? [];
   const questionById = overrides.questionById ?? mockQuestionRecord();
 
   const prisma = {
@@ -192,9 +191,9 @@ function mockPrisma(overrides: AnyRecord = {}) {
         externalId: args.data.externalId,
       })),
     },
-    rubric: {
-      findMany: jest.fn(async () => rubrics),
-      findFirst: jest.fn(async () => rubrics[0] ?? null),
+    aiRubric: {
+      findMany: jest.fn(async () => aiRubrics),
+      findFirst: jest.fn(async () => aiRubrics[0] ?? null),
     },
     question: {
       findUnique: jest.fn(async () => questionById),
@@ -242,7 +241,7 @@ function mockPrisma(overrides: AnyRecord = {}) {
     },
   };
 
-  for (const key of ["subject", "topic", "passage", "rubric", "question", "exam", "examQuestion"]) {
+  for (const key of ["subject", "topic", "passage", "aiRubric", "question", "exam", "examQuestion"]) {
     if (overrides[key]) {
       prisma[key as keyof typeof prisma] = {
         ...prisma[key as keyof typeof prisma],
@@ -339,7 +338,7 @@ describe("questions.service import and image upload", () => {
           subjectId: SUBJECT_ID,
           topicId: TOPIC_ID,
           type: "MCQ",
-          rubricId: null,
+          aiRubricId: null,
           tutorId: CREATOR_ID,
         })],
       }));
@@ -387,16 +386,16 @@ describe("questions.service import and image upload", () => {
       }));
     });
 
-    it("returns a validation error for MCQ rows that provide RubricID", async () => {
+    it("returns a validation error for MCQ rows that provide AIRubricID", async () => {
       const prisma = mockPrisma();
 
-      const result = await bulkImportQuestions(prisma as never, csvBuffer([{ RubricID: "rubric-missing" }]), CREATOR_ID);
+      const result = await bulkImportQuestions(prisma as never, csvBuffer([{ AIRubricID: "aiRubric-missing" }]), CREATOR_ID);
 
       expect(result).toMatchObject({ total: 1, created: 0, failed: 1 });
       expect(result.errors).toEqual([
         expect.objectContaining({
           row: 2,
-          reason: expect.stringContaining("RubricID must not be provided for MCQ"),
+          reason: expect.stringContaining("AIRubricID must not be provided for MCQ"),
         }),
       ]);
       expect(prisma.question.createMany).not.toHaveBeenCalled();
@@ -440,12 +439,12 @@ describe("questions.service import and image upload", () => {
       });
     });
 
-    it("rejects invalid rubric ids during resolve with a clear 400", async () => {
+    it("rejects invalid aiRubric ids during resolve with a clear 400", async () => {
       const prisma = mockPrisma();
       const row = mockPendingRow({
         type: "ESSAY",
-        markingType: "RUBRIC",
-        rubricId: "rubric-missing",
+        markingType: "AI_RUBRIC",
+        aiRubricId: "aiRubric-missing",
         maxMarks: 20,
         correctAnswer: "",
       });
@@ -453,7 +452,7 @@ describe("questions.service import and image upload", () => {
       await expect(resolveAndSavePendingRows(prisma as never, [row], CREATOR_ID))
         .rejects.toMatchObject({
           statusCode: 400,
-          message: expect.stringContaining('RubricID "rubric-missing" was not found or is inactive'),
+          message: expect.stringContaining('AIRubricID "aiRubric-missing" was not found or is inactive'),
         });
       expect(prisma.question.createMany).not.toHaveBeenCalled();
     });
@@ -483,7 +482,7 @@ describe("questions.service import and image upload", () => {
 
       const rows = [
         mockPendingRow(),
-        mockPendingRow({ questionNumber: 2, contentText: "Second duplicate." }),
+        mockPendingRow({ questionNumber: 2, questionText: "Second duplicate." }),
       ];
 
       const result = await resolveAndSavePendingRows(prisma as never, rows, CREATOR_ID);

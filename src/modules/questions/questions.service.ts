@@ -14,11 +14,10 @@ const QUESTION_SELECT = {
   topicId: true,
   tutorId: true,
   passageId: true,
-  rubricId: true,
+  aiRubricId: true,
   type: true,
   difficulty: true,
-  contentText: true,
-  contentLatex: true,
+  questionText: true,
   options: true,
   correctAnswer: true,
   explanation: true,
@@ -27,7 +26,9 @@ const QUESTION_SELECT = {
   imageUrls: true,
   subtopics: true,
   notes: true,
-  isLatexFormat: true,
+  latexEnabled: true,
+  adaptiveTags: true,
+  skillTags: true,
   markingType: true,
   maxMarks: true,
   status: true,
@@ -44,7 +45,7 @@ const QUESTION_SELECT = {
       name: true,
     },
   },
-  rubric: {
+  aiRubric: {
     select: {
       id: true,
       name: true,
@@ -70,13 +71,13 @@ type BulkImportResult = {
 type QuestionRecord = Prisma.QuestionGetPayload<{ select: typeof QUESTION_SELECT }>;
 
 function serializeQuestion(question: QuestionRecord) {
-  const { subject, topic, rubric, ...rest } = question;
+  const { subject, topic, aiRubric, ...rest } = question;
 
   return {
     ...rest,
     subjectName: subject.name,
     topicName: topic.name,
-    rubric,
+    aiRubric,
   };
 }
 
@@ -101,7 +102,7 @@ function hasPendingImageRef(question: { imageUrl: string | null; imageUrls: stri
 }
 
 // Matches UnresolvedRowData in schema — kept in sync manually
-type NormalisedRow = UnresolvedRowData & { isLatexFormat: boolean };
+type NormalisedRow = UnresolvedRowData & { latexEnabled: boolean };
 
 type InsertableRow = NormalisedRow & {
   rowNumber: number;
@@ -134,14 +135,14 @@ type CsvRow = {
   TimeLimitSeconds: string;
   ImageURL: string;
   PassageID: string;
-  PassageText: string;
   Notes: string;
-  IsLatexFormat: string;
   QuestionType?: string;
   LatexEnabled?: string;
   MarkingType?: string;
   MaxMarks?: string;
-  RubricID?: string;
+  AIRubricID?: string;
+  AdaptiveTags?: string;
+  SkillTags?: string;
 };
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -155,24 +156,24 @@ async function findQuestionById(prisma: PrismaClient, id: string) {
   return serializeQuestion(question);
 }
 
-async function assertActiveRubricExists(prisma: PrismaClient, rubricId: string) {
-  const rubric = await prisma.rubric.findFirst({
-    where: { id: rubricId, isActive: true },
+async function assertActiveAiRubricExists(prisma: PrismaClient, aiRubricId: string) {
+  const aiRubric = await prisma.aiRubric.findFirst({
+    where: { id: aiRubricId, isActive: true },
     select: { id: true, totalMaxScore: true },
   });
-  if (!rubric) throw createHttpError(400, `RubricID "${rubricId}" was not found or is inactive`);
-  return rubric;
+  if (!aiRubric) throw createHttpError(400, `AIRubricID "${aiRubricId}" was not found or is inactive`);
+  return aiRubric;
 }
 
-async function findActiveRubricScores(prisma: PrismaClient, rubricIds: string[]) {
-  if (rubricIds.length === 0) return new Map<string, number>();
+async function findActiveAiRubricScores(prisma: PrismaClient, aiRubricIds: string[]) {
+  if (aiRubricIds.length === 0) return new Map<string, number>();
 
-  const rubrics = await prisma.rubric.findMany({
-    where: { id: { in: rubricIds }, isActive: true },
+  const aiRubrics = await prisma.aiRubric.findMany({
+    where: { id: { in: aiRubricIds }, isActive: true },
     select: { id: true, totalMaxScore: true },
   });
 
-  return new Map(rubrics.map((rubric) => [rubric.id, rubric.totalMaxScore]));
+  return new Map(aiRubrics.map((aiRubric) => [aiRubric.id, aiRubric.totalMaxScore]));
 }
 
 async function getQuestionIdSeed(prisma: PrismaClient, subjectId: string): Promise<QuestionIdSeed> {
@@ -258,8 +259,8 @@ function examImportKey(testName: string, subjectId: string, questionNumber: numb
   return `${normalizeImportKey(testName)}${SEP}${subjectId}${SEP}${questionNumber}`;
 }
 
-function questionBankImportKey(row: Pick<InsertableRow, "resolvedSubjectId" | "resolvedTopicId" | "type" | "contentText">) {
-  return `${row.resolvedSubjectId}${SEP}${row.resolvedTopicId}${SEP}${row.type}${SEP}${normalizeImportKey(row.contentText)}`;
+function questionBankImportKey(row: Pick<InsertableRow, "resolvedSubjectId" | "resolvedTopicId" | "type" | "questionText">) {
+  return `${row.resolvedSubjectId}${SEP}${row.resolvedTopicId}${SEP}${row.type}${SEP}${normalizeImportKey(row.questionText)}`;
 }
 
 async function findExistingImportDuplicateRows(
@@ -320,10 +321,10 @@ async function findExistingImportDuplicateRows(
     // Collect the distinct topicIds from the import to scope the DB query
     const topicIds = [...new Set(standaloneRows.map((row) => row.resolvedTopicId))];
 
-    // Query by tutorId + topicId only — no wide OR clause, filter contentText in memory
+    // Query by tutorId + topicId only — no wide OR clause, filter questionText in memory
     const existingQuestions = await prisma.question.findMany({
       where: { tutorId: creatorId, topicId: { in: topicIds } },
-      select: { subjectId: true, topicId: true, type: true, contentText: true },
+      select: { subjectId: true, topicId: true, type: true, questionText: true },
     });
 
     const existingStandaloneKeys = new Set(
@@ -331,7 +332,7 @@ async function findExistingImportDuplicateRows(
         resolvedSubjectId: question.subjectId,
         resolvedTopicId: question.topicId,
         type: question.type,
-        contentText: question.contentText,
+        questionText: question.questionText,
       })),
     );
 
@@ -380,16 +381,16 @@ export async function createQuestion(
   body: CreateQuestionBody,
   creatorId: string,
 ) {
-  const isLatexFormat = body.isLatexFormat ?? false;
+  const latexEnabled = body.latexEnabled ?? false;
   const generatedQuestionId = body.questionId?.trim() || (await generateNextQuestionId(prisma, body.subjectId)).questionId;
   let maxMarks = body.maxMarks ?? (body.type === "ESSAY" ? 20 : 1);
 
-  if (body.type === "ESSAY" && body.rubricId) {
-    const rubric = await assertActiveRubricExists(prisma, body.rubricId);
-    if (body.maxMarks !== undefined && body.maxMarks !== rubric.totalMaxScore) {
-      throw createHttpError(400, `MaxMarks must match rubric totalMaxScore (${rubric.totalMaxScore}) for RubricID "${body.rubricId}"`);
+  if (body.type === "ESSAY" && body.aiRubricId) {
+    const aiRubric = await assertActiveAiRubricExists(prisma, body.aiRubricId);
+    if (body.maxMarks !== undefined && body.maxMarks !== aiRubric.totalMaxScore) {
+      throw createHttpError(400, `MaxMarks must match aiRubric totalMaxScore (${aiRubric.totalMaxScore}) for AIRubricID "${body.aiRubricId}"`);
     }
-    maxMarks = rubric.totalMaxScore;
+    maxMarks = aiRubric.totalMaxScore;
   }
 
   const question = await prisma.question.create({
@@ -397,14 +398,13 @@ export async function createQuestion(
       subjectId: body.subjectId,
       topicId: body.topicId,
       passageId: body.passageId ?? null,
-      rubricId: body.type === "ESSAY" ? (body.rubricId ?? null) : null,
+      aiRubricId: body.type === "ESSAY" ? (body.aiRubricId ?? null) : null,
       tutorId: creatorId,
       type: body.type,
       difficulty: body.difficulty,
-      contentText: body.contentText,
-      contentLatex: isLatexFormat ? body.contentText : (body.contentLatex ?? null),
-      isLatexFormat,
-      markingType: body.markingType ?? (body.type === "ESSAY" ? "RUBRIC" : "AUTO"),
+      questionText: body.questionText,
+      latexEnabled,
+      markingType: body.markingType ?? (body.type === "ESSAY" ? "AI_RUBRIC" : "AUTO"),
       maxMarks,
       options: body.options ?? Prisma.DbNull,
       correctAnswer: body.correctAnswer ?? "",
@@ -414,6 +414,8 @@ export async function createQuestion(
       imageUrls: body.imageUrls ?? splitImageRefs(body.imageUrl),
       subtopics: body.subtopics ?? [],
       notes: body.notes ?? null,
+      adaptiveTags: body.adaptiveTags ?? null,
+      skillTags: body.skillTags ?? null,
       questionId: generatedQuestionId,
       questionNumber: body.questionNumber ?? null,
       status: "DRAFT",
@@ -431,7 +433,7 @@ export async function listQuestions(prisma: PrismaClient, query: ListQuestionsQu
   const where: Prisma.QuestionWhereInput = {};
   if (search) {
     where.OR = [
-      { contentText: { contains: search, mode: "insensitive" } },
+      { questionText: { contains: search, mode: "insensitive" } },
       { questionId: { contains: search, mode: "insensitive" } },
     ];
   }
@@ -486,27 +488,27 @@ export async function updateQuestion(
 
   const effectiveType = body.type ?? existing.type;
   const effectiveMarkingType = body.markingType ?? existing.markingType;
-  const effectiveRubricId = body.rubricId !== undefined ? body.rubricId : existing.rubricId;
+  const effectiveAiRubricId = body.aiRubricId !== undefined ? body.aiRubricId : existing.aiRubricId;
 
-  if (effectiveType === "MCQ" && body.rubricId) {
-    throw createHttpError(400, "MCQ questions must not use a rubric");
+  if (effectiveType === "MCQ" && body.aiRubricId) {
+    throw createHttpError(400, "MCQ questions must not use a aiRubric");
   }
 
-  if (effectiveType === "ESSAY" && effectiveRubricId) {
-    const rubric = await assertActiveRubricExists(prisma, effectiveRubricId);
-    const effectiveMaxMarks = body.maxMarks ?? (body.rubricId !== undefined ? rubric.totalMaxScore : existing.maxMarks);
-    if (effectiveMaxMarks !== rubric.totalMaxScore) {
-      throw createHttpError(400, `MaxMarks must match rubric totalMaxScore (${rubric.totalMaxScore}) for RubricID "${effectiveRubricId}"`);
+  if (effectiveType === "ESSAY" && effectiveAiRubricId) {
+    const aiRubric = await assertActiveAiRubricExists(prisma, effectiveAiRubricId);
+    const effectiveMaxMarks = body.maxMarks ?? (body.aiRubricId !== undefined ? aiRubric.totalMaxScore : existing.maxMarks);
+    if (effectiveMaxMarks !== aiRubric.totalMaxScore) {
+      throw createHttpError(400, `MaxMarks must match aiRubric totalMaxScore (${aiRubric.totalMaxScore}) for AIRubricID "${effectiveAiRubricId}"`);
     }
-    if (body.rubricId !== undefined && body.maxMarks === undefined) body.maxMarks = rubric.totalMaxScore;
+    if (body.aiRubricId !== undefined && body.maxMarks === undefined) body.maxMarks = aiRubric.totalMaxScore;
   }
 
-  if (effectiveType === "MCQ" && effectiveMarkingType === "RUBRIC") {
+  if (effectiveType === "MCQ" && effectiveMarkingType === "AI_RUBRIC") {
     throw createHttpError(400, "MCQ questions must use AUTO marking");
   }
 
   if (effectiveType === "ESSAY" && effectiveMarkingType === "AUTO") {
-    throw createHttpError(400, "ESSAY questions must use RUBRIC marking");
+    throw createHttpError(400, "ESSAY questions must use AI_RUBRIC marking");
   }
 
   if (body.type === "MCQ" && existing.type !== "MCQ") {
@@ -519,20 +521,12 @@ export async function updateQuestion(
   if (body.subjectId !== undefined) updateData.subjectId = body.subjectId;
   if (body.topicId !== undefined) updateData.topicId = body.topicId;
   if (body.passageId !== undefined) updateData.passageId = body.passageId;
-  if (body.rubricId !== undefined) updateData.rubricId = body.rubricId;
+  if (body.aiRubricId !== undefined) updateData.aiRubricId = body.aiRubricId;
   if (body.type !== undefined) updateData.type = body.type;
   if (body.difficulty !== undefined) updateData.difficulty = body.difficulty;
-  if (body.contentText !== undefined) updateData.contentText = body.contentText;
-  if (body.isLatexFormat !== undefined) {
-    updateData.isLatexFormat = body.isLatexFormat;
-    // When toggling to latex mode, sync contentLatex with contentText
-    if (body.isLatexFormat) {
-      updateData.contentLatex = body.contentText ?? existing.contentText;
-    }
-  } else if (existing.isLatexFormat && body.contentText !== undefined) {
-    updateData.contentLatex = body.contentText;
-  } else if (body.contentLatex !== undefined) {
-    updateData.contentLatex = body.contentLatex;
+  if (body.questionText !== undefined) updateData.questionText = body.questionText;
+  if (body.latexEnabled !== undefined) {
+    updateData.latexEnabled = body.latexEnabled;
   }
   if (body.correctAnswer !== undefined) updateData.correctAnswer = body.correctAnswer;
   if (body.explanation !== undefined) updateData.explanation = body.explanation;
@@ -547,13 +541,15 @@ export async function updateQuestion(
   }
   if (body.subtopics !== undefined) updateData.subtopics = body.subtopics;
   if (body.notes !== undefined) updateData.notes = body.notes;
+  if (body.adaptiveTags !== undefined) updateData.adaptiveTags = body.adaptiveTags;
+  if (body.skillTags !== undefined) updateData.skillTags = body.skillTags;
   if (body.questionId !== undefined) updateData.questionId = body.questionId;
   if (body.questionNumber !== undefined) updateData.questionNumber = body.questionNumber;
   if (body.markingType !== undefined) updateData.markingType = body.markingType;
   if (body.maxMarks !== undefined) updateData.maxMarks = body.maxMarks;
-  if (body.type !== undefined && body.markingType === undefined) updateData.markingType = body.type === "ESSAY" ? "RUBRIC" : "AUTO";
+  if (body.type !== undefined && body.markingType === undefined) updateData.markingType = body.type === "ESSAY" ? "AI_RUBRIC" : "AUTO";
   if (body.type !== undefined && body.maxMarks === undefined) updateData.maxMarks = body.type === "ESSAY" ? 20 : 1;
-  if (effectiveType === "MCQ") updateData.rubricId = null;
+  if (effectiveType === "MCQ") updateData.aiRubricId = null;
 
   if (effectiveType === "ESSAY") {
     updateData.options = Prisma.DbNull;
@@ -725,16 +721,16 @@ function normalizeQuestionType(rawType: string | undefined, hasOptions: boolean)
   return "";
 }
 
-function normalizeMarkingType(rawType: string | undefined, questionType: "MCQ" | "ESSAY" | ""): "AUTO" | "RUBRIC" | "" {
+function normalizeMarkingType(rawType: string | undefined, questionType: "MCQ" | "ESSAY" | ""): "AUTO" | "AI_RUBRIC" | "" {
   const normalized = rawType?.trim().toLowerCase();
-  if (!normalized) return questionType === "ESSAY" ? "RUBRIC" : "AUTO";
+  if (!normalized) return questionType === "ESSAY" ? "AI_RUBRIC" : "AUTO";
   if (normalized === "auto") return "AUTO";
-  if (normalized === "rubric") return "RUBRIC";
+  if (normalized === "ai_rubric" || normalized === "airubric") return "AI_RUBRIC";
   return "";
 }
 
-function parseCsvBoolean(primary: string | undefined, fallback: string | undefined) {
-  const normalized = (primary?.trim() || fallback?.trim() || "").toLowerCase();
+function parseCsvBoolean(value: string | undefined) {
+  const normalized = (value?.trim() || "").toLowerCase();
   return ["true", "1", "yes", "y"].includes(normalized);
 }
 
@@ -759,7 +755,7 @@ function buildQuestionInsertData(
   const resolvedPassageId = row.passageExternalId
     ? (passageExtIdToId.get(row.passageExternalId) ?? null)
     : null;
-  const isLatex = row.isLatexFormat ?? false;
+  const isLatex = row.latexEnabled ?? false;
   return {
     id,
     questionId:       row.questionId || null,
@@ -767,13 +763,12 @@ function buildQuestionInsertData(
     subjectId:        row.resolvedSubjectId,
     topicId:          row.resolvedTopicId,
     passageId:        resolvedPassageId,
-    rubricId:         row.type === "ESSAY" ? (row.rubricId || null) : null,
+    aiRubricId:         row.type === "ESSAY" ? (row.aiRubricId || null) : null,
     tutorId:          creatorId,
     type:             row.type as "MCQ" | "ESSAY",
     difficulty:       row.difficulty as "EASY" | "MEDIUM" | "HARD",
-    contentText:      row.contentText,
-    contentLatex:     isLatex ? row.contentText : null,
-    isLatexFormat:    isLatex,
+    questionText:     row.questionText,
+    latexEnabled:    isLatex,
     markingType:      row.markingType,
     maxMarks:         row.maxMarks,
     options,
@@ -784,6 +779,8 @@ function buildQuestionInsertData(
     imageUrls:        row.imageUrls,
     subtopics:        row.subtopics,
     notes:            row.notes,
+    adaptiveTags:     row.adaptiveTags ?? null,
+    skillTags:        row.skillTags ?? null,
     status:           "DRAFT",
   };
 }
@@ -856,26 +853,26 @@ export async function bulkImportQuestions(
     const questionType = normalizeQuestionType(rawQuestionType, hasOptions);
     const rawMarkingType = raw.MarkingType?.trim() ?? "";
     const markingType = normalizeMarkingType(rawMarkingType, questionType);
-    const rubricId = raw.RubricID?.trim() || null;
+    const aiRubricId = raw.AIRubricID?.trim() || null;
     const maxMarksRaw = raw.MaxMarks?.trim();
     const maxMarks = maxMarksRaw ? parseInt(maxMarksRaw, 10) : questionType === "ESSAY" ? 20 : 1;
 
     const rawDifficulty = raw.Difficulty?.trim() ?? "";
     const difficulty = DIFFICULTY_MAP[rawDifficulty.toLowerCase()] ?? "";
 
-    const contentText = raw.QuestionText?.trim() ?? "";
+    const questionText = raw.QuestionText?.trim() ?? "";
     const correctAnswer = raw.CorrectAnswer?.trim().toUpperCase() ?? "";
 
     if (!subjectName) rowErrors.push("Section (subject) is required");
     if (!topicName) rowErrors.push("Topic is required");
     if (!questionType) rowErrors.push(`QuestionType "${rawQuestionType}" must be MCQ or Essay`);
-    if (!markingType) rowErrors.push(`MarkingType "${rawMarkingType}" must be Auto or Rubric`);
-    if (questionType === "MCQ" && rubricId) rowErrors.push("RubricID must not be provided for MCQ");
-    if (questionType === "MCQ" && markingType === "RUBRIC") rowErrors.push("MCQ questions must use Auto marking");
-    if (questionType === "ESSAY" && markingType === "AUTO") rowErrors.push("Essay questions must use Rubric marking");
+    if (!markingType) rowErrors.push(`MarkingType "${rawMarkingType}" must be Auto or AI_Rubric`);
+    if (questionType === "MCQ" && aiRubricId) rowErrors.push("AIRubricID must not be provided for MCQ");
+    if (questionType === "MCQ" && markingType === "AI_RUBRIC") rowErrors.push("MCQ questions must use Auto marking");
+    if (questionType === "ESSAY" && markingType === "AUTO") rowErrors.push("Essay questions must use AI_RUBRIC marking");
     if (!Number.isFinite(maxMarks) || maxMarks < 1) rowErrors.push(`MaxMarks "${maxMarksRaw ?? ""}" must be a positive integer`);
     if (!difficulty) rowErrors.push(`Difficulty "${rawDifficulty}" must be Easy, Medium, or Hard`);
-    if (!contentText) rowErrors.push("QuestionText is required");
+    if (!questionText) rowErrors.push("QuestionText is required");
 
     if (questionType === "MCQ") {
       if (!raw.OptionA?.trim()) rowErrors.push("OptionA is required for MCQ");
@@ -896,7 +893,7 @@ export async function bulkImportQuestions(
     }
 
     const normalizedQuestionType = questionType as "MCQ" | "ESSAY";
-    const normalizedMarkingType = markingType as "AUTO" | "RUBRIC";
+    const normalizedMarkingType = markingType as "AUTO" | "AI_RUBRIC";
 
     const timeLimitRaw = raw.TimeLimitSeconds?.trim();
     const timeLimitSeconds = timeLimitRaw ? parseInt(timeLimitRaw, 10) || null : null;
@@ -905,7 +902,7 @@ export async function bulkImportQuestions(
       ? raw.Subtopics.split("|").map((s) => s.trim()).filter(Boolean)
       : [];
 
-    const isLatexFormat = parseCsvBoolean(raw.LatexEnabled, raw.IsLatexFormat);
+    const latexEnabled = parseCsvBoolean(raw.LatexEnabled);
     const testName = raw.TestName?.trim() || null;
     const qnumRaw = raw.QuestionNumber?.trim() ?? "";
     let questionNumber: number | null = null;
@@ -936,7 +933,7 @@ export async function bulkImportQuestions(
         topicName,
         type:              normalizedQuestionType,
         difficulty,
-        contentText,
+        questionText,
         optionA:           raw.OptionA?.trim() ?? "",
         optionB:           raw.OptionB?.trim() ?? "",
         optionC:           raw.OptionC?.trim() ?? "",
@@ -948,11 +945,12 @@ export async function bulkImportQuestions(
         imageUrl:          splitImageRefs(raw.ImageURL?.trim() || null)[0] ?? null,
         imageUrls:         splitImageRefs(raw.ImageURL?.trim() || null),
         passageExternalId: raw.PassageID?.trim() || null,
-        passageText:       raw.PassageText?.trim() || null,
-        rubricId,
+        aiRubricId,
         subtopics,
         notes:             raw.Notes?.trim() || null,
-        isLatexFormat,
+        latexEnabled,
+        adaptiveTags:      raw.AdaptiveTags?.trim() || null,
+        skillTags:         raw.SkillTags?.trim() || null,
         markingType:       normalizedMarkingType,
         maxMarks,
       },
@@ -963,22 +961,22 @@ export async function bulkImportQuestions(
     return { total: rows.length, created: 0, skipped: 0, failed: errors.length, unresolved: 0, errors, skippedErrors, unresolvedRows, createdQuestions: [] };
   }
 
-  const rubricIds = [...new Set(validRows.map((r) => r.row.rubricId).filter(Boolean) as string[])];
-  const rubricScoreById = await findActiveRubricScores(prisma, rubricIds);
+  const aiRubricIds = [...new Set(validRows.map((r) => r.row.aiRubricId).filter(Boolean) as string[])];
+  const aiRubricScoreById = await findActiveAiRubricScores(prisma, aiRubricIds);
   for (let i = validRows.length - 1; i >= 0; i--) {
     const row = validRows[i];
     if (!row) continue;
-    const effectiveRubricId = row.row.rubricId || null;
-    if (row.row.type === "MCQ" && effectiveRubricId) {
-      errors.push({ row: row.rowNumber, reason: `RubricID must not be provided for MCQ questions` });
+    const effectiveAiRubricId = row.row.aiRubricId || null;
+    if (row.row.type === "MCQ" && effectiveAiRubricId) {
+      errors.push({ row: row.rowNumber, reason: `AIRubricID must not be provided for MCQ questions` });
       validRows.splice(i, 1);
-    } else if (effectiveRubricId) {
-      const rubricMaxScore = rubricScoreById.get(effectiveRubricId);
-      if (rubricMaxScore === undefined) {
-        errors.push({ row: row.rowNumber, reason: `RubricID "${effectiveRubricId}" was not found or is inactive` });
+    } else if (effectiveAiRubricId) {
+      const aiRubricMaxScore = aiRubricScoreById.get(effectiveAiRubricId);
+      if (aiRubricMaxScore === undefined) {
+        errors.push({ row: row.rowNumber, reason: `AIRubricID "${effectiveAiRubricId}" was not found or is inactive` });
         validRows.splice(i, 1);
-      } else if (row.row.maxMarks !== rubricMaxScore) {
-        errors.push({ row: row.rowNumber, reason: `MaxMarks must match rubric totalMaxScore (${rubricMaxScore}) for RubricID "${effectiveRubricId}"` });
+      } else if (row.row.maxMarks !== aiRubricMaxScore) {
+        errors.push({ row: row.rowNumber, reason: `MaxMarks must match aiRubric totalMaxScore (${aiRubricMaxScore}) for AIRubricID "${effectiveAiRubricId}"` });
         validRows.splice(i, 1);
       }
     }
@@ -1018,49 +1016,20 @@ export async function bulkImportQuestions(
 
   const topicKeyToId = new Map(foundTopics.map((t) => [`${t.subjectId}|${t.name}`, t.id]));
 
-  // ── Passage resolution (upsert by externalId) ─────────────────────────────
+  // ── Passage resolution ────────────────────────────────────────────────────
 
   const uniquePassageIds = [...new Set(
     validRows.map((r) => r.row.passageExternalId).filter(Boolean) as string[]
   )];
 
-  // Build a map: passageExternalId → first non-empty passageText from CSV rows
-  const passageTextMap = new Map<string, string>();
-  for (const { row } of validRows) {
-    if (row.passageExternalId && row.passageText && !passageTextMap.has(row.passageExternalId)) {
-      passageTextMap.set(row.passageExternalId, row.passageText);
-    }
-  }
-
   const foundPassages = uniquePassageIds.length > 0
     ? await prisma.passage.findMany({
         where: { externalId: { in: uniquePassageIds } },
-        select: { id: true, externalId: true, content: true },
+        select: { id: true, externalId: true },
       })
     : [];
 
   const passageExtIdToId = new Map(foundPassages.map((p) => [p.externalId!, p.id]));
-
-  // Fill in existing passages that have empty content if CSV provides PassageText
-  for (const p of foundPassages) {
-    if (p.externalId && !p.content && passageTextMap.has(p.externalId)) {
-      await prisma.passage.update({
-        where: { id: p.id },
-        data: { content: passageTextMap.get(p.externalId)! },
-      });
-    }
-  }
-
-  // Create any passages not yet in DB (use CSV content or empty placeholder)
-  for (const extId of uniquePassageIds) {
-    if (!passageExtIdToId.has(extId)) {
-      const created = await prisma.passage.create({
-        data: { externalId: extId, content: passageTextMap.get(extId) ?? "" },
-        select: { id: true, externalId: true },
-      });
-      passageExtIdToId.set(created.externalId!, created.id);
-    }
-  }
 
   // ── Build insertable list ─────────────────────────────────────────────────
 
@@ -1088,6 +1057,11 @@ export async function bulkImportQuestions(
         reason: "TOPIC_NOT_FOUND",
         rowData: row,
       });
+      continue;
+    }
+
+    if (row.passageExternalId && !passageExtIdToId.has(row.passageExternalId)) {
+      errors.push({ row: rowNumber, reason: `PassageID "${row.passageExternalId}" was not found` });
       continue;
     }
 
@@ -1277,7 +1251,7 @@ export async function resolveAndSavePendingRows(
     }
     insertableRows.push({
       ...ur.rowData,
-      isLatexFormat: ur.rowData.isLatexFormat ?? false,
+      latexEnabled: ur.rowData.latexEnabled ?? false,
       rowNumber: ur.rowNumber,
       resolvedSubjectId,
       resolvedTopicId,
@@ -1288,29 +1262,29 @@ export async function resolveAndSavePendingRows(
     return { saved: 0, stillUnresolved, createdQuestions: [] };
   }
 
-  const rubricIds = [...new Set(insertableRows.map((row) => row.rubricId).filter(Boolean) as string[])];
-  const rubricScoreById = await findActiveRubricScores(prisma, rubricIds);
-  const rubricIssues: string[] = [];
+  const aiRubricIds = [...new Set(insertableRows.map((row) => row.aiRubricId).filter(Boolean) as string[])];
+  const aiRubricScoreById = await findActiveAiRubricScores(prisma, aiRubricIds);
+  const aiRubricIssues: string[] = [];
 
   for (const row of insertableRows) {
-    if (row.type === "MCQ" && row.rubricId) {
-      rubricIssues.push(`row ${row.rowNumber}: RubricID must not be provided for MCQ`);
+    if (row.type === "MCQ" && row.aiRubricId) {
+      aiRubricIssues.push(`row ${row.rowNumber}: AIRubricID must not be provided for MCQ`);
       continue;
     }
 
-    if (!row.rubricId) continue;
+    if (!row.aiRubricId) continue;
 
-    const rubricMaxScore = rubricScoreById.get(row.rubricId);
-    if (rubricMaxScore === undefined) {
-      rubricIssues.push(`row ${row.rowNumber}: RubricID "${row.rubricId}" was not found or is inactive`);
-    } else if (row.maxMarks !== rubricMaxScore) {
-      rubricIssues.push(`row ${row.rowNumber}: MaxMarks must match rubric totalMaxScore (${rubricMaxScore}) for RubricID "${row.rubricId}"`);
+    const aiRubricMaxScore = aiRubricScoreById.get(row.aiRubricId);
+    if (aiRubricMaxScore === undefined) {
+      aiRubricIssues.push(`row ${row.rowNumber}: AIRubricID "${row.aiRubricId}" was not found or is inactive`);
+    } else if (row.maxMarks !== aiRubricMaxScore) {
+      aiRubricIssues.push(`row ${row.rowNumber}: MaxMarks must match aiRubric totalMaxScore (${aiRubricMaxScore}) for AIRubricID "${row.aiRubricId}"`);
     }
   }
 
-  if (rubricIssues.length > 0) {
-    const shownIssues = rubricIssues.slice(0, 5).join("; ");
-    const extraCount = rubricIssues.length > 5 ? `; and ${rubricIssues.length - 5} more` : "";
+  if (aiRubricIssues.length > 0) {
+    const shownIssues = aiRubricIssues.slice(0, 5).join("; ");
+    const extraCount = aiRubricIssues.length > 5 ? `; and ${aiRubricIssues.length - 5} more` : "";
     throw createHttpError(400, `Cannot save resolved import rows. ${shownIssues}${extraCount}`);
   }
 
@@ -1322,44 +1296,23 @@ export async function resolveAndSavePendingRows(
 
   await assignGeneratedQuestionIds(prisma, insertableRows);
 
-  // Passage upsert
+  // Passage resolution
   const uniquePassageIds = [...new Set(
     insertableRows.map((r) => r.passageExternalId).filter(Boolean) as string[]
   )];
 
-  const passageTextMap = new Map<string, string>();
-  for (const row of insertableRows) {
-    if (row.passageExternalId && row.passageText && !passageTextMap.has(row.passageExternalId)) {
-      passageTextMap.set(row.passageExternalId, row.passageText);
-    }
-  }
-
   const foundPassages = uniquePassageIds.length > 0
     ? await prisma.passage.findMany({
         where: { externalId: { in: uniquePassageIds } },
-        select: { id: true, externalId: true, content: true },
+        select: { id: true, externalId: true },
       })
     : [];
 
   const passageExtIdToId = new Map(foundPassages.map((p) => [p.externalId!, p.id]));
 
-  for (const p of foundPassages) {
-    if (p.externalId && !p.content && passageTextMap.has(p.externalId)) {
-      await prisma.passage.update({
-        where: { id: p.id },
-        data: { content: passageTextMap.get(p.externalId)! },
-      });
-    }
-  }
-
-  for (const extId of uniquePassageIds) {
-    if (!passageExtIdToId.has(extId)) {
-      const created = await prisma.passage.create({
-        data: { externalId: extId, content: passageTextMap.get(extId) ?? "" },
-        select: { id: true, externalId: true },
-      });
-      passageExtIdToId.set(created.externalId!, created.id);
-    }
+  const missingPassageIds = uniquePassageIds.filter((extId) => !passageExtIdToId.has(extId));
+  if (missingPassageIds.length > 0) {
+    throw createHttpError(400, `Cannot save resolved import rows. Missing PassageID: ${missingPassageIds.slice(0, 5).join(", ")}${missingPassageIds.length > 5 ? "; and more" : ""}`);
   }
 
   // Bulk insert questions

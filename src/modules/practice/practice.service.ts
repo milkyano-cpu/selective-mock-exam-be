@@ -25,9 +25,8 @@ const PRACTICE_QUESTION_SELECT = {
   question: {
     select: {
       id: true,
-      contentText: true,
-      contentLatex: true,
-      isLatexFormat: true,
+      questionText: true,
+      latexEnabled: true,
       difficulty: true,
       options: true,
       imageUrl: true,
@@ -44,9 +43,8 @@ const PRACTICE_QUESTION_WITH_ANSWER_SELECT = {
   question: {
     select: {
       id: true,
-      contentText: true,
-      contentLatex: true,
-      isLatexFormat: true,
+      questionText: true,
+      latexEnabled: true,
       difficulty: true,
       options: true,
       imageUrl: true,
@@ -71,9 +69,8 @@ function formatQuestion(sq: {
   order: number;
   question: {
     id: string;
-    contentText: string;
-    contentLatex: string | null;
-    isLatexFormat: boolean;
+    questionText: string;
+    latexEnabled: boolean;
     difficulty: string;
     options: unknown;
     imageUrl: string | null;
@@ -83,9 +80,8 @@ function formatQuestion(sq: {
   return {
     questionId: sq.questionId,
     order: sq.order,
-    contentText: sq.question.contentText,
-    contentLatex: sq.question.contentLatex,
-    isLatexFormat: sq.question.isLatexFormat,
+    questionText: sq.question.questionText,
+    latexEnabled: sq.question.latexEnabled,
     difficulty: sq.question.difficulty as "EASY" | "MEDIUM" | "HARD",
     options: sq.question.options as Array<{ key: string; text: string }> | null,
     imageUrl: sq.question.imageUrl,
@@ -475,9 +471,8 @@ export async function getPracticeSession(
           return {
             questionId: sq.questionId,
             order: sq.order,
-            contentText: q.contentText,
-            contentLatex: q.contentLatex,
-            isLatexFormat: q.isLatexFormat,
+            questionText: q.questionText,
+            latexEnabled: q.latexEnabled,
             difficulty: q.difficulty as "EASY" | "MEDIUM" | "HARD",
             options: q.options as Array<{ key: string; text: string }> | null,
             imageUrl: q.imageUrl,
@@ -534,9 +529,8 @@ export async function submitPracticeSession(
           question: {
             select: {
               id: true,
-              contentText: true,
-              contentLatex: true,
-              isLatexFormat: true,
+              questionText: true,
+              latexEnabled: true,
               difficulty: true,
               options: true,
               imageUrl: true,
@@ -644,9 +638,8 @@ export async function submitPracticeSession(
       return {
         questionId: sq.questionId,
         order: sq.order,
-        contentText: q.contentText,
-        contentLatex: q.contentLatex,
-        isLatexFormat: q.isLatexFormat,
+        questionText: q.questionText,
+        latexEnabled: q.latexEnabled,
         difficulty: q.difficulty as "EASY" | "MEDIUM" | "HARD",
         options: q.options as Array<{ key: string; text: string }> | null,
         imageUrl: q.imageUrl,

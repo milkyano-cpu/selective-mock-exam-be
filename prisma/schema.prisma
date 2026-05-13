@@ -92,6 +92,7 @@ model User {
   pushSubscriptions PushSubscription[]
   notifications        Notification[]
   announcements        Announcement[]     @relation("AuthorAnnouncements")
+  calendarReminders    StudentCalendarReminder[]
   refreshTokens        RefreshToken[]
   passwordResetTokens  PasswordResetToken[]
   studentPathways      StudentPathway[]     @relation("StudentPathways")
@@ -253,10 +254,10 @@ enum QuestionStatus {
 
 enum QuestionMarkingType {
   AUTO
-  RUBRIC
+  AI_RUBRIC
 }
 
-model Rubric {
+model AiRubric {
   id            String   @id
   name          String
   description   String?
@@ -267,18 +268,18 @@ model Rubric {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  criteria     RubricCriterion[]
+  criteria     AiRubricCriterion[]
   questions    Question[]
   answerScores EssayAnswerScore[]
 
   @@index([isDefault, isActive])
   @@index([writingType])
-  @@map("rubrics")
+  @@map("ai_rubrics")
 }
 
-model RubricCriterion {
+model AiRubricCriterion {
   id                   String   @id @default(uuid())
-  rubricId             String   @map("rubric_id")
+  aiRubricId           String   @map("ai_rubric_id")
   criterionName        String   @map("criterion_name")
   criterionDescription String   @map("criterion_description")
   maxScore             Int      @map("max_score")
@@ -286,15 +287,15 @@ model RubricCriterion {
   createdAt            DateTime @default(now()) @map("created_at")
   updatedAt            DateTime @updatedAt @map("updated_at")
 
-  rubric          Rubric                 @relation(fields: [rubricId], references: [id], onDelete: Cascade)
-  bandDescriptors RubricBandDescriptor[]
+  aiRubric       AiRubric                 @relation(fields: [aiRubricId], references: [id], onDelete: Cascade)
+  bandDescriptors AiRubricBandDescriptor[]
   answerScores    EssayAnswerScore[]
 
-  @@index([rubricId, sortOrder])
-  @@map("rubric_criteria")
+  @@index([aiRubricId, sortOrder])
+  @@map("ai_rubric_criteria")
 }
 
-model RubricBandDescriptor {
+model AiRubricBandDescriptor {
   id          String   @id @default(uuid())
   criterionId String   @map("criterion_id")
   scoreMin    Int      @map("score_min")
@@ -303,10 +304,10 @@ model RubricBandDescriptor {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  criterion RubricCriterion @relation(fields: [criterionId], references: [id], onDelete: Cascade)
+  criterion AiRubricCriterion @relation(fields: [criterionId], references: [id], onDelete: Cascade)
 
   @@index([criterionId, scoreMin, scoreMax])
-  @@map("rubric_band_descriptors")
+  @@map("ai_rubric_band_descriptors")
 }
 
 model Question {
@@ -317,11 +318,10 @@ model Question {
   topicId          String         @map("topic_id")
   tutorId          String         @map("tutor_id")
   passageId        String?        @map("passage_id")
-  rubricId         String?        @map("rubric_id")
+  aiRubricId       String?        @map("ai_rubric_id")
   type             QuestionType
   difficulty       Difficulty
-  contentText      String         @map("content_text")
-  contentLatex     String?        @map("content_latex")
+  questionText     String         @map("question_text")
   options          Json?
   correctAnswer    String         @map("correct_answer")
   explanation      String?
@@ -330,7 +330,9 @@ model Question {
   imageUrls        String[]       @default([]) @map("image_urls")
   subtopics        String[]       @default([])
   notes            String?
-  isLatexFormat    Boolean        @default(false) @map("is_latex_format")
+  latexEnabled     Boolean        @default(false) @map("latex_enabled")
+  adaptiveTags     String?        @map("adaptive_tags")
+  skillTags        String?        @map("skill_tags")
   markingType      QuestionMarkingType @default(AUTO) @map("marking_type")
   maxMarks         Int            @default(1) @map("max_marks")
   status           QuestionStatus @default(DRAFT)
@@ -342,7 +344,7 @@ model Question {
   topic           Topic            @relation(fields: [topicId], references: [id])
   tutor           User             @relation("TutorQuestions", fields: [tutorId], references: [id])
   passage         Passage?         @relation(fields: [passageId], references: [id])
-  rubric          Rubric?          @relation(fields: [rubricId], references: [id])
+  aiRubric        AiRubric?        @relation(fields: [aiRubricId], references: [id])
   examQuestions            ExamQuestion[]
   answers                  StudentAnswer[]
   practiceAnswers          PracticeAnswer[]
@@ -352,7 +354,7 @@ model Question {
   @@index([subjectId, topicId, status, difficulty])
   @@index([tutorId, status])
   @@index([passageId])
-  @@index([rubricId])
+  @@index([aiRubricId])
   @@map("questions")
 }
 
@@ -471,7 +473,7 @@ model StudentAnswer {
 model EssayAnswerScore {
   id              String   @id @default(uuid())
   studentAnswerId String   @map("student_answer_id")
-  rubricId        String?  @map("rubric_id")
+  aiRubricId      String?  @map("ai_rubric_id")
   criterionId     String?  @map("criterion_id")
   criterionName   String   @map("criterion_name")
   score           Decimal  @db.Decimal(7, 2)
@@ -481,11 +483,11 @@ model EssayAnswerScore {
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   studentAnswer StudentAnswer    @relation(fields: [studentAnswerId], references: [id], onDelete: Cascade)
-  rubric        Rubric?          @relation(fields: [rubricId], references: [id], onDelete: SetNull)
-  criterion     RubricCriterion? @relation(fields: [criterionId], references: [id], onDelete: SetNull)
+  aiRubric     AiRubric?         @relation(fields: [aiRubricId], references: [id], onDelete: SetNull)
+  criterion    AiRubricCriterion? @relation(fields: [criterionId], references: [id], onDelete: SetNull)
 
   @@index([studentAnswerId])
-  @@index([rubricId])
+  @@index([aiRubricId])
   @@index([criterionId])
   @@map("essay_answer_scores")
 }
@@ -875,6 +877,21 @@ model ExamCountdown {
   @@index([isActive, targetAt])
   @@index([targetAt])
   @@map("exam_countdowns")
+}
+
+model StudentCalendarReminder {
+  id           String   @id @default(uuid())
+  studentId    String   @map("student_id")
+  reminderDate DateTime @map("reminder_date") @db.Date
+  note         String
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  student User @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, reminderDate])
+  @@index([studentId, reminderDate])
+  @@map("student_calendar_reminders")
 }
 
 model Banner {

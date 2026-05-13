@@ -19,9 +19,8 @@ const mcqOptionSchema = z.object({
 const practiceQuestionSchema = z.object({
   questionId: z.string(),
   order: z.number(),
-  contentText: z.string(),
-  contentLatex: z.string().nullable(),
-  isLatexFormat: z.boolean(),
+  questionText: z.string(),
+  latexEnabled: z.boolean(),
   difficulty: difficultyEnum,
   options: z.array(mcqOptionSchema).nullable(),
   imageUrl: z.string().nullable(),
@@ -32,9 +31,8 @@ const practiceQuestionSchema = z.object({
 const practiceResultAnswerSchema = z.object({
   questionId: z.string(),
   order: z.number(),
-  contentText: z.string(),
-  contentLatex: z.string().nullable(),
-  isLatexFormat: z.boolean(),
+  questionText: z.string(),
+  latexEnabled: z.boolean(),
   difficulty: difficultyEnum,
   options: z.array(mcqOptionSchema).nullable(),
   imageUrl: z.string().nullable(),

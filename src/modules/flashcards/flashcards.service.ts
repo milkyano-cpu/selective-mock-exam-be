@@ -283,7 +283,7 @@ export async function generateFromMistakes(prisma: PrismaClient, studentId: stri
       question: {
         select: {
           id: true,
-          contentText: true,
+          questionText: true,
           correctAnswer: true,
           explanation: true,
           options: true,
@@ -297,7 +297,7 @@ export async function generateFromMistakes(prisma: PrismaClient, studentId: stri
 
   for (const answer of wrongAnswers) {
     const question = answer.question;
-    if (!question.contentText.trim()) {
+    if (!question.questionText.trim()) {
       skipped++;
       continue;
     }
@@ -313,7 +313,7 @@ export async function generateFromMistakes(prisma: PrismaClient, studentId: stri
         data: {
           studentId,
           questionId: question.id,
-          frontContent: question.contentText.trim(),
+          frontContent: question.questionText.trim(),
           backContent: buildBackContent(question),
         },
         select: FLASHCARD_SELECT,

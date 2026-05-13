@@ -30,7 +30,7 @@ const RELATED_QUESTION_SELECT = {
   type:        true,
   difficulty:  true,
   status:      true,
-  contentText: true,
+  questionText: true,
   createdAt:   true,
   updatedAt:   true,
 } as const;

@@ -5,7 +5,7 @@ export interface AiGradeInput {
   questionText: string;
   correctAnswer: string;
   studentAnswer: string;
-  rubric?: AiRubricInput | null;
+  aiRubric?: AiRubricInput | null;
 }
 
 export interface AiRubricInput {
@@ -38,7 +38,7 @@ export interface AiGradeResult {
   confidence: "high" | "medium" | "low";
   feedback: string;
   gradedAt: string;
-  rubric?: {
+  aiRubric?: {
     id: string;
     name: string;
     totalMaxScore: number;
@@ -60,13 +60,13 @@ export async function gradeEssayWithAi(
 
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
-  const rubricBlock = input.rubric
-    ? `RUBRIC:
+  const aiRubricBlock = input.aiRubric
+    ? `AI_RUBRIC:
 ${JSON.stringify({
-  id: input.rubric.id,
-  name: input.rubric.name,
-  totalMaxScore: input.rubric.totalMaxScore,
-  criteria: input.rubric.criteria.map((criterion) => ({
+  id: input.aiRubric.id,
+  name: input.aiRubric.name,
+  totalMaxScore: input.aiRubric.totalMaxScore,
+  criteria: input.aiRubric.criteria.map((criterion) => ({
     criterionId: criterion.id,
     criterionName: criterion.criterionName,
     criterionDescription: criterion.criterionDescription,
@@ -77,8 +77,8 @@ ${JSON.stringify({
 `
     : "";
 
-  const prompt = input.rubric
-    ? `You are an essay examiner. Score the student's answer using the rubric exactly.
+  const prompt = input.aiRubric
+    ? `You are an essay examiner. Score the student's answer using the aiRubric exactly.
 
 QUESTION:
 ${input.questionText}
@@ -89,22 +89,22 @@ ${input.correctAnswer}
 STUDENT'S ANSWER:
 ${input.studentAnswer}
 
-${rubricBlock}
+${aiRubricBlock}
 GRADING RULES:
 - Award an integer score for each criterion from 0 to that criterion's maxScore.
 - Use band descriptors as guidance. If a descriptor range applies, choose the best integer score inside that range.
 - Do not exceed each criterion maxScore.
 - totalAwardedMarks must equal the sum of criterion scores.
-- totalPossibleMarks must equal the rubric totalMaxScore.
+- totalPossibleMarks must equal the aiRubric totalMaxScore.
 - isCorrect should be true when scorePercent is at least 50.
-- confidence should reflect how confidently the rubric was applied.
+- confidence should reflect how confidently the aiRubric was applied.
 
 Respond with a JSON object ONLY (no markdown, no extra text):
 {
   "criterionScores": [
     {
-      "criterionId": "criterion id from rubric",
-      "criterionName": "criterion name from rubric",
+      "criterionId": "criterion id from aiRubric",
+      "criterionName": "criterion name from aiRubric",
       "score": integer,
       "maxScore": integer,
       "feedback": "Specific feedback for this criterion."
@@ -142,8 +142,8 @@ Respond with a JSON object ONLY (no markdown, no extra text):
 }`;
 
   try {
-    const maxTokens = input.rubric
-      ? Math.max(1024, input.rubric.criteria.length * 300 + 256)
+    const maxTokens = input.aiRubric
+      ? Math.max(1024, input.aiRubric.criteria.length * 300 + 256)
       : 512;
 
     const message = await client.messages.create({
@@ -173,9 +173,9 @@ Respond with a JSON object ONLY (no markdown, no extra text):
       scorePercent?: number;
     };
 
-    if (input.rubric) {
-      const criterionById = new Map(input.rubric.criteria.map((criterion) => [criterion.id, criterion]));
-      const criterionScores = input.rubric.criteria.map((criterion) => {
+    if (input.aiRubric) {
+      const criterionById = new Map(input.aiRubric.criteria.map((criterion) => [criterion.id, criterion]));
+      const criterionScores = input.aiRubric.criteria.map((criterion) => {
         const raw = parsed.criterionScores?.find((score) => score.criterionId === criterion.id);
         const score = Math.min(
           criterion.maxScore,
@@ -192,7 +192,7 @@ Respond with a JSON object ONLY (no markdown, no extra text):
       });
 
       const totalAwardedMarks = criterionScores.reduce((sum, criterion) => sum + criterion.score, 0);
-      const totalPossibleMarks = input.rubric.totalMaxScore;
+      const totalPossibleMarks = input.aiRubric.totalMaxScore;
       const scorePercent = totalPossibleMarks > 0 ? (totalAwardedMarks / totalPossibleMarks) * 100 : 0;
 
       return {
@@ -200,10 +200,10 @@ Respond with a JSON object ONLY (no markdown, no extra text):
         confidence: parsed.confidence ?? "medium",
         feedback: parsed.feedback ?? "",
         gradedAt: new Date().toISOString(),
-        rubric: {
-          id: input.rubric.id,
-          name: input.rubric.name,
-          totalMaxScore: input.rubric.totalMaxScore,
+        aiRubric: {
+          id: input.aiRubric.id,
+          name: input.aiRubric.name,
+          totalMaxScore: input.aiRubric.totalMaxScore,
         },
         criterionScores: criterionScores.filter((score) => criterionById.has(score.criterionId)),
         totalAwardedMarks,

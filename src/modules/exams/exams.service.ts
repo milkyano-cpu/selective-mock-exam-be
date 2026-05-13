@@ -139,7 +139,7 @@ function serializeAiFeedback(aiFeedback: unknown) {
 
   const value = aiFeedback as Record<string, unknown>;
   const confidence = value.confidence;
-  const rubric = value.rubric;
+  const aiRubric = value.aiRubric;
   const criterionScores = Array.isArray(value.criterionScores)
     ? value.criterionScores
         .map((item) => {
@@ -166,11 +166,11 @@ function serializeAiFeedback(aiFeedback: unknown) {
     pendingReview: typeof value.pendingReview === "boolean" ? value.pendingReview : null,
     reason: typeof value.reason === "string" ? value.reason : null,
     gradedAt: typeof value.gradedAt === "string" ? value.gradedAt : null,
-    rubric: rubric && typeof rubric === "object" && !Array.isArray(rubric)
+    aiRubric: aiRubric && typeof aiRubric === "object" && !Array.isArray(aiRubric)
       ? {
-          id: typeof (rubric as Record<string, unknown>).id === "string" ? (rubric as Record<string, unknown>).id as string : "",
-          name: typeof (rubric as Record<string, unknown>).name === "string" ? (rubric as Record<string, unknown>).name as string : "",
-          totalMaxScore: typeof (rubric as Record<string, unknown>).totalMaxScore === "number" ? (rubric as Record<string, unknown>).totalMaxScore as number : 0,
+          id: typeof (aiRubric as Record<string, unknown>).id === "string" ? (aiRubric as Record<string, unknown>).id as string : "",
+          name: typeof (aiRubric as Record<string, unknown>).name === "string" ? (aiRubric as Record<string, unknown>).name as string : "",
+          totalMaxScore: typeof (aiRubric as Record<string, unknown>).totalMaxScore === "number" ? (aiRubric as Record<string, unknown>).totalMaxScore as number : 0,
         }
       : null,
     criterionScores,
@@ -521,9 +521,8 @@ function serializeExamQuestion(eq: {
     questionId: string | null;
     type: string;
     difficulty: string;
-    contentText: string;
-    contentLatex: string | null;
-    isLatexFormat: boolean;
+    questionText: string;
+    latexEnabled: boolean;
     options: unknown;
     correctAnswer: string;
     imageUrl: string | null;
@@ -541,9 +540,8 @@ function serializeExamQuestion(eq: {
       questionId: eq.question.questionId,
       type: eq.question.type as "MCQ" | "ESSAY",
       difficulty: eq.question.difficulty as "EASY" | "MEDIUM" | "HARD",
-      contentText: eq.question.contentText,
-      contentLatex: eq.question.contentLatex,
-      isLatexFormat: eq.question.isLatexFormat,
+      questionText: eq.question.questionText,
+      latexEnabled: eq.question.latexEnabled,
       options: eq.question.options as Array<{ key: string; text: string }> | null,
       correctAnswer: eq.question.correctAnswer,
       imageUrl: eq.question.imageUrl,
@@ -564,9 +562,8 @@ const EXAM_QUESTION_SELECT = {
       questionId: true,
       type: true,
       difficulty: true,
-      contentText: true,
-      contentLatex: true,
-      isLatexFormat: true,
+      questionText: true,
+      latexEnabled: true,
       options: true,
       correctAnswer: true,
       imageUrl: true,
@@ -706,9 +703,8 @@ export async function startOrResumeSession(
             select: {
               id: true,
               type: true,
-              contentText: true,
-              contentLatex: true,
-              isLatexFormat: true,
+              questionText: true,
+              latexEnabled: true,
               options: true,
               imageUrl: true,
               imageUrls: true,
@@ -784,9 +780,8 @@ export async function startOrResumeSession(
     questionId: eq.questionId,
     order: eq.order,
     type: eq.question.type as "MCQ" | "ESSAY",
-    contentText: eq.question.contentText,
-    contentLatex: eq.question.contentLatex,
-    isLatexFormat: eq.question.isLatexFormat,
+    questionText: eq.question.questionText,
+    latexEnabled: eq.question.latexEnabled,
     options: eq.question.options as Array<{ key: string; text: string }> | null,
     imageUrl: eq.question.imageUrl,
     imageUrls: eq.question.imageUrls,
@@ -1356,9 +1351,8 @@ export async function getReviewSession(
                 select: {
                   id: true,
                   type: true,
-                  contentText: true,
-                  contentLatex: true,
-                  isLatexFormat: true,
+                  questionText: true,
+                  latexEnabled: true,
                   options: true,
                   correctAnswer: true,
                   explanation: true,
@@ -1424,9 +1418,8 @@ export async function getReviewSession(
         questionId: eq.questionId,
         order: eq.order,
         type: eq.question.type as "MCQ" | "ESSAY",
-        contentText: eq.question.contentText,
-        contentLatex: eq.question.contentLatex,
-        isLatexFormat: eq.question.isLatexFormat,
+        questionText: eq.question.questionText,
+        latexEnabled: eq.question.latexEnabled,
         options: eq.question.options as Array<{ key: string; text: string }> | null,
         correctAnswer: eq.question.correctAnswer,
         explanation: eq.question.explanation ?? null,
@@ -1777,9 +1770,8 @@ export async function getSessionResult(
                 select: {
                   id: true,
                   type: true,
-                  contentText: true,
-                  contentLatex: true,
-                  isLatexFormat: true,
+                  questionText: true,
+                  latexEnabled: true,
                   options: true,
                   correctAnswer: true,
                   explanation: true,
@@ -1831,9 +1823,8 @@ export async function getSessionResult(
     return {
       questionId: eq.questionId,
       order: eq.order,
-      contentText: eq.question.contentText,
-      contentLatex: eq.question.contentLatex,
-      isLatexFormat: eq.question.isLatexFormat,
+      questionText: eq.question.questionText,
+      latexEnabled: eq.question.latexEnabled,
       type: eq.question.type as "MCQ" | "ESSAY",
       options: eq.question.options as Array<{ key: string; text: string }> | null,
       studentAnswer,

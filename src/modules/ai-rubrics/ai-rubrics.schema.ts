@@ -1,18 +1,18 @@
 import { z } from "zod";
 import { buildJsonSchemas } from "../../utils/build-schemas.js";
 
-const listRubricsQuerySchema = z.object({
+const listAiRubricsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   search: z.string().optional(),
   activeOnly: z.coerce.boolean().default(true),
 });
 
-const rubricIdParamSchema = z.object({
+const aiRubricIdParamSchema = z.object({
   id: z.string().min(1).max(100),
 });
 
-const rubricBandDescriptorInputSchema = z.object({
+const aiRubricBandDescriptorInputSchema = z.object({
   scoreMin: z.number().int().min(0),
   scoreMax: z.number().int().min(0),
   descriptor: z.string().min(1).max(2000),
@@ -21,15 +21,15 @@ const rubricBandDescriptorInputSchema = z.object({
   path: ["scoreMax"],
 });
 
-const rubricCriterionInputSchema = z.object({
+const aiRubricCriterionInputSchema = z.object({
   criterionName: z.string().min(1).max(255),
   criterionDescription: z.string().min(1).max(2000),
   maxScore: z.number().int().min(1),
   sortOrder: z.number().int().min(0).optional(),
-  bandDescriptors: z.array(rubricBandDescriptorInputSchema).optional(),
+  bandDescriptors: z.array(aiRubricBandDescriptorInputSchema).optional(),
 });
 
-const createRubricBodySchema = z.object({
+const createAiRubricBodySchema = z.object({
   id: z.string().min(1).max(100),
   name: z.string().min(1).max(255),
   description: z.string().max(2000).nullable().optional(),
@@ -37,7 +37,7 @@ const createRubricBodySchema = z.object({
   isDefault: z.boolean().optional(),
   isActive: z.boolean().optional(),
   totalMaxScore: z.number().int().min(1),
-  criteria: z.array(rubricCriterionInputSchema).optional(),
+  criteria: z.array(aiRubricCriterionInputSchema).optional(),
 }).refine((value) => {
   if (!value.criteria || value.criteria.length === 0) return true;
   return value.criteria.reduce((sum, criterion) => sum + criterion.maxScore, 0) === value.totalMaxScore;
@@ -46,14 +46,14 @@ const createRubricBodySchema = z.object({
   path: ["criteria"],
 });
 
-const updateRubricBodySchema = z.object({
+const updateAiRubricBodySchema = z.object({
   name: z.string().min(1).max(255).optional(),
   description: z.string().max(2000).nullable().optional(),
   writingType: z.string().max(100).nullable().optional(),
   isDefault: z.boolean().optional(),
   isActive: z.boolean().optional(),
   totalMaxScore: z.number().int().min(1).optional(),
-  criteria: z.array(rubricCriterionInputSchema).optional(),
+  criteria: z.array(aiRubricCriterionInputSchema).optional(),
 }).refine((value) => {
   if (!value.criteria || value.criteria.length === 0 || value.totalMaxScore === undefined) return true;
   return value.criteria.reduce((sum, criterion) => sum + criterion.maxScore, 0) === value.totalMaxScore;
@@ -74,7 +74,7 @@ const bandDescriptorSchema = z.object({
 
 const criterionSchema = z.object({
   id: z.string().uuid(),
-  rubricId: z.string(),
+  aiRubricId: z.string(),
   criterionName: z.string(),
   criterionDescription: z.string(),
   maxScore: z.number(),
@@ -84,7 +84,7 @@ const criterionSchema = z.object({
   bandDescriptors: z.array(bandDescriptorSchema).optional(),
 });
 
-const rubricSchema = z.object({
+const aiRubricSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string().nullable(),
@@ -96,14 +96,14 @@ const rubricSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
-const rubricDetailSchema = rubricSchema.extend({
+const aiRubricDetailSchema = aiRubricSchema.extend({
   criteria: z.array(criterionSchema),
 });
 
-const paginatedRubricsResponseSchema = z.object({
+const paginatedAiRubricsResponseSchema = z.object({
   success: z.literal(true),
   message: z.string(),
-  data: z.array(rubricSchema),
+  data: z.array(aiRubricSchema),
   meta: z.object({
     page: z.number(),
     limit: z.number(),
@@ -112,13 +112,13 @@ const paginatedRubricsResponseSchema = z.object({
   }),
 });
 
-const singleRubricResponseSchema = z.object({
+const singleAiRubricResponseSchema = z.object({
   success: z.literal(true),
   message: z.string(),
-  data: rubricDetailSchema,
+  data: aiRubricDetailSchema,
 });
 
-const importRubricsResponseSchema = z.object({
+const importAiRubricsResponseSchema = z.object({
   success: z.literal(true),
   message: z.string(),
   data: z.object({
@@ -134,23 +134,23 @@ const actionResponseSchema = z.object({
   message: z.string(),
 });
 
-export const { schemas: rubricSchemas, $ref: rubricRef } = buildJsonSchemas({
-  listRubricsQuerySchema,
-  rubricIdParamSchema,
-  rubricBandDescriptorInputSchema,
-  rubricCriterionInputSchema,
-  createRubricBodySchema,
-  updateRubricBodySchema,
+export const { schemas: aiRubricSchemas, $ref: aiRubricRef } = buildJsonSchemas({
+  listAiRubricsQuerySchema,
+  aiRubricIdParamSchema,
+  aiRubricBandDescriptorInputSchema,
+  aiRubricCriterionInputSchema,
+  createAiRubricBodySchema,
+  updateAiRubricBodySchema,
   bandDescriptorSchema,
   criterionSchema,
-  rubricSchema,
-  rubricDetailSchema,
-  paginatedRubricsResponseSchema,
-  singleRubricResponseSchema,
-  importRubricsResponseSchema,
+  aiRubricSchema,
+  aiRubricDetailSchema,
+  paginatedAiRubricsResponseSchema,
+  singleAiRubricResponseSchema,
+  importAiRubricsResponseSchema,
   actionResponseSchema,
 });
 
-export type ListRubricsQuery = z.infer<typeof listRubricsQuerySchema>;
-export type CreateRubricBody = z.infer<typeof createRubricBodySchema>;
-export type UpdateRubricBody = z.infer<typeof updateRubricBodySchema>;
+export type ListAiRubricsQuery = z.infer<typeof listAiRubricsQuerySchema>;
+export type CreateAiRubricBody = z.infer<typeof createAiRubricBodySchema>;
+export type UpdateAiRubricBody = z.infer<typeof updateAiRubricBodySchema>;

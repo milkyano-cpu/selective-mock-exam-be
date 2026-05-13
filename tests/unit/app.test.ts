@@ -38,7 +38,7 @@ const pluginMocks = {
   analyticsRoutes: jest.fn(),
   flashcardRoutes: jest.fn(),
   forumRoutes: jest.fn(),
-  rubricRoutes: jest.fn(),
+  aiRubricRoutes: jest.fn(),
   pathwayRoutes: jest.fn(),
   practiceRoutes: jest.fn(),
   billingRoutes: jest.fn(),
@@ -118,8 +118,8 @@ jest.unstable_mockModule("../../src/modules/flashcards/flashcards.route.js", () 
 jest.unstable_mockModule("../../src/modules/forum/forum.route.js", () => ({
   forumRoutes: pluginMocks.forumRoutes,
 }));
-jest.unstable_mockModule("../../src/modules/rubrics/rubrics.route.js", () => ({
-  rubricRoutes: pluginMocks.rubricRoutes,
+jest.unstable_mockModule("../../src/modules/ai-rubrics/ai-rubrics.route.js", () => ({
+  aiRubricRoutes: pluginMocks.aiRubricRoutes,
 }));
 jest.unstable_mockModule("../../src/modules/pathways/pathways.route.js", () => ({
   pathwayRoutes: pluginMocks.pathwayRoutes,
@@ -178,8 +178,8 @@ jest.unstable_mockModule("../../src/modules/flashcards/flashcards.schema.js", ()
 jest.unstable_mockModule("../../src/modules/forum/forum.schema.js", () => ({
   forumSchemas: [{ $id: "forum" }],
 }));
-jest.unstable_mockModule("../../src/modules/rubrics/rubrics.schema.js", () => ({
-  rubricSchemas: [{ $id: "rubric" }],
+jest.unstable_mockModule("../../src/modules/ai-rubrics/ai-rubrics.schema.js", () => ({
+  aiRubricSchemas: [{ $id: "aiRubric" }],
 }));
 jest.unstable_mockModule("../../src/modules/pathways/pathways.schema.js", () => ({
   pathwaySchemas: [{ $id: "pathway" }],

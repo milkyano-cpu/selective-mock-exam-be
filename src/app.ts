@@ -35,11 +35,12 @@ import { examRoutes } from "./modules/exams/exams.route.js";
 import { analyticsRoutes } from "./modules/analytics/analytics.route.js";
 import { flashcardRoutes } from "./modules/flashcards/flashcards.route.js";
 import { forumRoutes } from "./modules/forum/forum.route.js";
-import { rubricRoutes } from "./modules/rubrics/rubrics.route.js";
+import { aiRubricRoutes } from "./modules/ai-rubrics/ai-rubrics.route.js";
 import { pathwayRoutes } from "./modules/pathways/pathways.route.js";
 import { practiceRoutes } from "./modules/practice/practice.route.js";
 import { billingRoutes } from "./modules/billing/billing.route.js";
 import { resourceRoutes } from "./modules/resources/resources.route.js";
+import { studentCalendarRoutes } from "./modules/student-calendar/student-calendar.route.js";
 
 // Schemas
 import { authSchemas } from "./modules/auth/auth.schema.js";
@@ -58,11 +59,12 @@ import { examSchemas } from "./modules/exams/exams.schema.js";
 import { analyticsSchemas } from "./modules/analytics/analytics.schema.js";
 import { flashcardSchemas } from "./modules/flashcards/flashcards.schema.js";
 import { forumSchemas } from "./modules/forum/forum.schema.js";
-import { rubricSchemas } from "./modules/rubrics/rubrics.schema.js";
+import { aiRubricSchemas } from "./modules/ai-rubrics/ai-rubrics.schema.js";
 import { pathwaySchemas } from "./modules/pathways/pathways.schema.js";
 import { practiceSchemas } from "./modules/practice/practice.schema.js";
 import { billingSchemas } from "./modules/billing/billing.schema.js";
 import { resourceSchemas } from "./modules/resources/resources.schema.js";
+import { studentCalendarSchemas } from "./modules/student-calendar/student-calendar.schema.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -103,11 +105,12 @@ export async function buildApp() {
     ...analyticsSchemas,
     ...flashcardSchemas,
     ...forumSchemas,
-    ...rubricSchemas,
+    ...aiRubricSchemas,
     ...pathwaySchemas,
     ...practiceSchemas,
     ...billingSchemas,
     ...resourceSchemas,
+    ...studentCalendarSchemas,
   ]) {
     app.addSchema(schema);
   }
@@ -160,11 +163,12 @@ export async function buildApp() {
       await api.register(analyticsRoutes, { prefix: "/analytics" });
       await api.register(flashcardRoutes, { prefix: "/flashcards" });
       await api.register(forumRoutes, { prefix: "/forum" });
-      await api.register(rubricRoutes, { prefix: "/rubrics" });
+      await api.register(aiRubricRoutes, { prefix: "/ai-rubrics" });
       await api.register(pathwayRoutes, { prefix: "/pathways" });
       await api.register(practiceRoutes, { prefix: "/practice" });
       await api.register(billingRoutes, { prefix: "/billing" });
       await api.register(resourceRoutes, { prefix: "/resources" });
+      await api.register(studentCalendarRoutes, { prefix: "/student-calendar" });
     },
     { prefix: env.API_PREFIX }
   );

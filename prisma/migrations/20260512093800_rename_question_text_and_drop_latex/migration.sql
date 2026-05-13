@@ -1,0 +1,6 @@
+-- No-op migration.
+--
+-- This migration directory existed without a migration.sql file, which causes
+-- `prisma migrate deploy` to stop with P3015 before later migrations can run.
+-- The intended question column cleanup is handled idempotently in
+-- 20260512100000_rename_rubrics_latex_tags.

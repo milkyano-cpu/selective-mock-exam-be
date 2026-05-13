@@ -1,11 +1,11 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { parse } from "csv-parse/sync";
 import { createHttpError } from "../../utils/http-error.js";
-import type { CreateRubricBody, ListRubricsQuery, UpdateRubricBody } from "./rubrics.schema.js";
+import type { CreateAiRubricBody, ListAiRubricsQuery, UpdateAiRubricBody } from "./ai-rubrics.schema.js";
 
-type RubricCsvRow = {
-  RubricID?: string;
-  RubricName?: string;
+type AiRubricCsvRow = {
+  AIRubricID?: string;
+  AIRubricName?: string;
   Description?: string;
   WritingType?: string;
   IsDefault?: string;
@@ -16,7 +16,7 @@ type RubricCsvRow = {
   BandDescriptors?: string;
 };
 
-const RUBRIC_SELECT = {
+const AI_RUBRIC_SELECT = {
   id: true,
   name: true,
   description: true,
@@ -28,12 +28,12 @@ const RUBRIC_SELECT = {
   updatedAt: true,
 } as const;
 
-const RUBRIC_DETAIL_SELECT = {
-  ...RUBRIC_SELECT,
+const AI_RUBRIC_DETAIL_SELECT = {
+  ...AI_RUBRIC_SELECT,
   criteria: {
     select: {
       id: true,
-      rubricId: true,
+      aiRubricId: true,
       criterionName: true,
       criterionDescription: true,
       maxScore: true,
@@ -55,7 +55,7 @@ const RUBRIC_DETAIL_SELECT = {
     },
     orderBy: { sortOrder: "asc" },
   },
-} satisfies Prisma.RubricSelect;
+} satisfies Prisma.AiRubricSelect;
 
 function parseBoolean(value: string | undefined) {
   return ["true", "1", "yes", "y"].includes((value ?? "").trim().toLowerCase());
@@ -85,17 +85,17 @@ function parseBandDescriptors(value: string | undefined) {
     });
 }
 
-async function replaceRubricCriteria(
+async function replaceAiRubricCriteria(
   tx: Prisma.TransactionClient,
-  rubricId: string,
-  criteria: NonNullable<CreateRubricBody["criteria"] | UpdateRubricBody["criteria"]>,
+  aiRubricId: string,
+  criteria: NonNullable<CreateAiRubricBody["criteria"] | UpdateAiRubricBody["criteria"]>,
 ) {
-  await tx.rubricCriterion.deleteMany({ where: { rubricId } });
+  await tx.aiRubricCriterion.deleteMany({ where: { aiRubricId } });
 
   for (const [index, criterion] of criteria.entries()) {
-    const createdCriterion = await tx.rubricCriterion.create({
+    const createdCriterion = await tx.aiRubricCriterion.create({
       data: {
-        rubricId,
+        aiRubricId,
         criterionName: criterion.criterionName,
         criterionDescription: criterion.criterionDescription,
         maxScore: criterion.maxScore,
@@ -106,7 +106,7 @@ async function replaceRubricCriteria(
 
     const bandDescriptors = criterion.bandDescriptors ?? [];
     if (bandDescriptors.length > 0) {
-      await tx.rubricBandDescriptor.createMany({
+      await tx.aiRubricBandDescriptor.createMany({
         data: bandDescriptors.map((descriptor) => ({
           criterionId: createdCriterion.id,
           scoreMin: descriptor.scoreMin,
@@ -118,7 +118,7 @@ async function replaceRubricCriteria(
   }
 }
 
-export async function listRubrics(prisma: PrismaClient, query: ListRubricsQuery) {
+export async function listAiRubrics(prisma: PrismaClient, query: ListAiRubricsQuery) {
   const { page, limit, search, activeOnly } = query;
   const skip = (page - 1) * limit;
 
@@ -136,26 +136,26 @@ export async function listRubrics(prisma: PrismaClient, query: ListRubricsQuery)
   };
 
   const [data, total] = await Promise.all([
-    prisma.rubric.findMany({ where, select: RUBRIC_SELECT, orderBy: { createdAt: "desc" }, skip, take: limit }),
-    prisma.rubric.count({ where }),
+    prisma.aiRubric.findMany({ where, select: AI_RUBRIC_SELECT, orderBy: { createdAt: "desc" }, skip, take: limit }),
+    prisma.aiRubric.count({ where }),
   ]);
 
   return { data, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
 }
 
-export async function getRubricById(prisma: PrismaClient, id: string) {
-  const rubric = await prisma.rubric.findUnique({ where: { id }, select: RUBRIC_DETAIL_SELECT });
-  if (!rubric) throw createHttpError(404, "Rubric not found");
-  return rubric;
+export async function getAiRubricById(prisma: PrismaClient, id: string) {
+  const aiRubric = await prisma.aiRubric.findUnique({ where: { id }, select: AI_RUBRIC_DETAIL_SELECT });
+  if (!aiRubric) throw createHttpError(404, "AiRubric not found");
+  return aiRubric;
 }
 
-export async function createRubric(prisma: PrismaClient, body: CreateRubricBody) {
+export async function createAiRubric(prisma: PrismaClient, body: CreateAiRubricBody) {
   await prisma.$transaction(async (tx) => {
     if (body.isDefault) {
-      await tx.rubric.updateMany({ where: { isDefault: true }, data: { isDefault: false } });
+      await tx.aiRubric.updateMany({ where: { isDefault: true }, data: { isDefault: false } });
     }
 
-    await tx.rubric.create({
+    await tx.aiRubric.create({
       data: {
         id: body.id,
         name: body.name,
@@ -168,20 +168,20 @@ export async function createRubric(prisma: PrismaClient, body: CreateRubricBody)
     });
 
     if (body.criteria !== undefined) {
-      await replaceRubricCriteria(tx, body.id, body.criteria);
+      await replaceAiRubricCriteria(tx, body.id, body.criteria);
     }
   });
 
-  return getRubricById(prisma, body.id);
+  return getAiRubricById(prisma, body.id);
 }
 
-export async function updateRubric(prisma: PrismaClient, id: string, body: UpdateRubricBody) {
+export async function updateAiRubric(prisma: PrismaClient, id: string, body: UpdateAiRubricBody) {
   await prisma.$transaction(async (tx) => {
     if (body.isDefault) {
-      await tx.rubric.updateMany({ where: { isDefault: true, id: { not: id } }, data: { isDefault: false } });
+      await tx.aiRubric.updateMany({ where: { isDefault: true, id: { not: id } }, data: { isDefault: false } });
     }
 
-    await tx.rubric.update({
+    await tx.aiRubric.update({
       where: { id },
       data: {
         ...(body.name !== undefined ? { name: body.name } : {}),
@@ -194,23 +194,23 @@ export async function updateRubric(prisma: PrismaClient, id: string, body: Updat
     });
 
     if (body.criteria !== undefined) {
-      await replaceRubricCriteria(tx, id, body.criteria);
+      await replaceAiRubricCriteria(tx, id, body.criteria);
     }
   });
 
-  return getRubricById(prisma, id);
+  return getAiRubricById(prisma, id);
 }
 
-export async function deactivateRubric(prisma: PrismaClient, id: string) {
-  await prisma.rubric.update({ where: { id }, data: { isActive: false, isDefault: false } });
+export async function deactivateAiRubric(prisma: PrismaClient, id: string) {
+  await prisma.aiRubric.update({ where: { id }, data: { isActive: false, isDefault: false } });
 }
 
-export async function importRubrics(prisma: PrismaClient, buffer: Buffer) {
-  let rows: RubricCsvRow[];
+export async function importAiRubrics(prisma: PrismaClient, buffer: Buffer) {
+  let rows: AiRubricCsvRow[];
   try {
-    rows = parse(buffer, { columns: true, skip_empty_lines: true, trim: true }) as RubricCsvRow[];
+    rows = parse(buffer, { columns: true, skip_empty_lines: true, trim: true }) as AiRubricCsvRow[];
   } catch {
-    throw createHttpError(400, "Failed to parse CSV file. Ensure it is a valid Rubrics CSV.");
+    throw createHttpError(400, "Failed to parse CSV file. Ensure it is a valid AI Rubrics CSV.");
   }
 
   if (rows.length > 500) {
@@ -222,7 +222,7 @@ export async function importRubrics(prisma: PrismaClient, buffer: Buffer) {
 
   rows.forEach((row, index) => {
     const rowNumber = index + 2;
-    const rubricId = row.RubricID?.trim() ?? "";
+    const aiRubricId = row.AIRubricID?.trim() ?? "";
     const criterionName = row.CriterionName?.trim() ?? "";
     const criterionDescription = row.CriterionDescription?.trim() ?? "";
     const maxScoreRaw = row.MaxScore?.trim() ?? "";
@@ -231,7 +231,7 @@ export async function importRubrics(prisma: PrismaClient, buffer: Buffer) {
     const totalMaxScore = totalMaxScoreRaw ? parseInt(totalMaxScoreRaw, 10) : 20;
 
     const rowErrors: string[] = [];
-    if (!rubricId) rowErrors.push("RubricID is required");
+    if (!aiRubricId) rowErrors.push("AIRubricID is required");
     if (!criterionName) rowErrors.push("CriterionName is required");
     if (!criterionDescription) rowErrors.push("CriterionDescription is required");
     if (!Number.isFinite(maxScore) || maxScore < 1) rowErrors.push(`MaxScore "${maxScoreRaw}" must be a positive integer`);
@@ -249,10 +249,10 @@ export async function importRubrics(prisma: PrismaClient, buffer: Buffer) {
       return;
     }
 
-    if (!grouped.has(rubricId)) {
-      grouped.set(rubricId, {
+    if (!grouped.has(aiRubricId)) {
+      grouped.set(aiRubricId, {
         meta: {
-          name: row.RubricName?.trim() || rubricId,
+          name: row.AIRubricName?.trim() || aiRubricId,
           description: row.Description?.trim() || null,
           writingType: row.WritingType?.trim() || null,
           isDefault: parseBoolean(row.IsDefault),
@@ -262,28 +262,28 @@ export async function importRubrics(prisma: PrismaClient, buffer: Buffer) {
       });
     }
 
-    grouped.get(rubricId)!.criteria.push({ criterionName, criterionDescription, maxScore, bandDescriptors });
+    grouped.get(aiRubricId)!.criteria.push({ criterionName, criterionDescription, maxScore, bandDescriptors });
   });
 
   let imported = 0;
-  for (const [rubricId, data] of grouped.entries()) {
+  for (const [aiRubricId, data] of grouped.entries()) {
     await prisma.$transaction(async (tx) => {
       if (data.meta.isDefault) {
-        await tx.rubric.updateMany({ where: { isDefault: true, id: { not: rubricId } }, data: { isDefault: false } });
+        await tx.aiRubric.updateMany({ where: { isDefault: true, id: { not: aiRubricId } }, data: { isDefault: false } });
       }
 
-      await tx.rubric.upsert({
-        where: { id: rubricId },
-        create: { id: rubricId, ...data.meta, isActive: true },
+      await tx.aiRubric.upsert({
+        where: { id: aiRubricId },
+        create: { id: aiRubricId, ...data.meta, isActive: true },
         update: { ...data.meta, isActive: true },
       });
 
-      await tx.rubricCriterion.deleteMany({ where: { rubricId } });
+      await tx.aiRubricCriterion.deleteMany({ where: { aiRubricId } });
 
       for (const [index, criterion] of data.criteria.entries()) {
-        const createdCriterion = await tx.rubricCriterion.create({
+        const createdCriterion = await tx.aiRubricCriterion.create({
           data: {
-            rubricId,
+            aiRubricId,
             criterionName: criterion.criterionName,
             criterionDescription: criterion.criterionDescription,
             maxScore: criterion.maxScore,
@@ -293,7 +293,7 @@ export async function importRubrics(prisma: PrismaClient, buffer: Buffer) {
         });
 
         if (criterion.bandDescriptors.length > 0) {
-          await tx.rubricBandDescriptor.createMany({
+          await tx.aiRubricBandDescriptor.createMany({
             data: criterion.bandDescriptors.map((descriptor) => ({ criterionId: createdCriterion.id, ...descriptor })),
           });
         }

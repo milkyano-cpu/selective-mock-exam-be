@@ -9,7 +9,7 @@ export interface GradingJobData {
   sessionId: string;
 }
 
-const RUBRIC_FOR_AI_SELECT = {
+const AI_RUBRIC_FOR_AI_SELECT = {
   id: true,
   name: true,
   totalMaxScore: true,
@@ -30,9 +30,9 @@ const RUBRIC_FOR_AI_SELECT = {
       },
     },
   },
-} satisfies Prisma.RubricSelect;
+} satisfies Prisma.AiRubricSelect;
 
-function toAiRubricInput(rubric: {
+function toAiRubricInput(aiRubric: {
   id: string;
   name: string;
   totalMaxScore: number;
@@ -48,8 +48,8 @@ function toAiRubricInput(rubric: {
     }>;
   }>;
 } | null): AiRubricInput | null {
-  if (!rubric || rubric.criteria.length === 0) return null;
-  return rubric;
+  if (!aiRubric || aiRubric.criteria.length === 0) return null;
+  return aiRubric;
 }
 
 function calculateRankingLevel(
@@ -91,13 +91,13 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
                 select: {
                   id: true,
                   type: true,
-                  contentText: true,
+                  questionText: true,
                   correctAnswer: true,
                   maxMarks: true,
                   subjectId: true,
                   topicId: true,
-                  rubric: {
-                    select: RUBRIC_FOR_AI_SELECT,
+                  aiRubric: {
+                    select: AI_RUBRIC_FOR_AI_SELECT,
                   },
                   subject: { select: { id: true } },
                   topic: { select: { id: true } },
@@ -136,12 +136,12 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
   const examQuestions = session.exam.questions;
   const totalQuestions = examQuestions.length;
   const gradingType = session.exam.gradingType === "MANUAL" ? "MANUAL" : "AUTO";
-  const needsDefaultRubric = gradingType === "AUTO"
-    && examQuestions.some((eq) => eq.question.type === "ESSAY" && !eq.question.rubric);
-  const defaultRubric = needsDefaultRubric
-    ? toAiRubricInput(await prisma.rubric.findFirst({
+  const needsDefaultAiRubric = gradingType === "AUTO"
+    && examQuestions.some((eq) => eq.question.type === "ESSAY" && !eq.question.aiRubric);
+  const defaultAiRubric = needsDefaultAiRubric
+    ? toAiRubricInput(await prisma.aiRubric.findFirst({
         where: { isDefault: true, isActive: true },
-        select: RUBRIC_FOR_AI_SELECT,
+        select: AI_RUBRIC_FOR_AI_SELECT,
       }))
     : null;
 
@@ -194,7 +194,7 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
       score: number;
       maxScore: number;
       feedback: string;
-      rubricId: string | null;
+      aiRubricId: string | null;
     }>;
   }> = [];
   let pendingReviewCount = 0;
@@ -231,12 +231,12 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
           };
         }
 
-        const rubric = toAiRubricInput(question.rubric) ?? defaultRubric;
+        const aiRubric = toAiRubricInput(question.aiRubric) ?? defaultAiRubric;
         const aiResult = await gradeEssayWithAi({
-          questionText: question.contentText,
+          questionText: question.questionText,
           correctAnswer: question.correctAnswer,
           studentAnswer: answer.studentAnswer,
-          rubric,
+          aiRubric,
         });
 
         if (aiResult) {
@@ -244,10 +244,10 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
           const awardedMarks = scorePercentToAwardedMarks(scorePercent, maxMarks);
           const criterionScores = aiResult.criterionScores?.map((score) => ({
             ...score,
-            rubricId: aiResult.rubric?.id ?? null,
+            aiRubricId: aiResult.aiRubric?.id ?? null,
           })) ?? [];
           logger.info(
-            { sessionId, questionId: question.id, isCorrect: aiResult.isCorrect, confidence: aiResult.confidence, rubricId: rubric?.id, scorePercent, awardedMarks, maxMarks },
+            { sessionId, questionId: question.id, isCorrect: aiResult.isCorrect, confidence: aiResult.confidence, aiRubricId: aiRubric?.id, scorePercent, awardedMarks, maxMarks },
             "AI graded essay answer"
           );
           return { id: answer.id, isCorrect: aiResult.isCorrect, pendingReview: false, aiFeedback: aiResult, scorePercent, awardedMarks, maxMarks, criterionScores };
@@ -338,7 +338,7 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
         await tx.essayAnswerScore.createMany({
           data: update.criterionScores.map((score) => ({
             studentAnswerId: update.id,
-            rubricId: score.rubricId,
+            aiRubricId: score.aiRubricId,
             criterionId: score.criterionId,
             criterionName: score.criterionName,
             score: score.score,

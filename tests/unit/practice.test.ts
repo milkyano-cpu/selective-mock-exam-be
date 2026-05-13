@@ -8,9 +8,8 @@ const endedAt = new Date("2026-05-08T00:30:00.000Z");
 function question(id = "question-1", overrides: Record<string, unknown> = {}) {
   return {
     id,
-    contentText: `Question ${id}`,
-    contentLatex: null,
-    isLatexFormat: false,
+    questionText: `Question ${id}`,
+    latexEnabled: false,
     difficulty: "EASY",
     options: [{ key: "A", text: "Answer A" }],
     imageUrl: null,

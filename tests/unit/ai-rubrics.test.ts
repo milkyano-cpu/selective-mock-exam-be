@@ -1,21 +1,21 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import {
-  createRubric,
-  deactivateRubric,
-  getRubricById,
-  importRubrics,
-  listRubrics,
-  updateRubric,
-} from "../../src/modules/rubrics/rubrics.service.js";
-import * as rubricsController from "../../src/modules/rubrics/rubrics.controller.js";
+  createAiRubric,
+  deactivateAiRubric,
+  getAiRubricById,
+  importAiRubrics,
+  listAiRubrics,
+  updateAiRubric,
+} from "../../src/modules/ai-rubrics/ai-rubrics.service.js";
+import * as aiRubricsController from "../../src/modules/ai-rubrics/ai-rubrics.controller.js";
 
 const now = new Date("2026-05-08T00:00:00.000Z");
 
-function rubric(overrides: Record<string, unknown> = {}) {
+function aiRubric(overrides: Record<string, unknown> = {}) {
   return {
     id: "SELECTIVE_ENTRY_DEFAULT",
     name: "Selective Entry Writing Default",
-    description: "Default rubric",
+    description: "Default aiRubric",
     writingType: "selective_entry",
     isDefault: true,
     isActive: true,
@@ -26,13 +26,13 @@ function rubric(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function rubricDetail(overrides: Record<string, unknown> = {}) {
+function aiRubricDetail(overrides: Record<string, unknown> = {}) {
   return {
-    ...rubric(),
+    ...aiRubric(),
     criteria: [
       {
         id: "criterion-1",
-        rubricId: "SELECTIVE_ENTRY_DEFAULT",
+        aiRubricId: "SELECTIVE_ENTRY_DEFAULT",
         criterionName: "Ideas",
         criterionDescription: "Clear ideas",
         maxScore: 10,
@@ -58,17 +58,17 @@ function rubricDetail(overrides: Record<string, unknown> = {}) {
 
 function createTx() {
   return {
-    rubric: {
+    aiRubric: {
       updateMany: jest.fn(async () => ({ count: 1 })),
-      create: jest.fn(async () => rubric()),
-      update: jest.fn(async () => rubric()),
-      upsert: jest.fn(async () => rubric()),
+      create: jest.fn(async () => aiRubric()),
+      update: jest.fn(async () => aiRubric()),
+      upsert: jest.fn(async () => aiRubric()),
     },
-    rubricCriterion: {
+    aiRubricCriterion: {
       deleteMany: jest.fn(async () => ({ count: 1 })),
       create: jest.fn(async () => ({ id: "criterion-1" })),
     },
-    rubricBandDescriptor: {
+    aiRubricBandDescriptor: {
       createMany: jest.fn(async () => ({ count: 1 })),
     },
   };
@@ -79,11 +79,11 @@ function mockPrisma(overrides: Record<string, unknown> = {}) {
   return {
     tx,
     $transaction: jest.fn(async (callback: (txArg: typeof tx) => Promise<unknown>) => callback(tx)),
-    rubric: {
-      findMany: jest.fn(async () => [rubric()]),
+    aiRubric: {
+      findMany: jest.fn(async () => [aiRubric()]),
       count: jest.fn(async () => 1),
-      findUnique: jest.fn(async () => rubricDetail()),
-      update: jest.fn(async () => rubric()),
+      findUnique: jest.fn(async () => aiRubricDetail()),
+      update: jest.fn(async () => aiRubric()),
     },
     ...overrides,
   };
@@ -91,8 +91,8 @@ function mockPrisma(overrides: Record<string, unknown> = {}) {
 
 function csvBuffer(rows: Array<Record<string, string>>) {
   const headers = [
-    "RubricID",
-    "RubricName",
+    "AIRubricID",
+    "AIRubricName",
     "Description",
     "WritingType",
     "IsDefault",
@@ -144,18 +144,18 @@ function mockRequest(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe("rubrics module", () => {
-  it("lists rubrics with search and active filters", async () => {
+describe("aiRubrics module", () => {
+  it("lists aiRubrics with search and active filters", async () => {
     const prisma = mockPrisma();
 
-    const result = await listRubrics(prisma as never, {
+    const result = await listAiRubrics(prisma as never, {
       page: 2,
       limit: 10,
       search: "writing",
       activeOnly: true,
     });
 
-    expect(prisma.rubric.findMany).toHaveBeenCalledWith({
+    expect(prisma.aiRubric.findMany).toHaveBeenCalledWith({
       where: {
         isActive: true,
         OR: [
@@ -172,27 +172,27 @@ describe("rubrics module", () => {
     expect(result.meta).toEqual({ page: 2, limit: 10, total: 1, totalPages: 1 });
   });
 
-  it("throws 404 when a rubric is missing", async () => {
+  it("throws 404 when a aiRubric is missing", async () => {
     const prisma = mockPrisma({
-      rubric: {
-        ...mockPrisma().rubric,
+      aiRubric: {
+        ...mockPrisma().aiRubric,
         findUnique: jest.fn(async () => null),
       },
     });
 
-    await expect(getRubricById(prisma as never, "missing-rubric")).rejects.toMatchObject({
+    await expect(getAiRubricById(prisma as never, "missing-aiRubric")).rejects.toMatchObject({
       statusCode: 404,
-      message: "Rubric not found",
+      message: "AiRubric not found",
     });
   });
 
-  it("creates a default rubric and replaces criteria", async () => {
+  it("creates a default aiRubric and replaces criteria", async () => {
     const prisma = mockPrisma();
 
-    const result = await createRubric(prisma as never, {
+    const result = await createAiRubric(prisma as never, {
       id: "SELECTIVE_ENTRY_DEFAULT",
       name: "Selective Entry Writing Default",
-      description: "Default rubric",
+      description: "Default aiRubric",
       writingType: "selective_entry",
       isDefault: true,
       isActive: true,
@@ -207,67 +207,67 @@ describe("rubrics module", () => {
       ],
     });
 
-    expect(prisma.tx.rubric.updateMany).toHaveBeenCalledWith({
+    expect(prisma.tx.aiRubric.updateMany).toHaveBeenCalledWith({
       where: { isDefault: true },
       data: { isDefault: false },
     });
-    expect(prisma.tx.rubric.create).toHaveBeenCalledWith({
+    expect(prisma.tx.aiRubric.create).toHaveBeenCalledWith({
       data: {
         id: "SELECTIVE_ENTRY_DEFAULT",
         name: "Selective Entry Writing Default",
-        description: "Default rubric",
+        description: "Default aiRubric",
         writingType: "selective_entry",
         isDefault: true,
         isActive: true,
         totalMaxScore: 20,
       },
     });
-    expect(prisma.tx.rubricCriterion.deleteMany).toHaveBeenCalledWith({
-      where: { rubricId: "SELECTIVE_ENTRY_DEFAULT" },
+    expect(prisma.tx.aiRubricCriterion.deleteMany).toHaveBeenCalledWith({
+      where: { aiRubricId: "SELECTIVE_ENTRY_DEFAULT" },
     });
-    expect(prisma.tx.rubricBandDescriptor.createMany).toHaveBeenCalled();
-    expect(result).toEqual(rubricDetail());
+    expect(prisma.tx.aiRubricBandDescriptor.createMany).toHaveBeenCalled();
+    expect(result).toEqual(aiRubricDetail());
   });
 
-  it("updates a rubric and clears other default flags when needed", async () => {
+  it("updates a aiRubric and clears other default flags when needed", async () => {
     const prisma = mockPrisma();
 
-    await updateRubric(prisma as never, "SELECTIVE_ENTRY_DEFAULT", {
-      name: "Updated rubric",
+    await updateAiRubric(prisma as never, "SELECTIVE_ENTRY_DEFAULT", {
+      name: "Updated aiRubric",
       isDefault: true,
       criteria: [],
     });
 
-    expect(prisma.tx.rubric.updateMany).toHaveBeenCalledWith({
+    expect(prisma.tx.aiRubric.updateMany).toHaveBeenCalledWith({
       where: { isDefault: true, id: { not: "SELECTIVE_ENTRY_DEFAULT" } },
       data: { isDefault: false },
     });
-    expect(prisma.tx.rubric.update).toHaveBeenCalledWith({
+    expect(prisma.tx.aiRubric.update).toHaveBeenCalledWith({
       where: { id: "SELECTIVE_ENTRY_DEFAULT" },
-      data: { name: "Updated rubric", isDefault: true },
+      data: { name: "Updated aiRubric", isDefault: true },
     });
-    expect(prisma.tx.rubricCriterion.deleteMany).toHaveBeenCalledWith({
-      where: { rubricId: "SELECTIVE_ENTRY_DEFAULT" },
+    expect(prisma.tx.aiRubricCriterion.deleteMany).toHaveBeenCalledWith({
+      where: { aiRubricId: "SELECTIVE_ENTRY_DEFAULT" },
     });
   });
 
-  it("deactivates a rubric and removes default status", async () => {
+  it("deactivates a aiRubric and removes default status", async () => {
     const prisma = mockPrisma();
 
-    await deactivateRubric(prisma as never, "SELECTIVE_ENTRY_DEFAULT");
+    await deactivateAiRubric(prisma as never, "SELECTIVE_ENTRY_DEFAULT");
 
-    expect(prisma.rubric.update).toHaveBeenCalledWith({
+    expect(prisma.aiRubric.update).toHaveBeenCalledWith({
       where: { id: "SELECTIVE_ENTRY_DEFAULT" },
       data: { isActive: false, isDefault: false },
     });
   });
 
-  it("imports grouped rubric rows from CSV", async () => {
+  it("imports grouped aiRubric rows from CSV", async () => {
     const prisma = mockPrisma();
     const buffer = csvBuffer([
       {
-        RubricID: "RUBRIC_A",
-        RubricName: "Rubric A",
+        AIRubricID: "AI_RUBRIC_A",
+        AIRubricName: "AiRubric A",
         Description: "Imported",
         WritingType: "essay",
         IsDefault: "yes",
@@ -278,7 +278,7 @@ describe("rubrics module", () => {
         BandDescriptors: "0-5:Developing|6-10:Strong",
       },
       {
-        RubricID: "RUBRIC_A",
+        AIRubricID: "AI_RUBRIC_A",
         TotalMaxScore: "20",
         CriterionName: "Structure",
         CriterionDescription: "Logical structure",
@@ -286,14 +286,14 @@ describe("rubrics module", () => {
       },
     ]);
 
-    const result = await importRubrics(prisma as never, buffer);
+    const result = await importAiRubrics(prisma as never, buffer);
 
     expect(result).toEqual({ total: 2, imported: 1, failed: 0, errors: [] });
-    expect(prisma.tx.rubric.upsert).toHaveBeenCalledWith({
-      where: { id: "RUBRIC_A" },
+    expect(prisma.tx.aiRubric.upsert).toHaveBeenCalledWith({
+      where: { id: "AI_RUBRIC_A" },
       create: {
-        id: "RUBRIC_A",
-        name: "Rubric A",
+        id: "AI_RUBRIC_A",
+        name: "AiRubric A",
         description: "Imported",
         writingType: "essay",
         isDefault: true,
@@ -301,7 +301,7 @@ describe("rubrics module", () => {
         isActive: true,
       },
       update: {
-        name: "Rubric A",
+        name: "AiRubric A",
         description: "Imported",
         writingType: "essay",
         isDefault: true,
@@ -309,17 +309,17 @@ describe("rubrics module", () => {
         isActive: true,
       },
     });
-    expect(prisma.tx.rubricCriterion.create).toHaveBeenCalledTimes(2);
-    expect(prisma.tx.rubricBandDescriptor.createMany).toHaveBeenCalledTimes(1);
+    expect(prisma.tx.aiRubricCriterion.create).toHaveBeenCalledTimes(2);
+    expect(prisma.tx.aiRubricBandDescriptor.createMany).toHaveBeenCalledTimes(1);
   });
 
-  it("returns row errors for invalid rubric CSV rows", async () => {
+  it("returns row errors for invalid aiRubric CSV rows", async () => {
     const prisma = mockPrisma();
-    const result = await importRubrics(
+    const result = await importAiRubrics(
       prisma as never,
       csvBuffer([
         {
-          RubricID: "",
+          AIRubricID: "",
           CriterionName: "",
           CriterionDescription: "",
           MaxScore: "0",
@@ -332,50 +332,50 @@ describe("rubrics module", () => {
     expect(result.imported).toBe(0);
     expect(result.failed).toBe(1);
     expect(result.errors[0]).toMatchObject({ row: 2 });
-    expect(result.errors[0]?.reason).toContain("RubricID is required");
+    expect(result.errors[0]?.reason).toContain("AIRubricID is required");
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it("rejects malformed and oversized rubric CSV files", async () => {
-    await expect(importRubrics(mockPrisma() as never, Buffer.from('"unterminated'))).rejects.toMatchObject({
+  it("rejects malformed and oversized aiRubric CSV files", async () => {
+    await expect(importAiRubrics(mockPrisma() as never, Buffer.from('"unterminated'))).rejects.toMatchObject({
       statusCode: 400,
-      message: "Failed to parse CSV file. Ensure it is a valid Rubrics CSV.",
+      message: "Failed to parse CSV file. Ensure it is a valid AI Rubrics CSV.",
     });
 
     const rows = Array.from({ length: 501 }, (_, index) => ({
-      RubricID: `R${index}`,
+      AIRubricID: `R${index}`,
       TotalMaxScore: "1",
       CriterionName: "Criterion",
       CriterionDescription: "Description",
       MaxScore: "1",
     }));
-    await expect(importRubrics(mockPrisma() as never, csvBuffer(rows))).rejects.toMatchObject({
+    await expect(importAiRubrics(mockPrisma() as never, csvBuffer(rows))).rejects.toMatchObject({
       statusCode: 400,
       message: "CSV exceeds maximum of 500 rows",
     });
   });
 
-  it("handles rubric controller responses", async () => {
+  it("handles aiRubric controller responses", async () => {
     const request = mockRequest();
     const reply = mockReply();
 
-    const listResponse = await rubricsController.listRubricsHandler(request as never, reply as never);
-    const getResponse = await rubricsController.getRubricHandler(request as never, reply as never);
-    const createResponse = await rubricsController.createRubricHandler(request as never, reply as never);
-    const updateResponse = await rubricsController.updateRubricHandler(request as never, reply as never);
-    const deactivateResponse = await rubricsController.deactivateRubricHandler(request as never, reply as never);
+    const listResponse = await aiRubricsController.listAiRubricsHandler(request as never, reply as never);
+    const getResponse = await aiRubricsController.getAiRubricHandler(request as never, reply as never);
+    const createResponse = await aiRubricsController.createAiRubricHandler(request as never, reply as never);
+    const updateResponse = await aiRubricsController.updateAiRubricHandler(request as never, reply as never);
+    const deactivateResponse = await aiRubricsController.deactivateAiRubricHandler(request as never, reply as never);
 
-    expect(listResponse).toMatchObject({ success: true, message: "Rubrics retrieved" });
-    expect(getResponse).toMatchObject({ success: true, message: "Rubric retrieved" });
+    expect(listResponse).toMatchObject({ success: true, message: "AI Rubrics retrieved" });
+    expect(getResponse).toMatchObject({ success: true, message: "AiRubric retrieved" });
     expect(reply.code).toHaveBeenCalledWith(201);
-    expect(createResponse).toMatchObject({ success: true, message: "Rubric created" });
-    expect(updateResponse).toMatchObject({ success: true, message: "Rubric updated" });
-    expect(deactivateResponse).toEqual({ success: true, message: "Rubric deactivated" });
+    expect(createResponse).toMatchObject({ success: true, message: "AiRubric created" });
+    expect(updateResponse).toMatchObject({ success: true, message: "AiRubric updated" });
+    expect(deactivateResponse).toEqual({ success: true, message: "AiRubric deactivated" });
   });
 
-  it("handles rubric import controller file states", async () => {
+  it("handles aiRubric import controller file states", async () => {
     const missingFileReply = mockReply();
-    const missingFileResponse = await rubricsController.importRubricsHandler(
+    const missingFileResponse = await aiRubricsController.importAiRubricsHandler(
       mockRequest({ file: jest.fn(async () => undefined) }) as never,
       missingFileReply as never
     );
@@ -388,7 +388,7 @@ describe("rubrics module", () => {
         toBuffer: jest.fn(async () =>
           csvBuffer([
             {
-              RubricID: "RUBRIC_A",
+              AIRubricID: "AI_RUBRIC_A",
               TotalMaxScore: "1",
               CriterionName: "Criterion",
               CriterionDescription: "Description",
@@ -398,11 +398,11 @@ describe("rubrics module", () => {
         ),
       })),
     });
-    const response = await rubricsController.importRubricsHandler(fileRequest as never, mockReply() as never);
+    const response = await aiRubricsController.importAiRubricsHandler(fileRequest as never, mockReply() as never);
 
     expect(response).toMatchObject({
       success: true,
-      message: "Rubrics import completed: 1 rubric(s) imported",
+      message: "AI Rubrics import completed: 1 aiRubric(s) imported",
       data: { total: 1, imported: 1, failed: 0 },
     });
   });
