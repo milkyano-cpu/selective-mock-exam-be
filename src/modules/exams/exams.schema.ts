@@ -7,6 +7,7 @@ const examTypeEnum = z.enum(["MOCK_EXAM", "ASSIGNMENT"]);
 const gradingTypeEnum = z.enum(["AUTO", "MANUAL"]);
 const examStatusEnum = z.enum(["DRAFT", "PUBLISHED"]);
 const sessionStatusEnum = z.enum(["IN_PROGRESS", "SUBMITTED", "GRADED"]);
+const retakeModeEnum = z.enum(["FULL", "INCORRECT_ONLY", "SUBJECT_ONLY"]);
 const rankingLevelEnum = z.enum(["SUPERIOR", "ABOVE_AVERAGE", "HIGH_AVERAGE", "AVERAGE", "LOW_AVERAGE"]);
 const answerReviewStatusEnum = z.enum(["NOT_APPLICABLE", "AI_GRADED", "PENDING_REVIEW", "MANUAL_GRADED"]);
 const aiFeedbackConfidenceEnum = z.enum(["high", "medium", "low"]);
@@ -17,10 +18,19 @@ const mcqOptionSchema = z.object({
   text: z.string(),
 });
 
+const imageSummarySchema = z.object({
+  fileName: z.string(),
+  url: z.string().nullable(),
+  altText: z.string().nullable(),
+  caption: z.string().nullable(),
+});
+
 const passageSummarySchema = z.object({
   id: z.string(),
   title: z.string().nullable(),
-  content: z.string(),
+  content: z.string().nullable(),
+  imageRef: z.string().nullable(),
+  image: imageSummarySchema.nullable(),
 });
 
 const aiFeedbackSchema = z.object({
@@ -146,6 +156,8 @@ const examQuestionItemSchema = z.object({
     latexEnabled: z.boolean(),
     options: z.array(mcqOptionSchema).nullable(),
     correctAnswer: z.string(),
+    imageRef: z.string().nullable(),
+    image: imageSummarySchema.nullable(),
     imageUrl: z.string().nullable(),
     imageUrls: z.array(z.string()),
     subjectName: z.string(),
@@ -182,8 +194,12 @@ const sessionQuestionSchema = z.object({
   questionText: z.string(),
   latexEnabled: z.boolean(),
   options: z.array(mcqOptionSchema).nullable(),
+  imageRef: z.string().nullable(),
+  image: imageSummarySchema.nullable(),
   imageUrl: z.string().nullable(),
   imageUrls: z.array(z.string()),
+  subjectName: z.string(),
+  topicName: z.string(),
   passage: passageSummarySchema.nullable(),
   existingAnswer: z
     .object({
@@ -461,6 +477,8 @@ const sessionSummarySchema = z.object({
   idleTimeSeconds: z.number(),
   startTime: z.string(),
   endTime: z.string().nullable(),
+  attemptNumber: z.number(),
+  retakeMode: retakeModeEnum.nullable(),
 });
 
 const paginatedSessionsResponseSchema = z.object({
@@ -486,6 +504,67 @@ const sessionInsightsResponseSchema = z.object({
   }),
 });
 
+// ── Retake schemas ───────────────────────────────────────────────────────────
+
+const startRetakeBodySchema = z.object({
+  mode: retakeModeEnum,
+  sourceSessionId: z.string().uuid().optional(),
+  subjectId: z.string().uuid().optional(),
+}).refine(
+  (data) => {
+    if (data.mode === "INCORRECT_ONLY" && !data.sourceSessionId) return false;
+    if (data.mode === "SUBJECT_ONLY" && !data.subjectId) return false;
+    return true;
+  },
+  {
+    message: "sourceSessionId is required for INCORRECT_ONLY mode; subjectId is required for SUBJECT_ONLY mode",
+  }
+);
+
+const attemptSummaryItemSchema = z.object({
+  sessionId: z.string(),
+  attemptNumber: z.number(),
+  retakeMode: retakeModeEnum.nullable(),
+  finalScore: z.number().nullable(),
+  rankingLevel: rankingLevelEnum.nullable(),
+  totalTimeSeconds: z.number().nullable(),
+  activeTimeSeconds: z.number(),
+  idleTimeSeconds: z.number(),
+  status: sessionStatusEnum,
+  startTime: z.string(),
+  endTime: z.string().nullable(),
+});
+
+const incorrectQuestionItemSchema = z.object({
+  questionId: z.string(),
+  questionText: z.string(),
+  type: z.enum(["MCQ", "ESSAY"]),
+  subjectName: z.string(),
+  topicName: z.string(),
+  studentAnswer: z.string(),
+  correctAnswer: z.string(),
+});
+
+const examAttemptSummaryResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z.object({
+    examId: z.string(),
+    examTitle: z.string(),
+    totalAttempts: z.number(),
+    firstAttempt: attemptSummaryItemSchema.nullable(),
+    latestAttempt: attemptSummaryItemSchema.nullable(),
+    bestScore: attemptSummaryItemSchema.nullable(),
+    incorrectQuestions: z.array(incorrectQuestionItemSchema),
+    subjects: z.array(z.object({
+      subjectId: z.string(),
+      subjectName: z.string(),
+      totalQuestions: z.number(),
+      correctCount: z.number(),
+    })),
+  }),
+});
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type CreateExamBody = z.infer<typeof createExamBodySchema>;
@@ -500,6 +579,7 @@ export type SessionHeartbeatBody = z.infer<typeof sessionHeartbeatBodySchema>;
 export type ListSessionsQuery = z.infer<typeof listSessionsQuerySchema>;
 export type ExamSubmissionsQuery = z.infer<typeof examSubmissionsQuerySchema>;
 export type SubmitManualGradesBody = z.infer<typeof submitManualGradesBodySchema>;
+export type StartRetakeBody = z.infer<typeof startRetakeBodySchema>;
 
 // ── Export ────────────────────────────────────────────────────────────────────
 
@@ -545,4 +625,8 @@ export const { schemas: examSchemas, $ref: examRef } = buildJsonSchemas({
   publishExamBodySchema,
   publishExamResponseSchema,
   sessionInsightsResponseSchema,
+  startRetakeBodySchema,
+  attemptSummaryItemSchema,
+  incorrectQuestionItemSchema,
+  examAttemptSummaryResponseSchema,
 });

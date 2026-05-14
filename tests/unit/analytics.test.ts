@@ -6,8 +6,17 @@ import {
   getStudentAnalytics,
 } from "../../src/modules/analytics/analytics.service.js";
 import * as analyticsController from "../../src/modules/analytics/analytics.controller.js";
+import { encryptField } from "../../src/utils/field-encryption.js";
 
 const now = new Date("2026-05-08T00:00:00.000Z");
+
+function studentIdentity(name: string, overrides: Record<string, unknown> = {}) {
+  return {
+    fullName: encryptField(name),
+    profilePhotoKey: null,
+    ...overrides,
+  };
+}
 
 function mockPrisma(overrides: Record<string, unknown> = {}) {
   return {
@@ -61,9 +70,9 @@ function mockPrisma(overrides: Record<string, unknown> = {}) {
     user: {
       findUnique: jest.fn(async () => ({
         id: "student-1",
-        firstName: "Ryan",
-        lastName: "Lee",
-        profilePhoto: "https://cdn.example.com/ryan.webp",
+        ...studentIdentity("Ryan Lee", {
+          profilePhotoKey: "https://cdn.example.com/ryan.webp",
+        }),
       })),
     },
     ...overrides,
@@ -79,9 +88,7 @@ function leaderboardPrisma() {
           finalScore: 90,
           student: {
             id: "student-1",
-            firstName: "Ryan",
-            lastName: "Lee",
-            profilePhoto: null,
+            ...studentIdentity("Ryan Lee"),
             role: "STUDENT",
           },
         },
@@ -90,9 +97,7 @@ function leaderboardPrisma() {
           finalScore: 80,
           student: {
             id: "student-1",
-            firstName: "Ryan",
-            lastName: "Lee",
-            profilePhoto: null,
+            ...studentIdentity("Ryan Lee"),
             role: "STUDENT",
           },
         },
@@ -101,9 +106,9 @@ function leaderboardPrisma() {
           finalScore: 60,
           student: {
             id: "student-2",
-            firstName: "Zoe",
-            lastName: "White",
-            profilePhoto: "https://cdn.example.com/zoe.webp",
+            ...studentIdentity("Zoe White", {
+              profilePhotoKey: "https://cdn.example.com/zoe.webp",
+            }),
             role: "STUDENT",
           },
         },
@@ -112,9 +117,7 @@ function leaderboardPrisma() {
           finalScore: 100,
           student: {
             id: "admin-1",
-            firstName: "Admin",
-            lastName: "User",
-            profilePhoto: null,
+            ...studentIdentity("Admin User"),
             role: "ADMIN",
           },
         },
@@ -331,11 +334,11 @@ describe("analytics module", () => {
     const prisma = mockPrisma({
       examSession: {
         findMany: jest.fn(async () => [
-          { studentId: "s90", finalScore: 90, student: { firstName: "A", lastName: "", profilePhoto: null, role: "STUDENT" } },
-          { studentId: "s75", finalScore: 75, student: { firstName: "B", lastName: "", profilePhoto: null, role: "STUDENT" } },
-          { studentId: "s60", finalScore: 60, student: { firstName: "C", lastName: "", profilePhoto: null, role: "STUDENT" } },
-          { studentId: "s45", finalScore: 45, student: { firstName: "D", lastName: "", profilePhoto: null, role: "STUDENT" } },
-          { studentId: "s44", finalScore: 44, student: { firstName: "E", lastName: "", profilePhoto: null, role: "STUDENT" } },
+          { studentId: "s90", finalScore: 90, student: { ...studentIdentity("A"), role: "STUDENT" } },
+          { studentId: "s75", finalScore: 75, student: { ...studentIdentity("B"), role: "STUDENT" } },
+          { studentId: "s60", finalScore: 60, student: { ...studentIdentity("C"), role: "STUDENT" } },
+          { studentId: "s45", finalScore: 45, student: { ...studentIdentity("D"), role: "STUDENT" } },
+          { studentId: "s44", finalScore: 44, student: { ...studentIdentity("E"), role: "STUDENT" } },
         ]),
       },
     });

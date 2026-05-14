@@ -16,6 +16,14 @@ export interface UploadQuestionImageInput {
   contentLength: number;
 }
 
+export interface UploadImageInput {
+  imageId: string;
+  filename: string;
+  body: Buffer;
+  contentType: string;
+  contentLength: number;
+}
+
 export interface UploadBannerImageInput {
   bannerId: string;
   filename: string;
@@ -46,6 +54,9 @@ export interface ObjectStorage {
   uploadProfilePhoto(input: UploadProfilePhotoInput): Promise<void>;
   getProfilePhotoSignedUrl(key: string): Promise<string>;
   deleteProfilePhoto(key: string): Promise<void>;
+  ensureImageBucketExists(): Promise<void>;
+  uploadImage(input: UploadImageInput): Promise<string>;
+  deleteImageObject(key: string): Promise<void>;
   ensureQuestionImageBucketExists(): Promise<void>;
   uploadQuestionImage(input: UploadQuestionImageInput): Promise<string>;
   ensureBannerImageBucketExists(): Promise<void>;
@@ -53,6 +64,7 @@ export interface ObjectStorage {
   ensureResourceBucketExists(): Promise<void>;
   uploadResourceFile(input: UploadResourceFileInput): Promise<string>;
   getResourceFileObject(key: string): Promise<{ body: Readable; size?: number; contentType?: string }>;
+  getResourceFileSignedUrl(key: string): Promise<string>;
   ensureInvoiceBucketExists(): Promise<void>;
   uploadInvoicePdf(input: UploadInvoicePdfInput): Promise<string>;
   getInvoicePdfSignedUrl(key: string): Promise<string>;
@@ -67,6 +79,7 @@ interface CreateObjectStorageOptions {
   profilePhotoBucket: string;
   profilePhotoMaxSizeBytes: number;
   signedUrlExpiresInSeconds: number;
+  imageBucket: string;
   questionImageBucket: string;
   bannerImageBucket: string;
   bannerImageMaxSizeBytes: number;
@@ -160,6 +173,34 @@ export function createObjectStorage(
     async deleteProfilePhoto(key) {
       await client.removeObject(options.profilePhotoBucket, key);
     },
+    async ensureImageBucketExists() {
+      const bucketExists = await client.bucketExists(options.imageBucket);
+
+      if (!bucketExists) {
+        await client.makeBucket(options.imageBucket, options.region);
+      }
+
+      await client.setBucketPolicy(
+        options.imageBucket,
+        buildPublicReadBucketPolicy(options.imageBucket)
+      );
+    },
+    async uploadImage(input) {
+      const key = `${input.imageId}/${Date.now()}-${input.filename}`;
+
+      await client.putObject(
+        options.imageBucket,
+        key,
+        input.body,
+        input.contentLength,
+        { "Content-Type": input.contentType }
+      );
+
+      return `${endpointBase}/${options.imageBucket}/${key}`;
+    },
+    async deleteImageObject(key) {
+      await client.removeObject(options.imageBucket, key);
+    },
     async ensureQuestionImageBucketExists() {
       const bucketExists = await client.bucketExists(options.questionImageBucket);
 
@@ -246,6 +287,13 @@ export function createObjectStorage(
         size: stat.size,
         contentType: stat.metaData?.["content-type"],
       };
+    },
+    async getResourceFileSignedUrl(key) {
+      return client.presignedGetObject(
+        options.resourceBucket,
+        key,
+        options.signedUrlExpiresInSeconds
+      );
     },
     async ensureInvoiceBucketExists() {
       const bucketExists = await client.bucketExists(options.invoiceBucket);

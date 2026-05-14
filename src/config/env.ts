@@ -40,6 +40,7 @@ const envSchema = z.object({
   S3_PROFILE_PHOTO_BUCKET: z
     .string({ error: "S3_PROFILE_PHOTO_BUCKET is required" })
     .min(1),
+  S3_IMAGE_BUCKET: z.string().default("images"),
   S3_QUESTION_IMAGE_BUCKET: z.string().default("questions"),
   S3_BANNER_IMAGE_BUCKET: z.string().default("banners"),
   S3_RESOURCE_BUCKET: z.string().default("resources"),
@@ -47,6 +48,7 @@ const envSchema = z.object({
   S3_BUCKET_INIT_TIMEOUT_MS: z.coerce.number().int().min(500).default(3000),
   S3_SIGNED_URL_EXPIRES_IN_SECONDS: z.coerce.number().int().min(60).default(3600),
   PROFILE_PHOTO_MAX_SIZE_BYTES: z.coerce.number().int().min(1).default(5 * 1024 * 1024),
+  IMAGE_MAX_SIZE_BYTES: z.coerce.number().int().min(1).default(10 * 1024 * 1024),
   BANNER_IMAGE_MAX_SIZE_BYTES: z.coerce.number().int().min(1).default(10 * 1024 * 1024),
   RESOURCE_FILE_MAX_SIZE_BYTES: z.coerce.number().int().min(1).default(50 * 1024 * 1024),
 

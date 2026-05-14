@@ -22,6 +22,8 @@ import {
   getReviewSessionHandler,
   submitManualGradesHandler,
   getSessionInsightsHandler,
+  startRetakeHandler,
+  getExamAttemptSummaryHandler,
 } from "./exams.controller.js";
 
 export async function examRoutes(fastify: FastifyInstance) {
@@ -179,6 +181,31 @@ export async function examRoutes(fastify: FastifyInstance) {
   });
 
   // ── Exam detail / question management (/:id must come after static paths) ────
+
+  // POST /exams/:id/retake — start a retake session (incorrect only, subject only, or full)
+  fastify.post("/:id/retake", {
+    schema: {
+      tags: ["Exams"],
+      summary: "Start a retake session for an exam",
+      params: examRef("examIdParamSchema"),
+      body: examRef("startRetakeBodySchema"),
+      response: { 201: examRef("startSessionResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("STUDENT")],
+    handler: startRetakeHandler,
+  });
+
+  // GET /exams/:id/attempts — get attempt summary for a student
+  fastify.get("/:id/attempts", {
+    schema: {
+      tags: ["Exams"],
+      summary: "Get exam attempt summary (first, latest, best score, incorrect questions)",
+      params: examRef("examIdParamSchema"),
+      response: { 200: examRef("examAttemptSummaryResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("STUDENT")],
+    handler: getExamAttemptSummaryHandler,
+  });
 
   // POST /exams/:id/sessions — start or resume an exam session
   fastify.post("/:id/sessions", {

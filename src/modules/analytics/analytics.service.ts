@@ -215,7 +215,7 @@ export async function getLeaderboard(
     }))
     .sort((a, b) => b.score - a.score);
 
-  const entries = sorted.slice(0, 50).map((e, i) => ({
+  const ranked = sorted.map((e, i) => ({
     rank:         i + 1,
     studentId:    e.studentId,
     studentName:  e.studentName,
@@ -225,12 +225,13 @@ export async function getLeaderboard(
     totalExams:   e.totalExams,
   }));
 
-  // Find requesting user's rank
+  const entries = ranked.slice(0, 10);
+
+  // Find requesting user's rank (full entry data for outside-top-10 display)
   const myIndex = sorted.findIndex((e) => e.studentId === requestingUserId);
-  const myEntry = myIndex >= 0 ? sorted[myIndex] : undefined;
-  const myRank = myEntry
-    ? { rank: myIndex + 1, score: Math.round(myEntry.score * 10) / 10 }
-    : { rank: null, score: null };
+  const myRank = myIndex >= 0
+    ? ranked[myIndex]
+    : { rank: null, studentId: requestingUserId, studentName: null, avatarUrl: null, score: null, rankingLevel: null, totalExams: null };
 
   return { period: query.period, entries, myRank };
 }

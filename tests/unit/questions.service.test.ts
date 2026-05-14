@@ -29,7 +29,7 @@ const CSV_HEADERS = [
   "Topic",
   "Subtopics",
   "TimeLimitSeconds",
-  "ImageURL",
+  "ImageRef",
   "PassageID",
   "PassageText",
   "Notes",
@@ -37,6 +37,8 @@ const CSV_HEADERS = [
   "MarkingType",
   "MaxMarks",
   "AIRubricID",
+  "AdaptiveTags",
+  "SkillTags",
 ] as const;
 
 const DEFAULT_CSV_ROW: Record<(typeof CSV_HEADERS)[number], string> = {
@@ -55,7 +57,7 @@ const DEFAULT_CSV_ROW: Record<(typeof CSV_HEADERS)[number], string> = {
   Topic: "Analogies",
   Subtopics: "",
   TimeLimitSeconds: "",
-  ImageURL: "",
+  ImageRef: "",
   PassageID: "",
   PassageText: "",
   Notes: "",
@@ -63,6 +65,8 @@ const DEFAULT_CSV_ROW: Record<(typeof CSV_HEADERS)[number], string> = {
   MarkingType: "Auto",
   MaxMarks: "1",
   AIRubricID: "",
+  AdaptiveTags: "",
+  SkillTags: "",
 };
 
 function csvEscape(value: unknown) {
@@ -106,10 +110,14 @@ function mockQuestionRecord(overrides: AnyRecord = {}) {
     explanation: "Because A is correct.",
     timeLimitSeconds: null,
     imageUrl: null,
+    imageRef: null,
+    image: null,
     imageUrls: [],
     subtopics: [],
     notes: null,
     latexEnabled: false,
+    adaptiveTags: [],
+    skillTags: [],
     markingType: "AUTO",
     maxMarks: 1,
     status: "DRAFT",
@@ -142,6 +150,7 @@ function mockPendingRow(overrides: Partial<UnresolvedRowData> = {}): ResolveImpo
     explanation: null,
     timeLimitSeconds: null,
     imageUrl: null,
+    imageRef: null,
     imageUrls: [],
     passageExternalId: null,
     passageText: null,
@@ -173,6 +182,7 @@ function mockPrisma(overrides: AnyRecord = {}) {
   const existingExamQuestions = overrides.existingExamQuestions ?? [];
   const existingStandaloneQuestions = overrides.existingStandaloneQuestions ?? [];
   const aiRubrics = overrides.aiRubrics ?? [];
+  const images = overrides.images ?? [];
   const questionById = overrides.questionById ?? mockQuestionRecord();
 
   const prisma = {
@@ -194,6 +204,15 @@ function mockPrisma(overrides: AnyRecord = {}) {
     aiRubric: {
       findMany: jest.fn(async () => aiRubrics),
       findFirst: jest.fn(async () => aiRubrics[0] ?? null),
+    },
+    image: {
+      findMany: jest.fn(async (args: AnyRecord = {}) => {
+        const refs = args.where?.fileName?.in;
+        return Array.isArray(refs)
+          ? images.filter((image: AnyRecord) => refs.includes(image.fileName))
+          : images;
+      }),
+      updateMany: jest.fn(async () => ({ count: 1 })),
     },
     question: {
       findUnique: jest.fn(async () => questionById),
@@ -241,7 +260,7 @@ function mockPrisma(overrides: AnyRecord = {}) {
     },
   };
 
-  for (const key of ["subject", "topic", "passage", "aiRubric", "question", "exam", "examQuestion"]) {
+  for (const key of ["subject", "topic", "passage", "aiRubric", "image", "question", "exam", "examQuestion"]) {
     if (overrides[key]) {
       prisma[key as keyof typeof prisma] = {
         ...prisma[key as keyof typeof prisma],
@@ -351,6 +370,51 @@ describe("questions.service import and image upload", () => {
       });
     });
 
+    it("resolves ImageRef from master images and clears legacy image fields", async () => {
+      const prisma = mockPrisma({
+        images: [{ fileName: "diagram.png" }],
+      });
+
+      const result = await bulkImportQuestions(
+        prisma as never,
+        csvBuffer([{ ImageRef: "images/diagram.png" }]),
+        CREATOR_ID
+      );
+
+      expect(result).toMatchObject({ total: 1, created: 1, failed: 0 });
+      expect(prisma.image.findMany).toHaveBeenCalledWith({
+        where: { fileName: { in: ["diagram.png"] } },
+        select: { fileName: true },
+      });
+      expect(prisma.question.createMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: [expect.objectContaining({
+          imageRef: "diagram.png",
+          imageUrl: null,
+          imageUrls: [],
+        })],
+      }));
+      expect(prisma.image.updateMany).toHaveBeenCalledWith({
+        where: { fileName: { in: ["diagram.png"] } },
+        data: { expiredDate: null },
+      });
+    });
+
+    it("fails a row when ImageRef is missing from master images", async () => {
+      const prisma = mockPrisma();
+
+      const result = await bulkImportQuestions(
+        prisma as never,
+        csvBuffer([{ ImageRef: "missing.png" }]),
+        CREATOR_ID
+      );
+
+      expect(result).toMatchObject({ total: 1, created: 0, failed: 1 });
+      expect(result.errors).toEqual([
+        { row: 2, reason: 'ImageRef "missing.png" was not found in master images' },
+      ]);
+      expect(prisma.question.createMany).not.toHaveBeenCalled();
+    });
+
     it("skips an already imported TestName, Subject, and QuestionNumber without creating duplicates", async () => {
       const prisma = mockPrisma({
         existingExams: [{ id: EXAM_ID, title: "Selective Entry 1" }],
@@ -399,6 +463,76 @@ describe("questions.service import and image upload", () => {
         }),
       ]);
       expect(prisma.question.createMany).not.toHaveBeenCalled();
+    });
+
+    it("parses pipe-delimited AdaptiveTags into a string array", async () => {
+      const prisma = mockPrisma();
+
+      const result = await bulkImportQuestions(
+        prisma as never,
+        csvBuffer([{ AdaptiveTags: "tag1 | tag2 | tag3" }]),
+        CREATOR_ID,
+      );
+
+      expect(result).toMatchObject({ total: 1, created: 1, failed: 0 });
+      expect(prisma.question.createMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: [expect.objectContaining({
+          adaptiveTags: ["tag1", "tag2", "tag3"],
+        })],
+      }));
+    });
+
+    it("parses pipe-delimited SkillTags into a string array", async () => {
+      const prisma = mockPrisma();
+
+      const result = await bulkImportQuestions(
+        prisma as never,
+        csvBuffer([{ SkillTags: "reading|inference|vocabulary" }]),
+        CREATOR_ID,
+      );
+
+      expect(result).toMatchObject({ total: 1, created: 1, failed: 0 });
+      expect(prisma.question.createMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: [expect.objectContaining({
+          skillTags: ["reading", "inference", "vocabulary"],
+        })],
+      }));
+    });
+
+    it("stores empty arrays when AdaptiveTags and SkillTags are blank", async () => {
+      const prisma = mockPrisma();
+
+      const result = await bulkImportQuestions(
+        prisma as never,
+        csvBuffer([{ AdaptiveTags: "", SkillTags: "" }]),
+        CREATOR_ID,
+      );
+
+      expect(result).toMatchObject({ total: 1, created: 1, failed: 0 });
+      expect(prisma.question.createMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: [expect.objectContaining({
+          adaptiveTags: [],
+          skillTags: [],
+        })],
+      }));
+    });
+
+    it("trims whitespace and filters empty segments from tags", async () => {
+      const prisma = mockPrisma();
+
+      const result = await bulkImportQuestions(
+        prisma as never,
+        csvBuffer([{ AdaptiveTags: " a |  | b ", SkillTags: "| x |" }]),
+        CREATOR_ID,
+      );
+
+      expect(result).toMatchObject({ total: 1, created: 1, failed: 0 });
+      expect(prisma.question.createMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: [expect.objectContaining({
+          adaptiveTags: ["a", "b"],
+          skillTags: ["x"],
+        })],
+      }));
     });
 
     it("returns unresolved rows when subject or topic is missing", async () => {

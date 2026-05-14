@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 const multipartPlugin = jest.fn();
 const storage = {
   ensureProfilePhotoBucketExists: jest.fn(),
+  ensureImageBucketExists: jest.fn(),
   ensureQuestionImageBucketExists: jest.fn(),
   ensureBannerImageBucketExists: jest.fn(),
   ensureResourceBucketExists: jest.fn(),
@@ -17,7 +18,9 @@ const env = {
   S3_SECRET_KEY: "secret",
   S3_REGION: "ap-southeast-2",
   S3_PROFILE_PHOTO_BUCKET: "profile-photos",
+  S3_IMAGE_BUCKET: "images",
   PROFILE_PHOTO_MAX_SIZE_BYTES: 1024,
+  IMAGE_MAX_SIZE_BYTES: 2048,
   RESOURCE_FILE_MAX_SIZE_BYTES: 1024,
   S3_SIGNED_URL_EXPIRES_IN_SECONDS: 300,
   S3_QUESTION_IMAGE_BUCKET: "question-images",
@@ -50,6 +53,7 @@ describe("storage plugin", () => {
     jest.clearAllMocks();
     env.S3_BUCKET_INIT_TIMEOUT_MS = 3000;
     storage.ensureProfilePhotoBucketExists.mockResolvedValue(undefined as never);
+    storage.ensureImageBucketExists.mockResolvedValue(undefined as never);
     storage.ensureQuestionImageBucketExists.mockResolvedValue(undefined as never);
     storage.ensureBannerImageBucketExists.mockResolvedValue(undefined as never);
     storage.ensureResourceBucketExists.mockResolvedValue(undefined as never);
@@ -62,7 +66,7 @@ describe("storage plugin", () => {
     await storagePlugin(fastify);
 
     expect(fastify.register).toHaveBeenCalledWith(multipartPlugin, {
-      limits: { fileSize: 1024 },
+      limits: { fileSize: 2048 },
     });
     expect(createObjectStorage).toHaveBeenCalledWith({
       endpointUrl: "https://s3.example.com",
@@ -73,6 +77,7 @@ describe("storage plugin", () => {
       profilePhotoBucket: "profile-photos",
       profilePhotoMaxSizeBytes: 1024,
       signedUrlExpiresInSeconds: 300,
+      imageBucket: "images",
       questionImageBucket: "question-images",
       bannerImageBucket: "banner-images",
       bannerImageMaxSizeBytes: 2048,
@@ -80,6 +85,7 @@ describe("storage plugin", () => {
       invoiceBucket: "invoices",
     });
     expect(storage.ensureProfilePhotoBucketExists).toHaveBeenCalled();
+    expect(storage.ensureImageBucketExists).toHaveBeenCalled();
     expect(storage.ensureQuestionImageBucketExists).toHaveBeenCalled();
     expect(storage.ensureBannerImageBucketExists).toHaveBeenCalled();
     expect(storage.ensureResourceBucketExists).toHaveBeenCalled();

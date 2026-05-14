@@ -8,6 +8,7 @@ import {
   getRecommendationsHandler,
   getPracticeSessionHandler,
   submitPracticeHandler,
+  retakePracticeHandler,
   listPracticeSessionsHandler,
   createTutorAssignmentHandler,
   listTutorAssignmentsHandler,
@@ -114,6 +115,23 @@ export async function practiceRoutes(fastify: FastifyInstance) {
     },
     preHandler: [fastify.authenticate, requireRole("STUDENT")],
     handler: submitPracticeHandler,
+  });
+
+  // POST /practice/sessions/:sessionId/retake — retake a completed session (same questions)
+  fastify.post("/sessions/:sessionId/retake", {
+    schema: {
+      tags: ["Practice"],
+      summary: "Retake a completed practice session with the same questions",
+      params: practiceRef("practiceSessionParamSchema"),
+      response: {
+        201: practiceRef("startPracticeResponseSchema"),
+        403: practiceRef("practiceErrorResponseSchema"),
+        404: practiceRef("practiceErrorResponseSchema"),
+        422: practiceRef("practiceErrorResponseSchema"),
+      },
+    },
+    preHandler: [fastify.authenticate, requireRole("STUDENT")],
+    handler: retakePracticeHandler,
   });
 
   // ── Tutor/Admin: assignment management ───────────────────────────────────────

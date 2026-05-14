@@ -2,6 +2,14 @@ import { randomUUID } from "crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { parse } from "csv-parse/sync";
 import { createHttpError } from "../../utils/http-error.js";
+import {
+  findMissingImageRefs,
+  IMAGE_SUMMARY_SELECT,
+  markImagesLinked,
+  normalizeImageFileName,
+  refreshImageExpirations,
+  serializeImageSummary,
+} from "../images/images.service.js";
 import type { CreateQuestionBody, ListQuestionsQuery, RejectQuestionBody, ResolveImportBody, UnresolvedRowData, UnresolvedRowItem, UpdateQuestionBody } from "./questions.schema.js";
 
 // ── Select shape ──────────────────────────────────────────────────────────────
@@ -23,6 +31,8 @@ const QUESTION_SELECT = {
   explanation: true,
   timeLimitSeconds: true,
   imageUrl: true,
+  imageRef: true,
+  image: { select: IMAGE_SUMMARY_SELECT },
   imageUrls: true,
   subtopics: true,
   notes: true,
@@ -71,13 +81,14 @@ type BulkImportResult = {
 type QuestionRecord = Prisma.QuestionGetPayload<{ select: typeof QUESTION_SELECT }>;
 
 function serializeQuestion(question: QuestionRecord) {
-  const { subject, topic, aiRubric, ...rest } = question;
+  const { subject, topic, aiRubric, image, ...rest } = question;
 
   return {
     ...rest,
     subjectName: subject.name,
     topicName: topic.name,
     aiRubric,
+    image: serializeImageSummary(image),
   };
 }
 
@@ -93,7 +104,9 @@ function isUploadedImageRef(value: string) {
   return value.startsWith("http://") || value.startsWith("https://");
 }
 
-function hasPendingImageRef(question: { imageUrl: string | null; imageUrls: string[] }) {
+function hasPendingImageRef(question: { imageUrl: string | null; imageUrls: string[]; imageRef?: string | null; image?: { url: string | null } | null }) {
+  if (question.imageRef && !question.image?.url) return true;
+
   const refs = question.imageUrls.length > 0
     ? question.imageUrls
     : splitImageRefs(question.imageUrl);
@@ -134,6 +147,7 @@ type CsvRow = {
   Subtopics: string;
   TimeLimitSeconds: string;
   ImageURL: string;
+  ImageRef: string;
   PassageID: string;
   Notes: string;
   QuestionType?: string;
@@ -384,6 +398,13 @@ export async function createQuestion(
   const latexEnabled = body.latexEnabled ?? false;
   const generatedQuestionId = body.questionId?.trim() || (await generateNextQuestionId(prisma, body.subjectId)).questionId;
   let maxMarks = body.maxMarks ?? (body.type === "ESSAY" ? 20 : 1);
+  const imageRef = normalizeImageFileName(body.imageRef);
+  if (imageRef) {
+    const missingRefs = await findMissingImageRefs(prisma, [imageRef]);
+    if (missingRefs.length > 0) {
+      throw createHttpError(400, `ImageRef "${imageRef}" was not found in master images`);
+    }
+  }
 
   if (body.type === "ESSAY" && body.aiRubricId) {
     const aiRubric = await assertActiveAiRubricExists(prisma, body.aiRubricId);
@@ -410,18 +431,23 @@ export async function createQuestion(
       correctAnswer: body.correctAnswer ?? "",
       explanation: body.explanation ?? null,
       timeLimitSeconds: body.timeLimitSeconds ?? null,
+      imageRef: imageRef || null,
       imageUrl: body.imageUrls?.[0] ?? body.imageUrl ?? null,
       imageUrls: body.imageUrls ?? splitImageRefs(body.imageUrl),
       subtopics: body.subtopics ?? [],
       notes: body.notes ?? null,
-      adaptiveTags: body.adaptiveTags ?? null,
-      skillTags: body.skillTags ?? null,
+      adaptiveTags: body.adaptiveTags ?? [],
+      skillTags: body.skillTags ?? [],
       questionId: generatedQuestionId,
       questionNumber: body.questionNumber ?? null,
       status: "DRAFT",
     },
     select: QUESTION_SELECT,
   });
+
+  if (imageRef) {
+    await markImagesLinked(prisma, [imageRef]);
+  }
 
   return serializeQuestion(question);
 }
@@ -445,8 +471,8 @@ export async function listQuestions(prisma: PrismaClient, query: ListQuestionsQu
   if (status) where.status = status;
   if (hasImage !== undefined) {
     where.OR = hasImage
-      ? [{ imageUrl: { not: null } }, { imageUrls: { isEmpty: false } }]
-      : [{ imageUrl: null }, { imageUrls: { isEmpty: true } }];
+      ? [{ imageRef: { not: null } }, { imageUrl: { not: null } }, { imageUrls: { isEmpty: false } }]
+      : [{ imageRef: null }, { imageUrl: null }, { imageUrls: { isEmpty: true } }];
   }
 
   const [data, total] = await Promise.all([
@@ -531,6 +557,16 @@ export async function updateQuestion(
   if (body.correctAnswer !== undefined) updateData.correctAnswer = body.correctAnswer;
   if (body.explanation !== undefined) updateData.explanation = body.explanation;
   if (body.timeLimitSeconds !== undefined) updateData.timeLimitSeconds = body.timeLimitSeconds;
+  const nextImageRef = body.imageRef !== undefined
+    ? normalizeImageFileName(body.imageRef)
+    : undefined;
+  if (nextImageRef) {
+    const missingRefs = await findMissingImageRefs(prisma, [nextImageRef]);
+    if (missingRefs.length > 0) {
+      throw createHttpError(400, `ImageRef "${nextImageRef}" was not found in master images`);
+    }
+  }
+  if (body.imageRef !== undefined) updateData.imageRef = nextImageRef || null;
   if (body.imageUrl !== undefined) {
     updateData.imageUrl = body.imageUrl;
     updateData.imageUrls = splitImageRefs(body.imageUrl);
@@ -563,6 +599,10 @@ export async function updateQuestion(
     select: QUESTION_SELECT,
   });
 
+  if (body.imageRef !== undefined) {
+    await refreshImageExpirations(prisma, [existing.imageRef, nextImageRef]);
+  }
+
   return serializeQuestion(question);
 }
 
@@ -572,6 +612,7 @@ export async function deleteQuestion(prisma: PrismaClient, id: string, role: str
     select: {
       id: true,
       status: true,
+      imageRef: true,
       _count: {
         select: {
           examQuestions: true,
@@ -600,6 +641,7 @@ export async function deleteQuestion(prisma: PrismaClient, id: string, role: str
   }
 
   await prisma.question.delete({ where: { id } });
+  await refreshImageExpirations(prisma, [question.imageRef]);
 }
 
 export async function submitQuestion(prisma: PrismaClient, id: string) {
@@ -775,12 +817,13 @@ function buildQuestionInsertData(
     correctAnswer:    row.correctAnswer || "",
     explanation:      row.explanation,
     timeLimitSeconds: row.timeLimitSeconds,
+    imageRef:         row.imageRef || null,
     imageUrl:         row.imageUrls[0] ?? row.imageUrl,
     imageUrls:        row.imageUrls,
     subtopics:        row.subtopics,
     notes:            row.notes,
-    adaptiveTags:     row.adaptiveTags ?? null,
-    skillTags:        row.skillTags ?? null,
+    adaptiveTags:     row.adaptiveTags ?? [],
+    skillTags:        row.skillTags ?? [],
     status:           "DRAFT",
   };
 }
@@ -901,6 +944,8 @@ export async function bulkImportQuestions(
     const subtopics = raw.Subtopics?.trim()
       ? raw.Subtopics.split("|").map((s) => s.trim()).filter(Boolean)
       : [];
+    const imageRef = normalizeImageFileName(raw.ImageRef?.trim() || null) || null;
+    const legacyImageRefs = splitImageRefs(raw.ImageURL?.trim() || null);
 
     const latexEnabled = parseCsvBoolean(raw.LatexEnabled);
     const testName = raw.TestName?.trim() || null;
@@ -942,15 +987,20 @@ export async function bulkImportQuestions(
         correctAnswer:     normalizedQuestionType === "MCQ" ? correctAnswer : "",
         explanation:       raw.Explanation?.trim() || null,
         timeLimitSeconds,
-        imageUrl:          splitImageRefs(raw.ImageURL?.trim() || null)[0] ?? null,
-        imageUrls:         splitImageRefs(raw.ImageURL?.trim() || null),
+        imageRef,
+        imageUrl:          imageRef ? null : legacyImageRefs[0] ?? null,
+        imageUrls:         imageRef ? [] : legacyImageRefs,
         passageExternalId: raw.PassageID?.trim() || null,
         aiRubricId,
         subtopics,
         notes:             raw.Notes?.trim() || null,
         latexEnabled,
-        adaptiveTags:      raw.AdaptiveTags?.trim() || null,
-        skillTags:         raw.SkillTags?.trim() || null,
+        adaptiveTags:      raw.AdaptiveTags?.trim()
+                             ? raw.AdaptiveTags.split("|").map((s) => s.trim()).filter(Boolean)
+                             : [],
+        skillTags:         raw.SkillTags?.trim()
+                             ? raw.SkillTags.split("|").map((s) => s.trim()).filter(Boolean)
+                             : [],
         markingType:       normalizedMarkingType,
         maxMarks,
       },
@@ -979,6 +1029,17 @@ export async function bulkImportQuestions(
         errors.push({ row: row.rowNumber, reason: `MaxMarks must match aiRubric totalMaxScore (${aiRubricMaxScore}) for AIRubricID "${effectiveAiRubricId}"` });
         validRows.splice(i, 1);
       }
+    }
+  }
+
+  const missingImageRefs = await findMissingImageRefs(prisma, validRows.map((r) => r.row.imageRef));
+  if (missingImageRefs.length > 0) {
+    const missingSet = new Set(missingImageRefs);
+    for (let i = validRows.length - 1; i >= 0; i--) {
+      const row = validRows[i];
+      if (!row?.row.imageRef || !missingSet.has(row.row.imageRef)) continue;
+      errors.push({ row: row.rowNumber, reason: `ImageRef "${row.row.imageRef}" was not found in master images` });
+      validRows.splice(i, 1);
     }
   }
 
@@ -1115,6 +1176,7 @@ export async function bulkImportQuestions(
   const createdQuestions = await bulkInsertQuestions(
     prisma, insertableRows, passageExtIdToId, creatorId,
   );
+  await markImagesLinked(prisma, insertableRows.map((row) => row.imageRef));
 
   const createdQuestionsWithRowNumbers = insertableRows.map((row, idx) => ({
     rowNumber: row.rowNumber,
@@ -1288,6 +1350,11 @@ export async function resolveAndSavePendingRows(
     throw createHttpError(400, `Cannot save resolved import rows. ${shownIssues}${extraCount}`);
   }
 
+  const missingImageRefs = await findMissingImageRefs(prisma, insertableRows.map((row) => row.imageRef));
+  if (missingImageRefs.length > 0) {
+    throw createHttpError(400, `Cannot save resolved import rows. Missing ImageRef: ${missingImageRefs.slice(0, 5).join(", ")}${missingImageRefs.length > 5 ? "; and more" : ""}`);
+  }
+
   await dropExistingImportDuplicates(prisma, insertableRows, creatorId);
 
   if (insertableRows.length === 0) {
@@ -1319,6 +1386,7 @@ export async function resolveAndSavePendingRows(
   const createdQuestions = await bulkInsertQuestions(
     prisma, insertableRows, passageExtIdToId, creatorId,
   );
+  await markImagesLinked(prisma, insertableRows.map((row) => row.imageRef));
 
   const createdQuestionsWithRowNumbers = insertableRows.map((row, idx) => ({
     rowNumber: row.rowNumber,

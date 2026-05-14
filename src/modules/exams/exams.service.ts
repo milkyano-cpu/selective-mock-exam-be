@@ -3,6 +3,11 @@ import { createHttpError } from "../../utils/http-error.js";
 import { decryptField } from "../../utils/field-encryption.js";
 import { createNotification } from "../../lib/notify.js";
 import { generateSessionInsightsWithAi } from "../../utils/ai-insights.js";
+import {
+  IMAGE_SUMMARY_SELECT,
+  serializeImageSummary,
+  type ImageSummaryRecord,
+} from "../images/images.service.js";
 import type {
   CreateExamBody,
   UpdateExamBody,
@@ -16,6 +21,7 @@ import type {
   ListSessionsQuery,
   ExamSubmissionsQuery,
   SubmitManualGradesBody,
+  StartRetakeBody,
 } from "./exams.schema.js";
 
 type SessionAnswerReviewStatus = "NOT_APPLICABLE" | "AI_GRADED" | "PENDING_REVIEW" | "MANUAL_GRADED";
@@ -526,6 +532,8 @@ function serializeExamQuestion(eq: {
     options: unknown;
     correctAnswer: string;
     imageUrl: string | null;
+    imageRef: string | null;
+    image: ImageSummaryRecord | null;
     imageUrls: string[];
     subject: { name: string };
     topic: { name: string };
@@ -544,6 +552,8 @@ function serializeExamQuestion(eq: {
       latexEnabled: eq.question.latexEnabled,
       options: eq.question.options as Array<{ key: string; text: string }> | null,
       correctAnswer: eq.question.correctAnswer,
+      imageRef: eq.question.imageRef,
+      image: serializeImageSummary(eq.question.image),
       imageUrl: eq.question.imageUrl,
       imageUrls: eq.question.imageUrls,
       subjectName: eq.question.subject.name,
@@ -566,6 +576,8 @@ const EXAM_QUESTION_SELECT = {
       latexEnabled: true,
       options: true,
       correctAnswer: true,
+      imageRef: true,
+      image: { select: IMAGE_SUMMARY_SELECT },
       imageUrl: true,
       imageUrls: true,
       subject: { select: { name: true } },
@@ -707,9 +719,19 @@ export async function startOrResumeSession(
               latexEnabled: true,
               options: true,
               imageUrl: true,
+              imageRef: true,
+              image: { select: IMAGE_SUMMARY_SELECT },
               imageUrls: true,
+              subject: { select: { name: true } },
+              topic: { select: { name: true } },
               passage: {
-                select: { id: true, title: true, content: true },
+                select: {
+                  id: true,
+                  title: true,
+                  content: true,
+                  imageRef: true,
+                  image: { select: IMAGE_SUMMARY_SELECT },
+                },
               },
             },
           },
@@ -783,13 +805,19 @@ export async function startOrResumeSession(
     questionText: eq.question.questionText,
     latexEnabled: eq.question.latexEnabled,
     options: eq.question.options as Array<{ key: string; text: string }> | null,
+    imageRef: eq.question.imageRef,
+    image: serializeImageSummary(eq.question.image),
     imageUrl: eq.question.imageUrl,
     imageUrls: eq.question.imageUrls,
+    subjectName: eq.question.subject.name,
+    topicName: eq.question.topic.name,
     passage: eq.question.passage
       ? {
           id: eq.question.passage.id,
           title: eq.question.passage.title,
           content: eq.question.passage.content,
+          imageRef: eq.question.passage.imageRef,
+          image: serializeImageSummary(eq.question.passage.image),
         }
       : null,
     existingAnswer: answerMap.has(eq.questionId)
@@ -815,6 +843,392 @@ export async function startOrResumeSession(
     idleTimeSeconds: session.idleTimeSeconds,
     questions,
     answeredCount: existingAnswers.filter((answer) => answer.studentAnswer.trim()).length,
+  };
+}
+
+export async function startRetakeSession(
+  prisma: PrismaClient,
+  examId: string,
+  studentId: string,
+  body: StartRetakeBody
+) {
+  const now = new Date();
+  const exam = await prisma.exam.findUnique({
+    where: { id: examId },
+    select: {
+      id: true,
+      title: true,
+      durationMinutes: true,
+      gradingType: true,
+      questions: {
+        orderBy: { order: "asc" },
+        select: {
+          questionId: true,
+          order: true,
+          question: {
+            select: {
+              id: true,
+              type: true,
+              questionText: true,
+              latexEnabled: true,
+              options: true,
+              imageUrl: true,
+              imageRef: true,
+              image: { select: IMAGE_SUMMARY_SELECT },
+              imageUrls: true,
+              subjectId: true,
+              subject: { select: { name: true } },
+              topic: { select: { name: true } },
+              passage: {
+                select: {
+                  id: true,
+                  title: true,
+                  content: true,
+                  imageRef: true,
+                  image: { select: IMAGE_SUMMARY_SELECT },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!exam) throw createHttpError(404, "Exam not found");
+  if (exam.questions.length === 0) throw createHttpError(422, "Exam has no questions");
+  if (exam.durationMinutes === null || exam.durationMinutes === undefined) {
+    throw createHttpError(422, "Exam duration has not been set");
+  }
+
+  // Check for existing in-progress retake session (allow resume)
+  const inProgress = await prisma.examSession.findFirst({
+    where: { examId, studentId, status: "IN_PROGRESS" },
+    select: {
+      id: true,
+      status: true,
+      startTime: true,
+      expiresAt: true,
+      activeTimeSeconds: true,
+      idleTimeSeconds: true,
+      retakeQuestionIds: true,
+      attemptNumber: true,
+      retakeMode: true,
+    },
+  });
+
+  if (inProgress) {
+    throw createHttpError(409, "You have an exam session in progress. Please complete or submit it first.");
+  }
+
+  // Student must have at least one completed session
+  const completedSessions = await prisma.examSession.findMany({
+    where: { examId, studentId, status: { in: ["SUBMITTED", "GRADED"] } },
+    orderBy: { startTime: "asc" },
+    select: { id: true, attemptNumber: true },
+  });
+  if (completedSessions.length === 0) {
+    throw createHttpError(422, "You must complete the exam at least once before retaking it");
+  }
+
+  const nextAttemptNumber = Math.max(...completedSessions.map((s) => s.attemptNumber)) + 1;
+
+  // Determine which questions to include based on retake mode
+  let retakeQuestionIds: string[] = [];
+
+  if (body.mode === "FULL") {
+    retakeQuestionIds = [];
+  } else if (body.mode === "INCORRECT_ONLY") {
+    if (!body.sourceSessionId) {
+      throw createHttpError(400, "sourceSessionId is required for INCORRECT_ONLY retake");
+    }
+    const sourceSession = await prisma.examSession.findUnique({
+      where: { id: body.sourceSessionId },
+      select: {
+        studentId: true,
+        examId: true,
+        status: true,
+        answers: {
+          select: { questionId: true, isCorrect: true, studentAnswer: true },
+        },
+      },
+    });
+    if (!sourceSession) throw createHttpError(404, "Source session not found");
+    if (sourceSession.studentId !== studentId) throw createHttpError(403, "Forbidden");
+    if (sourceSession.examId !== examId) throw createHttpError(400, "Source session does not belong to this exam");
+    if (sourceSession.status === "IN_PROGRESS") {
+      throw createHttpError(400, "Source session has not been submitted yet");
+    }
+
+    retakeQuestionIds = sourceSession.answers
+      .filter((a) => !a.isCorrect)
+      .map((a) => a.questionId);
+
+    if (retakeQuestionIds.length === 0) {
+      throw createHttpError(422, "No incorrect questions found in the source session");
+    }
+  } else if (body.mode === "SUBJECT_ONLY") {
+    if (!body.subjectId) {
+      throw createHttpError(400, "subjectId is required for SUBJECT_ONLY retake");
+    }
+    retakeQuestionIds = exam.questions
+      .filter((eq) => eq.question.subjectId === body.subjectId)
+      .map((eq) => eq.questionId);
+
+    if (retakeQuestionIds.length === 0) {
+      throw createHttpError(422, "No questions found for the specified subject in this exam");
+    }
+  }
+
+  const retakeQuestionSet = new Set(retakeQuestionIds);
+  const isSubset = retakeQuestionIds.length > 0;
+
+  const session = await prisma.examSession.create({
+    data: {
+      examId,
+      studentId,
+      status: "IN_PROGRESS",
+      startTime: now,
+      expiresAt: addSeconds(now, getDurationSeconds(exam.durationMinutes)),
+      lastActivityAt: now,
+      lastHeartbeatAt: now,
+      attemptNumber: nextAttemptNumber,
+      retakeMode: body.mode,
+      parentSessionId: body.sourceSessionId ?? null,
+      retakeQuestionIds,
+    },
+    select: {
+      id: true,
+      status: true,
+      startTime: true,
+      expiresAt: true,
+      activeTimeSeconds: true,
+      idleTimeSeconds: true,
+    },
+  });
+
+  const expiresAt = session.expiresAt!;
+
+  const filteredQuestions = isSubset
+    ? exam.questions.filter((eq) => retakeQuestionSet.has(eq.questionId))
+    : exam.questions;
+
+  const questions = filteredQuestions.map((eq, index) => ({
+    questionId: eq.questionId,
+    order: index + 1,
+    type: eq.question.type as "MCQ" | "ESSAY",
+    questionText: eq.question.questionText,
+    latexEnabled: eq.question.latexEnabled,
+    options: eq.question.options as Array<{ key: string; text: string }> | null,
+    imageRef: eq.question.imageRef,
+    image: serializeImageSummary(eq.question.image),
+    imageUrl: eq.question.imageUrl,
+    imageUrls: eq.question.imageUrls,
+    subjectName: eq.question.subject.name,
+    topicName: eq.question.topic.name,
+    passage: eq.question.passage
+      ? {
+          id: eq.question.passage.id,
+          title: eq.question.passage.title,
+          content: eq.question.passage.content,
+          imageRef: eq.question.passage.imageRef,
+          image: serializeImageSummary(eq.question.passage.image),
+        }
+      : null,
+    existingAnswer: null,
+  }));
+
+  return {
+    sessionId: session.id,
+    examId: exam.id,
+    examTitle: exam.title,
+    durationMinutes: exam.durationMinutes,
+    gradingType: normalizeExamGradingType(exam.gradingType),
+    status: session.status as "IN_PROGRESS",
+    startTime: session.startTime.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+    serverNow: now.toISOString(),
+    secondsRemaining: getSecondsRemaining(expiresAt, now),
+    activeTimeSeconds: session.activeTimeSeconds,
+    idleTimeSeconds: session.idleTimeSeconds,
+    questions,
+    answeredCount: 0,
+  };
+}
+
+export async function getExamAttemptSummary(
+  prisma: PrismaClient,
+  examId: string,
+  studentId: string
+) {
+  const exam = await prisma.exam.findUnique({
+    where: { id: examId },
+    select: {
+      id: true,
+      title: true,
+      questions: {
+        orderBy: { order: "asc" },
+        select: {
+          questionId: true,
+          question: {
+            select: {
+              id: true,
+              type: true,
+              questionText: true,
+              correctAnswer: true,
+              subjectId: true,
+              subject: { select: { id: true, name: true } },
+              topic: { select: { name: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!exam) throw createHttpError(404, "Exam not found");
+
+  const sessions = await prisma.examSession.findMany({
+    where: {
+      examId,
+      studentId,
+      status: { in: ["SUBMITTED", "GRADED"] },
+    },
+    orderBy: { startTime: "asc" },
+    select: {
+      id: true,
+      attemptNumber: true,
+      retakeMode: true,
+      finalScore: true,
+      rankingLevel: true,
+      totalTimeSeconds: true,
+      activeTimeSeconds: true,
+      idleTimeSeconds: true,
+      status: true,
+      startTime: true,
+      endTime: true,
+    },
+  });
+
+  function serializeAttempt(s: (typeof sessions)[number]) {
+    return {
+      sessionId: s.id,
+      attemptNumber: s.attemptNumber,
+      retakeMode: (s.retakeMode as "FULL" | "INCORRECT_ONLY" | "SUBJECT_ONLY") ?? null,
+      finalScore: s.finalScore !== null && s.finalScore !== undefined ? Number(s.finalScore) : null,
+      rankingLevel: s.rankingLevel as
+        | "SUPERIOR"
+        | "ABOVE_AVERAGE"
+        | "HIGH_AVERAGE"
+        | "AVERAGE"
+        | "LOW_AVERAGE"
+        | null,
+      totalTimeSeconds: s.totalTimeSeconds,
+      activeTimeSeconds: s.activeTimeSeconds,
+      idleTimeSeconds: s.idleTimeSeconds,
+      status: s.status as "SUBMITTED" | "GRADED",
+      startTime: s.startTime.toISOString(),
+      endTime: s.endTime?.toISOString() ?? null,
+    };
+  }
+
+  const firstSession = sessions[0];
+  const latestSession = sessions[sessions.length - 1];
+  const firstAttempt = firstSession ? serializeAttempt(firstSession) : null;
+  const latestAttempt = latestSession ? serializeAttempt(latestSession) : null;
+
+  const gradedSessions = sessions.filter((s) => s.finalScore !== null);
+  const bestScoreSession = gradedSessions.length > 0
+    ? gradedSessions.reduce((best, s) =>
+        Number(s.finalScore) > Number(best.finalScore) ? s : best
+      )
+    : null;
+  const bestScore = bestScoreSession ? serializeAttempt(bestScoreSession) : null;
+
+  // Get incorrect questions from the latest graded session
+  const latestGraded = [...sessions].reverse().find((s) => s.status === "GRADED");
+  let incorrectQuestions: Array<{
+    questionId: string;
+    questionText: string;
+    type: "MCQ" | "ESSAY";
+    subjectName: string;
+    topicName: string;
+    studentAnswer: string;
+    correctAnswer: string;
+  }> = [];
+
+  if (latestGraded) {
+    const answers = await prisma.studentAnswer.findMany({
+      where: { sessionId: latestGraded.id, isCorrect: false },
+      select: {
+        questionId: true,
+        studentAnswer: true,
+      },
+    });
+
+    const questionMap = new Map(exam.questions.map((eq) => [eq.questionId, eq.question]));
+
+    incorrectQuestions = answers
+      .filter((a) => a.studentAnswer.trim() !== "")
+      .map((a) => {
+        const q = questionMap.get(a.questionId);
+        if (!q) return null;
+        return {
+          questionId: a.questionId,
+          questionText: q.questionText,
+          type: q.type as "MCQ" | "ESSAY",
+          subjectName: q.subject.name,
+          topicName: q.topic.name,
+          studentAnswer: a.studentAnswer,
+          correctAnswer: q.correctAnswer,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+  }
+
+  // Subject breakdown from the latest graded session
+  let subjects: Array<{
+    subjectId: string;
+    subjectName: string;
+    totalQuestions: number;
+    correctCount: number;
+  }> = [];
+
+  if (latestGraded) {
+    const allAnswers = await prisma.studentAnswer.findMany({
+      where: { sessionId: latestGraded.id },
+      select: { questionId: true, isCorrect: true, studentAnswer: true },
+    });
+
+    const subjectMap = new Map<string, { name: string; total: number; correct: number }>();
+    const questionMap = new Map(exam.questions.map((eq) => [eq.questionId, eq.question]));
+
+    for (const a of allAnswers) {
+      const q = questionMap.get(a.questionId);
+      if (!q) continue;
+      const existing = subjectMap.get(q.subjectId) ?? { name: q.subject.name, total: 0, correct: 0 };
+      subjectMap.set(q.subjectId, {
+        name: existing.name,
+        total: existing.total + 1,
+        correct: existing.correct + (a.isCorrect ? 1 : 0),
+      });
+    }
+
+    subjects = Array.from(subjectMap.entries()).map(([subjectId, data]) => ({
+      subjectId,
+      subjectName: data.name,
+      totalQuestions: data.total,
+      correctCount: data.correct,
+    }));
+  }
+
+  return {
+    examId: exam.id,
+    examTitle: exam.title,
+    totalAttempts: sessions.length,
+    firstAttempt,
+    latestAttempt,
+    bestScore,
+    incorrectQuestions,
+    subjects,
   };
 }
 
@@ -1046,6 +1460,7 @@ export async function submitExamSession(
       examId: true,
       startTime: true,
       expiresAt: true,
+      retakeQuestionIds: true,
       exam: { select: { durationMinutes: true } },
     },
   });
@@ -1066,13 +1481,19 @@ export async function submitExamSession(
     where: { examId: session.examId },
     select: { questionId: true },
   });
-  const allQuestionIds = new Set(examQuestionIds.map((eq) => eq.questionId));
+  const allExamQuestionIds = new Set(examQuestionIds.map((eq) => eq.questionId));
+
+  // For retake sessions with a subset, only consider retake questions
+  const isRetakeSubset = session.retakeQuestionIds.length > 0;
+  const targetQuestionIds = isRetakeSubset
+    ? new Set(session.retakeQuestionIds.filter((qid) => allExamQuestionIds.has(qid)))
+    : allExamQuestionIds;
 
   await prisma.$transaction(async (tx) => {
     // Upsert any inline final answers sent with the submit call
     if (body.answers && body.answers.length > 0) {
       for (const answer of body.answers) {
-        if (!allQuestionIds.has(answer.questionId)) continue;
+        if (!targetQuestionIds.has(answer.questionId)) continue;
         await tx.studentAnswer.upsert({
           where: { sessionId_questionId: { sessionId, questionId: answer.questionId } },
           update: {
@@ -1090,13 +1511,13 @@ export async function submitExamSession(
       }
     }
 
-    // Fill empty answers for unanswered questions
+    // Fill empty answers for unanswered questions (only for target questions)
     const existingAnswers = await tx.studentAnswer.findMany({
       where: { sessionId },
       select: { questionId: true },
     });
     const existingAnswerIds = new Set(existingAnswers.map((a) => a.questionId));
-    const missingQuestionIds = [...allQuestionIds].filter((qid) => !existingAnswerIds.has(qid));
+    const missingQuestionIds = [...targetQuestionIds].filter((qid) => !existingAnswerIds.has(qid));
 
     if (missingQuestionIds.length > 0) {
       await tx.studentAnswer.createMany({
@@ -1499,6 +1920,10 @@ export async function submitManualGrades(
     essayQuestions.map((eq) => [eq.questionId, normalizeQuestionMaxMarks(eq.question.maxMarks)])
   );
 
+  const answerByQuestionId = new Map(
+    session.answers.map((a) => [a.questionId, a])
+  );
+
   for (const grade of body.grades) {
     if (!essayQuestionIds.has(grade.questionId)) {
       throw createHttpError(422, "Manual grades can only be submitted for essay questions");
@@ -1506,6 +1931,17 @@ export async function submitManualGrades(
     const maxMarks = questionMaxMarksById.get(grade.questionId) ?? 1;
     if (grade.manualScore > maxMarks) {
       throw createHttpError(422, `Manual score for question ${grade.questionId} cannot exceed max marks (${maxMarks})`);
+    }
+
+    // When overriding an AI-graded answer, tutor feedback is mandatory
+    const existingAnswer = answerByQuestionId.get(grade.questionId);
+    if (existingAnswer?.aiFeedback) {
+      const serialized = serializeAiFeedback(existingAnswer.aiFeedback);
+      if (serialized && !serialized.pendingReview) {
+        if (!grade.tutorFeedback || !grade.tutorFeedback.trim()) {
+          throw createHttpError(422, "Tutor feedback is required when overriding an AI-graded answer");
+        }
+      }
     }
   }
 
@@ -1891,6 +2327,8 @@ export async function listStudentSessions(
         idleTimeSeconds: true,
         startTime: true,
         endTime: true,
+        attemptNumber: true,
+        retakeMode: true,
         exam: {
           select: {
             title: true,
@@ -1923,6 +2361,8 @@ export async function listStudentSessions(
     idleTimeSeconds: s.idleTimeSeconds,
     startTime: s.startTime.toISOString(),
     endTime: s.endTime?.toISOString() ?? null,
+    attemptNumber: s.attemptNumber,
+    retakeMode: (s.retakeMode as "FULL" | "INCORRECT_ONLY" | "SUBJECT_ONLY") ?? null,
   }));
 
   return {

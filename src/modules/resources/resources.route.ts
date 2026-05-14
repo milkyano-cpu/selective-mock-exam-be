@@ -5,6 +5,7 @@ import {
   listResourcesHandler,
   getResourceHandler,
   previewResourceFileHandler,
+  getResourceStreamUrlHandler,
   createResourceHandler,
   updateResourceHandler,
   deleteResourceHandler,
@@ -37,6 +38,14 @@ export async function resourceRoutes(fastify: FastifyInstance) {
     },
     preHandler: [fastify.authenticate],
     handler: previewResourceFileHandler,
+  });
+
+  fastify.get("/:id/stream-url", {
+    schema: {
+      params: resourceRef("resourceIdParamSchema"),
+    },
+    preHandler: [fastify.authenticate],
+    handler: getResourceStreamUrlHandler,
   });
 
   // Admin & Tutor: create resource

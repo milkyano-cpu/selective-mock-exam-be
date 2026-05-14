@@ -16,6 +16,7 @@ import {
   getPracticeSession,
   submitPracticeSession,
   listPracticeSessions,
+  retakePracticeSession,
   createTutorAssignment,
   listTutorAssignments,
 } from "./practice.service.js";
@@ -81,6 +82,15 @@ export async function listPracticeSessionsHandler(
   const query = request.query as ListPracticeSessionsQuery;
   const result = await listPracticeSessions(request.server.prisma, request.user.sub, query);
   return reply.send({ success: true, message: "Practice sessions retrieved", ...result });
+}
+
+export async function retakePracticeHandler(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const { sessionId } = request.params as { sessionId: string };
+  const data = await retakePracticeSession(request.server.prisma, sessionId, request.user.sub);
+  return reply.status(201).send({ success: true, message: "Practice session retake started", data });
 }
 
 export async function createTutorAssignmentHandler(

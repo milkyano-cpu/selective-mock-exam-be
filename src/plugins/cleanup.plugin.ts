@@ -1,5 +1,6 @@
 import fp from "fastify-plugin";
 import type { FastifyInstance } from "fastify";
+import { purgeExpiredImages } from "../modules/images/images.service.js";
 
 const DAILY_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -31,6 +32,13 @@ async function cleanupPlugin(fastify: FastifyInstance) {
     }
   }
 
+  async function purgeExpiredMasterImages() {
+    const deleted = await purgeExpiredImages(fastify.prisma, fastify.storage);
+    if (deleted > 0) {
+      fastify.log.info({ count: deleted }, "Purged expired master images");
+    }
+  }
+
   let dailyTimer: ReturnType<typeof setInterval> | undefined;
   let initialTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -38,9 +46,15 @@ async function cleanupPlugin(fastify: FastifyInstance) {
     purgeExpiredTokens().catch((error: unknown) => {
       fastify.log.error(error, "Failed to purge expired refresh tokens");
     });
+    purgeExpiredMasterImages().catch((error: unknown) => {
+      fastify.log.error(error, "Failed to purge expired master images");
+    });
     dailyTimer = setInterval(() => {
       purgeExpiredTokens().catch((error: unknown) => {
         fastify.log.error(error, "Failed to purge expired refresh tokens");
+      });
+      purgeExpiredMasterImages().catch((error: unknown) => {
+        fastify.log.error(error, "Failed to purge expired master images");
       });
     }, DAILY_MS);
   }, msUntilNext1AM());
@@ -53,5 +67,5 @@ async function cleanupPlugin(fastify: FastifyInstance) {
 
 export default fp(cleanupPlugin, {
   name: "cleanup",
-  dependencies: ["prisma"],
+  dependencies: ["prisma", "storage"],
 });

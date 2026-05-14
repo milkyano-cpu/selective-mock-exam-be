@@ -23,6 +23,7 @@ import { authRoutes } from "./modules/auth/auth.route.js";
 import { usersRoutes } from "./modules/users/users.route.js";
 import { adminRoutes } from "./modules/admin/admin.route.js";
 import { subjectRoutes } from "./modules/subjects/subjects.route.js";
+import { imageRoutes } from "./modules/images/images.route.js";
 import { questionRoutes } from "./modules/questions/questions.route.js";
 import { passageRoutes } from "./modules/passages/passages.routes.js";
 import { webhookRoutes } from "./modules/webhooks/webhooks.route.js";
@@ -48,6 +49,7 @@ import { userSchemas } from "./modules/users/users.schema.js";
 import { healthSchemas } from "./modules/health/health.schema.js";
 import { adminSchemas } from "./modules/admin/admin.schema.js";
 import { subjectSchemas } from "./modules/subjects/subjects.schema.js";
+import { imageSchemas } from "./modules/images/images.schema.js";
 import { questionSchemas } from "./modules/questions/questions.schema.js";
 import { passageSchemas } from "./modules/passages/passages.schema.js";
 import { notificationSchemas } from "./modules/notifications/notifications.schema.js";
@@ -94,6 +96,7 @@ export async function buildApp() {
     ...healthSchemas,
     ...adminSchemas,
     ...subjectSchemas,
+    ...imageSchemas,
     ...questionSchemas,
     ...passageSchemas,
     ...pushSchemas,
@@ -152,6 +155,7 @@ export async function buildApp() {
       await api.register(usersRoutes, { prefix: "/users" });
       await api.register(adminRoutes, { prefix: "/admin" });
       await api.register(subjectRoutes, { prefix: "/subjects" });
+      await api.register(imageRoutes, { prefix: "/images" });
       await api.register(questionRoutes, { prefix: "/questions" });
       await api.register(pushSubscriptionRoutes, { prefix: "/push" });
       await api.register(passageRoutes, { prefix: "/passages" });

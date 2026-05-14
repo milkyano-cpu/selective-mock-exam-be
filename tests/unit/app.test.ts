@@ -26,6 +26,7 @@ const pluginMocks = {
   usersRoutes: jest.fn(),
   adminRoutes: jest.fn(),
   subjectRoutes: jest.fn(),
+  imageRoutes: jest.fn(),
   questionRoutes: jest.fn(),
   passageRoutes: jest.fn(),
   webhookRoutes: jest.fn(),
@@ -42,6 +43,8 @@ const pluginMocks = {
   pathwayRoutes: jest.fn(),
   practiceRoutes: jest.fn(),
   billingRoutes: jest.fn(),
+  resourceRoutes: jest.fn(),
+  studentCalendarRoutes: jest.fn(),
 };
 
 const mappedError = Object.assign(new Error("Mapped conflict"), { statusCode: 409 });
@@ -81,6 +84,9 @@ jest.unstable_mockModule("../../src/modules/admin/admin.route.js", () => ({
 }));
 jest.unstable_mockModule("../../src/modules/subjects/subjects.route.js", () => ({
   subjectRoutes: pluginMocks.subjectRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/images/images.route.js", () => ({
+  imageRoutes: pluginMocks.imageRoutes,
 }));
 jest.unstable_mockModule("../../src/modules/questions/questions.route.js", () => ({
   questionRoutes: pluginMocks.questionRoutes,
@@ -130,6 +136,12 @@ jest.unstable_mockModule("../../src/modules/practice/practice.route.js", () => (
 jest.unstable_mockModule("../../src/modules/billing/billing.route.js", () => ({
   billingRoutes: pluginMocks.billingRoutes,
 }));
+jest.unstable_mockModule("../../src/modules/resources/resources.route.js", () => ({
+  resourceRoutes: pluginMocks.resourceRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/student-calendar/student-calendar.route.js", () => ({
+  studentCalendarRoutes: pluginMocks.studentCalendarRoutes,
+}));
 jest.unstable_mockModule("../../src/modules/auth/auth.schema.js", () => ({
   authSchemas: [{ $id: "auth" }],
 }));
@@ -144,6 +156,9 @@ jest.unstable_mockModule("../../src/modules/admin/admin.schema.js", () => ({
 }));
 jest.unstable_mockModule("../../src/modules/subjects/subjects.schema.js", () => ({
   subjectSchemas: [{ $id: "subject" }],
+}));
+jest.unstable_mockModule("../../src/modules/images/images.schema.js", () => ({
+  imageSchemas: [{ $id: "image" }],
 }));
 jest.unstable_mockModule("../../src/modules/questions/questions.schema.js", () => ({
   questionSchemas: [{ $id: "question" }],
@@ -190,6 +205,12 @@ jest.unstable_mockModule("../../src/modules/practice/practice.schema.js", () => 
 jest.unstable_mockModule("../../src/modules/billing/billing.schema.js", () => ({
   billingSchemas: [{ $id: "billing" }],
 }));
+jest.unstable_mockModule("../../src/modules/resources/resources.schema.js", () => ({
+  resourceSchemas: [{ $id: "resource" }],
+}));
+jest.unstable_mockModule("../../src/modules/student-calendar/student-calendar.schema.js", () => ({
+  studentCalendarSchemas: [{ $id: "studentCalendar" }],
+}));
 
 const { buildApp } = await import("../../src/app.js");
 
@@ -226,7 +247,7 @@ describe("app builder", () => {
     expect(options.trustProxy).toBe(true);
     expect(options.genReqId({ headers: { "x-trace-id": "trace-1" } })).toBe("trace-1");
     expect(options.genReqId({ headers: {} })).toEqual(expect.any(String));
-    expect(fakeApp.addSchema).toHaveBeenCalledTimes(21);
+    expect(fakeApp.addSchema).toHaveBeenCalledTimes(24);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.securityPlugin);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.storagePlugin);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.profilePhotoCleanupPlugin);
@@ -237,9 +258,13 @@ describe("app builder", () => {
     expect(pluginMocks.authRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/auth" });
     expect(pluginMocks.usersRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/users" });
     expect(pluginMocks.adminRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/admin" });
+    expect(pluginMocks.subjectRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/subjects" });
+    expect(pluginMocks.imageRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/images" });
     expect(pluginMocks.questionRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/questions" });
     expect(pluginMocks.webhookRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/webhooks" });
     expect(pluginMocks.billingRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/billing" });
+    expect(pluginMocks.resourceRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/resources" });
+    expect(pluginMocks.studentCalendarRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/student-calendar" });
     expect(fakeApp.setErrorHandler).toHaveBeenCalledWith(expect.any(Function));
     expect(fakeApp.setNotFoundHandler).toHaveBeenCalledWith(expect.any(Function));
   });

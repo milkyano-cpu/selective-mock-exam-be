@@ -13,6 +13,7 @@ import type {
   ListSessionsQuery,
   ExamSubmissionsQuery,
   SubmitManualGradesBody,
+  StartRetakeBody,
 } from "./exams.schema.js";
 import {
   createExamRecord,
@@ -24,6 +25,8 @@ import {
   addQuestionsToExam,
   removeQuestionFromExam,
   startOrResumeSession,
+  startRetakeSession,
+  getExamAttemptSummary,
   upsertAnswer,
   batchUpsertAnswers,
   recordSessionHeartbeat,
@@ -266,4 +269,31 @@ export async function getSessionInsightsHandler(
   const { sessionId } = request.params as { sessionId: string };
   const data = await getSessionInsights(request.server.prisma, sessionId, request.user.sub);
   return reply.send({ success: true, message: "AI Insights generated successfully", data });
+}
+
+// ── Retake & Attempt Summary ─────────────────────────────────────────────────
+
+export async function startRetakeHandler(request: FastifyRequest, reply: FastifyReply) {
+  const { id } = request.params as { id: string };
+  const body = request.body as StartRetakeBody;
+  const data = await startRetakeSession(
+    request.server.prisma,
+    id,
+    request.user.sub,
+    body
+  );
+  return reply.status(201).send({ success: true, message: "Retake session started", data });
+}
+
+export async function getExamAttemptSummaryHandler(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const { id } = request.params as { id: string };
+  const data = await getExamAttemptSummary(
+    request.server.prisma,
+    id,
+    request.user.sub
+  );
+  return reply.send({ success: true, message: "Attempt summary retrieved", data });
 }

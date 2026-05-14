@@ -10,10 +10,16 @@ import {
   updateTutorStatus,
   deleteTutor,
   deleteUserHandler,
+  getAdminStatsHandler,
 } from "./admin.controller.js";
 import { requireRole } from "../../utils/authz.js";
 
 export async function adminRoutes(fastify: FastifyInstance) {
+  fastify.get("/stats", {
+    preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
+    handler: getAdminStatsHandler,
+  });
+
   fastify.get("/users", {
     schema: {
       querystring: adminRef("listUsersQuerySchema"),

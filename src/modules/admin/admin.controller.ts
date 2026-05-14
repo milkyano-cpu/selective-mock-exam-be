@@ -18,7 +18,20 @@ import {
   deleteTutor as deleteTutorService,
   deleteUserById,
 } from "./admin.service.js";
+import { getAdminDashboardStats } from "./admin-stats.service.js";
 import { sendStaffWelcomeEmail } from "../../lib/email.js";
+
+export async function getAdminStatsHandler(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const stats = await getAdminDashboardStats(request.server.prisma);
+  return reply.send({
+    success: true,
+    message: "Admin dashboard stats retrieved",
+    data: stats,
+  });
+}
 
 export async function createStaff(
   request: FastifyRequest,

@@ -24,6 +24,7 @@ function createStorage(overrides: Record<string, unknown> = {}) {
     profilePhotoBucket: "profile-photos",
     profilePhotoMaxSizeBytes: 1024,
     signedUrlExpiresInSeconds: 300,
+    imageBucket: "images",
     questionImageBucket: "question-images",
     bannerImageBucket: "banner-images",
     bannerImageMaxSizeBytes: 2048,
@@ -151,14 +152,20 @@ describe("object storage", () => {
     expect(signedUrl).toBe("https://signed.example.com/photo");
   });
 
-  it("ensures public question and banner image buckets", async () => {
+  it("ensures public master, question, and banner image buckets", async () => {
     const storage = createStorage();
 
+    await storage.ensureImageBucketExists();
     await storage.ensureQuestionImageBucketExists();
     await storage.ensureBannerImageBucketExists();
 
+    expect(minioInstance.makeBucket).toHaveBeenCalledWith("images", "ap-southeast-2");
     expect(minioInstance.makeBucket).toHaveBeenCalledWith("question-images", "ap-southeast-2");
     expect(minioInstance.makeBucket).toHaveBeenCalledWith("banner-images", "ap-southeast-2");
+    expect(minioInstance.setBucketPolicy).toHaveBeenCalledWith(
+      "images",
+      expect.stringContaining("arn:aws:s3:::images/*")
+    );
     expect(minioInstance.setBucketPolicy).toHaveBeenCalledWith(
       "question-images",
       JSON.stringify({
@@ -179,11 +186,18 @@ describe("object storage", () => {
     );
   });
 
-  it("uploads question and banner images with timestamped public URLs", async () => {
+  it("uploads master, question, and banner images with timestamped public URLs", async () => {
     jest.spyOn(Date, "now").mockReturnValue(1770000000000);
     const storage = createStorage({ endpointUrl: "https://s3.example.com/" });
     const body = Buffer.from("image");
 
+    const imageUrl = await storage.uploadImage({
+      imageId: "image-1",
+      filename: "diagram.png",
+      body,
+      contentType: "image/png",
+      contentLength: body.length,
+    });
     const questionUrl = await storage.uploadQuestionImage({
       questionId: "question-1",
       filename: "diagram.png",
@@ -200,6 +214,13 @@ describe("object storage", () => {
     });
 
     expect(minioInstance.putObject).toHaveBeenCalledWith(
+      "images",
+      "image-1/1770000000000-diagram.png",
+      body,
+      body.length,
+      { "Content-Type": "image/png" }
+    );
+    expect(minioInstance.putObject).toHaveBeenCalledWith(
       "question-images",
       "question-1/1770000000000-diagram.png",
       body,
@@ -213,6 +234,7 @@ describe("object storage", () => {
       body.length,
       { "Content-Type": "image/jpeg" }
     );
+    expect(imageUrl).toBe("https://s3.example.com/images/image-1/1770000000000-diagram.png");
     expect(questionUrl).toBe("https://s3.example.com/question-images/question-1/1770000000000-diagram.png");
     expect(bannerUrl).toBe("https://s3.example.com/banner-images/banner-1/1770000000000-hero.jpg");
   });

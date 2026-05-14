@@ -1,24 +1,34 @@
 import type { PrismaClient } from "@prisma/client";
 import { parse } from "csv-parse/sync";
 import { createHttpError } from "../../utils/http-error.js";
+import {
+  IMAGE_SUMMARY_SELECT,
+  normalizeImageFileName,
+  refreshImageExpirations,
+  serializeImageSummary,
+  upsertImageMetadata,
+} from "../images/images.service.js";
 import type { CreatePassageBody, ListPassagesQuery, UpdatePassageBody } from "./passages.schema.js";
 
 // ── Select shape ──────────────────────────────────────────────────────────────
 
 const PASSAGE_SELECT = {
-  id:           true,
-  externalId:   true,
-  title:        true,
-  content:      true,
-  imageUrl:     true,
-  passageType:  true,
-  section:      true,
-  difficulty:   true,
-  topic:        true,
-  latexEnabled: true,
-  notes:        true,
-  createdAt:    true,
-  updatedAt:    true,
+  id:            true,
+  externalId:    true,
+  title:         true,
+  content:       true,
+  passageFormat: true,
+  imageUrl:      true,
+  imageRef:      true,
+  image:         { select: IMAGE_SUMMARY_SELECT },
+  passageType:   true,
+  section:       true,
+  difficulty:    true,
+  topic:         true,
+  latexEnabled:  true,
+  notes:         true,
+  createdAt:     true,
+  updatedAt:     true,
 } as const;
 
 const RELATED_QUESTION_SELECT = {
@@ -53,36 +63,43 @@ async function findPassageById(prisma: PrismaClient, id: string) {
   return passage;
 }
 
+function serializePassage<T extends { image?: Parameters<typeof serializeImageSummary>[0] }>(passage: T) {
+  return {
+    ...passage,
+    image: serializeImageSummary(passage.image ?? null),
+  };
+}
+
 // ── Service functions ─────────────────────────────────────────────────────────
 
 export async function createPassage(prisma: PrismaClient, body: CreatePassageBody) {
-  if (body.externalId) {
-    const existing = await prisma.passage.findUnique({
-      where: { externalId: body.externalId },
-      select: { id: true },
-    });
-    if (existing) {
-      throw createHttpError(409, `Passage with externalId "${body.externalId}" already exists`);
-    }
+  const nextExternalNumber = await getNextPassageExternalNumber(prisma);
+  const externalId = formatPassageExternalId(nextExternalNumber);
+
+  const imageRef = normalizeImageFileName(body.imageRef);
+  if (imageRef) {
+    await upsertImageMetadata(prisma, { fileName: imageRef, linked: true });
   }
 
   const created = await prisma.passage.create({
     data: {
-      externalId:   body.externalId ?? null,
-      title:        body.title ?? null,
-      content:      body.content ?? null,
-      imageUrl:     body.imageUrl ?? null,
-      passageType:  body.passageType ?? null,
-      section:      body.section ?? null,
-      difficulty:   body.difficulty ?? null,
-      topic:        body.topic ?? null,
-      latexEnabled: body.latexEnabled ?? false,
-      notes:        body.notes ?? null,
+      externalId,
+      title:         body.title ?? null,
+      content:       body.content ?? null,
+      passageFormat: body.passageFormat ?? null,
+      imageUrl:      body.imageUrl ?? null,
+      imageRef:      imageRef || null,
+      passageType:   body.passageType ?? null,
+      section:       body.section ?? null,
+      difficulty:    body.difficulty ?? null,
+      topic:         body.topic ?? null,
+      latexEnabled:  body.latexEnabled ?? false,
+      notes:         body.notes ?? null,
     },
     select: { id: true },
   });
 
-  return findPassageById(prisma, created.id);
+  return serializePassage(await findPassageById(prisma, created.id));
 }
 
 export async function listPassages(prisma: PrismaClient, query: ListPassagesQuery) {
@@ -113,17 +130,17 @@ export async function listPassages(prisma: PrismaClient, query: ListPassagesQuer
   ]);
 
   return {
-    data,
+    data: data.map(serializePassage),
     meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
   };
 }
 
 export async function getPassageById(prisma: PrismaClient, id: string) {
-  return findPassageById(prisma, id);
+  return serializePassage(await findPassageById(prisma, id));
 }
 
 export async function updatePassage(prisma: PrismaClient, id: string, body: UpdatePassageBody) {
-  await findPassageById(prisma, id);
+  const existingPassage = await findPassageById(prisma, id);
 
   if (body.externalId) {
     const conflict = await prisma.passage.findFirst({
@@ -135,27 +152,40 @@ export async function updatePassage(prisma: PrismaClient, id: string, body: Upda
     }
   }
 
+  const nextImageRef = body.imageRef !== undefined
+    ? normalizeImageFileName(body.imageRef)
+    : undefined;
+  if (nextImageRef) {
+    await upsertImageMetadata(prisma, { fileName: nextImageRef, linked: true });
+  }
+
   await prisma.passage.update({
     where: { id },
     data: {
-      ...(body.externalId  !== undefined && { externalId:   body.externalId }),
-      ...(body.title       !== undefined && { title:        body.title }),
-      ...(body.content     !== undefined && { content:      body.content }),
-      ...(body.imageUrl    !== undefined && { imageUrl:     body.imageUrl }),
-      ...(body.passageType !== undefined && { passageType:  body.passageType }),
-      ...(body.section     !== undefined && { section:      body.section }),
-      ...(body.difficulty  !== undefined && { difficulty:   body.difficulty }),
-      ...(body.topic       !== undefined && { topic:        body.topic }),
-      ...(body.latexEnabled !== undefined && { latexEnabled: body.latexEnabled }),
-      ...(body.notes       !== undefined && { notes:        body.notes }),
+      ...(body.externalId    !== undefined && { externalId:    body.externalId }),
+      ...(body.title         !== undefined && { title:         body.title }),
+      ...(body.content       !== undefined && { content:       body.content }),
+      ...(body.passageFormat !== undefined && { passageFormat: body.passageFormat }),
+      ...(body.imageUrl      !== undefined && { imageUrl:      body.imageUrl }),
+      ...(body.imageRef      !== undefined && { imageRef:      nextImageRef || null }),
+      ...(body.passageType   !== undefined && { passageType:   body.passageType }),
+      ...(body.section       !== undefined && { section:       body.section }),
+      ...(body.difficulty    !== undefined && { difficulty:    body.difficulty }),
+      ...(body.topic         !== undefined && { topic:         body.topic }),
+      ...(body.latexEnabled  !== undefined && { latexEnabled:  body.latexEnabled }),
+      ...(body.notes         !== undefined && { notes:         body.notes }),
     },
   });
 
-  return findPassageById(prisma, id);
+  if (body.imageRef !== undefined) {
+    await refreshImageExpirations(prisma, [existingPassage.imageRef, nextImageRef]);
+  }
+
+  return serializePassage(await findPassageById(prisma, id));
 }
 
 export async function deletePassage(prisma: PrismaClient, id: string) {
-  await findPassageById(prisma, id);
+  const existingPassage = await findPassageById(prisma, id);
 
   const linked = await prisma.question.count({ where: { passageId: id } });
   if (linked > 0) {
@@ -163,6 +193,7 @@ export async function deletePassage(prisma: PrismaClient, id: string) {
   }
 
   await prisma.passage.delete({ where: { id } });
+  await refreshImageExpirations(prisma, [existingPassage.imageRef]);
 }
 
 // ── Import ────────────────────────────────────────────────────────────────────
@@ -198,6 +229,29 @@ function parseBool(value: string | undefined): boolean {
   return v === "true" || v === "1" || v === "yes";
 }
 
+function formatPassageExternalId(number: number) {
+  return `RC${String(number).padStart(3, "0")}`;
+}
+
+async function getNextPassageExternalNumber(prisma: PrismaClient) {
+  const rows = await prisma.passage.findMany({
+    where: { externalId: { startsWith: "RC" } },
+    select: { externalId: true },
+  });
+
+  let max = 0;
+  for (const row of rows) {
+    const match = row.externalId?.match(/^RC(\d+)$/i);
+    if (!match) continue;
+    const parsed = parseInt(match[1]!, 10);
+    if (Number.isFinite(parsed)) {
+      max = Math.max(max, parsed);
+    }
+  }
+
+  return max + 1;
+}
+
 export interface ImportPassagesResult {
   total:   number;
   created: number;
@@ -229,25 +283,33 @@ export async function importPassages(
   const errors: Array<{ row: number; reason: string }> = [];
   let created = 0;
   let updated = 0;
+  let nextExternalNumber = await getNextPassageExternalNumber(prisma);
 
   for (const [i, raw] of rows.entries()) {
     const rowNumber = i + 2; // +1 for header row, +1 for 1-based
 
-    const externalId  = raw["PassageID"]?.trim() || null;
-    const title       = raw["PassageTitle"]?.trim() || null;
-    const content     = raw["PassageText"]?.trim() || null;
-    const imageUrl    = raw["PassageImageURL"]?.trim() || null;
-    const rawType     = raw["PassageType"]?.trim() ?? "";
-    const section     = raw["Section"]?.trim() || null;
-    const rawDiff     = raw["Difficulty"]?.trim() ?? "";
-    const topic       = raw["Topic"]?.trim() || null;
-    const latexEnabled = parseBool(raw["LatexEnabled"]);
-    const notes       = raw["Notes"]?.trim() || null;
+    const title         = raw["PassageTitle"]?.trim() || null;
+    const content       = raw["PassageText"]?.trim() || null;
+    const passageFormat = raw["PassageFormat"]?.trim() || null;
+    const imageUrl      = raw["PassageImageURL"]?.trim() || null;
+    const imageRef      = normalizeImageFileName(raw["PassageImageRef"]?.trim() || null) || null;
+    const imageAltText  = raw["ImageAltText"]?.trim() || null;
+    const imageCaption  = raw["ImagesCaption"]?.trim() || null;
+    const rawType       = raw["PassageType"]?.trim() ?? "";
+    const section       = raw["Section"]?.trim() || null;
+    const rawDiff       = raw["Difficulty"]?.trim() ?? "";
+    const topic         = raw["Topic"]?.trim() || null;
+    const latexEnabled  = parseBool(raw["LatexEnabled"]);
+    const notes         = raw["Notes"]?.trim() || null;
 
     const rowErrors: string[] = [];
 
-    if (!content && !imageUrl) {
-      rowErrors.push("At least one of PassageText or PassageImageURL is required");
+    if (!title) {
+      rowErrors.push("PassageTitle is required");
+    }
+
+    if (!content) {
+      rowErrors.push("PassageText is required");
     }
 
     const passageType = rawType ? PASSAGE_TYPE_MAP[rawType] : undefined;
@@ -265,10 +327,14 @@ export async function importPassages(
       continue;
     }
 
+    const externalId = formatPassageExternalId(nextExternalNumber++);
+
     const data = {
       title,
       content,
+      passageFormat,
       imageUrl,
+      imageRef,
       passageType: passageType ?? null,
       section,
       difficulty,
@@ -278,23 +344,16 @@ export async function importPassages(
     };
 
     try {
-      if (externalId) {
-        const existing = await prisma.passage.findUnique({
-          where: { externalId },
-          select: { id: true },
+      if (imageRef) {
+        await upsertImageMetadata(prisma, {
+          fileName: imageRef,
+          altText: imageAltText,
+          caption: imageCaption,
+          linked: true,
         });
-
-        if (existing) {
-          await prisma.passage.update({ where: { externalId }, data });
-          updated++;
-        } else {
-          await prisma.passage.create({ data: { externalId, ...data } });
-          created++;
-        }
-      } else {
-        await prisma.passage.create({ data });
-        created++;
       }
+      await prisma.passage.create({ data: { externalId, ...data } });
+      created++;
     } catch {
       errors.push({ row: rowNumber, reason: "Database error while saving row" });
     }

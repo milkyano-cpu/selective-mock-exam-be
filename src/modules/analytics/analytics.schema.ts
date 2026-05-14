@@ -69,8 +69,13 @@ const leaderboardResponseSchema = z.object({
     period:  z.string(),
     entries: z.array(leaderboardEntrySchema),
     myRank: z.object({
-      rank:  z.number().nullable(),
-      score: z.number().nullable(),
+      rank:         z.number().nullable(),
+      studentId:    z.string(),
+      studentName:  z.string().nullable(),
+      avatarUrl:    z.string().nullable(),
+      score:        z.number().nullable(),
+      rankingLevel: z.string().nullable(),
+      totalExams:   z.number().nullable(),
     }),
   }),
 });

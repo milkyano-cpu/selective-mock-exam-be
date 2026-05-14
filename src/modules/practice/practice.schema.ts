@@ -13,6 +13,13 @@ const mcqOptionSchema = z.object({
   text: z.string(),
 });
 
+const imageSummarySchema = z.object({
+  fileName: z.string(),
+  url: z.string().nullable(),
+  altText: z.string().nullable(),
+  caption: z.string().nullable(),
+});
+
 // ── Shared question schemas ───────────────────────────────────────────────────
 
 // Practice mode gives instant feedback after each local submission, so active questions include answer metadata.
@@ -23,6 +30,8 @@ const practiceQuestionSchema = z.object({
   latexEnabled: z.boolean(),
   difficulty: difficultyEnum,
   options: z.array(mcqOptionSchema).nullable(),
+  imageRef: z.string().nullable(),
+  image: imageSummarySchema.nullable(),
   imageUrl: z.string().nullable(),
   imageUrls: z.array(z.string()),
   correctAnswer: z.string(),
@@ -37,6 +46,8 @@ const practiceResultAnswerSchema = z.object({
   latexEnabled: z.boolean(),
   difficulty: difficultyEnum,
   options: z.array(mcqOptionSchema).nullable(),
+  imageRef: z.string().nullable(),
+  image: imageSummarySchema.nullable(),
   imageUrl: z.string().nullable(),
   imageUrls: z.array(z.string()),
   correctAnswer: z.string(),

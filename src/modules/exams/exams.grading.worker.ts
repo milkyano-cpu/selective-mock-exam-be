@@ -78,6 +78,7 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
       id: true,
       studentId: true,
       status: true,
+      retakeQuestionIds: true,
       exam: {
         select: {
           id: true,
@@ -133,7 +134,14 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
   }
 
   const answerMap = new Map(session.answers.map((a) => [a.questionId, a]));
-  const examQuestions = session.exam.questions;
+
+  // For retake sessions, only grade the retake subset of questions
+  const retakeSet = session.retakeQuestionIds.length > 0
+    ? new Set(session.retakeQuestionIds)
+    : null;
+  const examQuestions = retakeSet
+    ? session.exam.questions.filter((eq) => retakeSet.has(eq.questionId))
+    : session.exam.questions;
   const totalQuestions = examQuestions.length;
   const gradingType = session.exam.gradingType === "MANUAL" ? "MANUAL" : "AUTO";
   const needsDefaultAiRubric = gradingType === "AUTO"

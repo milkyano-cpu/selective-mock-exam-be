@@ -197,6 +197,39 @@ export async function getResourcePreviewFile(prisma: PrismaClient, storage: Obje
   };
 }
 
+export async function getResourceStreamUrl(
+  prisma: PrismaClient,
+  storage: import("../../lib/object-storage.js").ObjectStorage,
+  id: string,
+  user: { role: Role; tier: Tier }
+): Promise<{ url: string; fileName: string; mimeType: string }> {
+  const resource = await prisma.resource.findUnique({
+    where: { id },
+    select: {
+      title: true,
+      fileUrl: true,
+      fileName: true,
+      mimeType: true,
+      allowedTiers: true,
+    },
+  });
+
+  if (!resource) throw createHttpError(404, "Resource not found");
+  assertResourceTierAccess((resource as { allowedTiers: Tier[] }).allowedTiers, user);
+  if (!resource.fileUrl) throw createHttpError(404, "Resource file not found");
+
+  const key = getResourceObjectKey(resource.fileUrl);
+  if (!key) throw createHttpError(404, "Resource file object not found");
+
+  const signedUrl = await storage.getResourceFileSignedUrl(key);
+
+  return {
+    url: signedUrl,
+    fileName: resource.fileName || resource.title || "resource",
+    mimeType: resource.mimeType || "application/octet-stream",
+  };
+}
+
 export async function createResourceRecord(
   prisma: PrismaClient,
   input: CreateResourceInput,

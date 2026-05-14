@@ -34,8 +34,13 @@ describe("Fastify plugins", () => {
       prisma: {
         refreshToken: { deleteMany: refreshDeleteMany },
         passwordResetToken: { deleteMany: resetDeleteMany },
+        image: {
+          findMany: jest.fn(async () => []),
+          delete: jest.fn(),
+        },
       },
-      log: { info: jest.fn() },
+      storage: { deleteImageObject: jest.fn() },
+      log: { info: jest.fn(), error: jest.fn() },
       addHook: jest.fn((_name: string, hook: () => void) => onCloseHooks.push(hook)),
     };
 

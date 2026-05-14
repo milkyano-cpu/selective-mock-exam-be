@@ -45,7 +45,7 @@ async function runBucketInitTask(task: BucketInitTask) {
 async function storagePlugin(fastify: FastifyInstance) {
   await fastify.register(fastifyMultipart, {
     limits: {
-      fileSize: Math.max(env.PROFILE_PHOTO_MAX_SIZE_BYTES, env.RESOURCE_FILE_MAX_SIZE_BYTES),
+      fileSize: Math.max(env.PROFILE_PHOTO_MAX_SIZE_BYTES, env.RESOURCE_FILE_MAX_SIZE_BYTES, env.IMAGE_MAX_SIZE_BYTES),
     },
   });
 
@@ -58,6 +58,7 @@ async function storagePlugin(fastify: FastifyInstance) {
     profilePhotoBucket: env.S3_PROFILE_PHOTO_BUCKET,
     profilePhotoMaxSizeBytes: env.PROFILE_PHOTO_MAX_SIZE_BYTES,
     signedUrlExpiresInSeconds: env.S3_SIGNED_URL_EXPIRES_IN_SECONDS,
+    imageBucket: env.S3_IMAGE_BUCKET,
     questionImageBucket: env.S3_QUESTION_IMAGE_BUCKET,
     bannerImageBucket: env.S3_BANNER_IMAGE_BUCKET,
     bannerImageMaxSizeBytes: env.BANNER_IMAGE_MAX_SIZE_BYTES,
@@ -67,6 +68,7 @@ async function storagePlugin(fastify: FastifyInstance) {
 
   const bucketInitTasks = [
     { name: "profile photo", fn: () => storage.ensureProfilePhotoBucketExists(), bucket: env.S3_PROFILE_PHOTO_BUCKET },
+    { name: "master image", fn: () => storage.ensureImageBucketExists(), bucket: env.S3_IMAGE_BUCKET },
     { name: "question image", fn: () => storage.ensureQuestionImageBucketExists(), bucket: env.S3_QUESTION_IMAGE_BUCKET },
     { name: "banner image", fn: () => storage.ensureBannerImageBucketExists(), bucket: env.S3_BANNER_IMAGE_BUCKET },
     { name: "resource", fn: () => storage.ensureResourceBucketExists(), bucket: env.S3_RESOURCE_BUCKET },

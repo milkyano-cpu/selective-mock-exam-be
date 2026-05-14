@@ -5,6 +5,7 @@ import {
   findAllResources,
   findResourceById,
   getResourcePreviewFile,
+  getResourceStreamUrl,
   createResourceRecord,
   updateResourceRecord,
   deleteResourceRecord,
@@ -74,6 +75,17 @@ export async function previewResourceFileHandler(request: FastifyRequest, reply:
   if (file.size) reply.header("Content-Length", String(file.size));
 
   return reply.send(file.body);
+}
+
+export async function getResourceStreamUrlHandler(request: FastifyRequest, reply: FastifyReply) {
+  const { id } = request.params as { id: string };
+  const accessUser = await getResourceAccessUser(request.server.prisma, request.user);
+  const result = await getResourceStreamUrl(request.server.prisma, request.server.storage, id, accessUser);
+  return reply.send({
+    success: true,
+    message: "Stream URL generated",
+    data: result,
+  });
 }
 
 export async function createResourceHandler(request: FastifyRequest, reply: FastifyReply) {

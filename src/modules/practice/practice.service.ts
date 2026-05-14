@@ -7,6 +7,11 @@ import {
   assertCanUsePracticeTopic,
   getPracticeAccess,
 } from "../../utils/membership.js";
+import {
+  IMAGE_SUMMARY_SELECT,
+  serializeImageSummary,
+  type ImageSummaryRecord,
+} from "../images/images.service.js";
 import type {
   StartPracticeBody,
   StartWeakAreaPracticeBody,
@@ -29,6 +34,8 @@ const PRACTICE_QUESTION_SELECT = {
       latexEnabled: true,
       difficulty: true,
       options: true,
+      imageRef: true,
+      image: { select: IMAGE_SUMMARY_SELECT },
       imageUrl: true,
       imageUrls: true,
       correctAnswer: true,
@@ -47,6 +54,8 @@ const PRACTICE_QUESTION_WITH_ANSWER_SELECT = {
       latexEnabled: true,
       difficulty: true,
       options: true,
+      imageRef: true,
+      image: { select: IMAGE_SUMMARY_SELECT },
       imageUrl: true,
       imageUrls: true,
       correctAnswer: true,
@@ -73,6 +82,8 @@ function formatQuestion(sq: {
     latexEnabled: boolean;
     difficulty: string;
     options: unknown;
+    imageRef: string | null;
+    image: ImageSummaryRecord | null;
     imageUrl: string | null;
     imageUrls: string[];
   };
@@ -84,6 +95,8 @@ function formatQuestion(sq: {
     latexEnabled: sq.question.latexEnabled,
     difficulty: sq.question.difficulty as "EASY" | "MEDIUM" | "HARD",
     options: sq.question.options as Array<{ key: string; text: string }> | null,
+    imageRef: sq.question.imageRef,
+    image: serializeImageSummary(sq.question.image),
     imageUrl: sq.question.imageUrl,
     imageUrls: sq.question.imageUrls,
     correctAnswer: (sq.question as any).correctAnswer as string,
@@ -476,6 +489,8 @@ export async function getPracticeSession(
             latexEnabled: q.latexEnabled,
             difficulty: q.difficulty as "EASY" | "MEDIUM" | "HARD",
             options: q.options as Array<{ key: string; text: string }> | null,
+            imageRef: q.imageRef,
+            image: serializeImageSummary(q.image),
             imageUrl: q.imageUrl,
             imageUrls: q.imageUrls,
             correctAnswer: q.correctAnswer,
@@ -538,6 +553,8 @@ export async function submitPracticeSession(
               latexEnabled: true,
               difficulty: true,
               options: true,
+              imageRef: true,
+              image: { select: IMAGE_SUMMARY_SELECT },
               imageUrl: true,
               imageUrls: true,
               correctAnswer: true,
@@ -662,6 +679,8 @@ export async function submitPracticeSession(
         latexEnabled: q.latexEnabled,
         difficulty: q.difficulty as "EASY" | "MEDIUM" | "HARD",
         options: q.options as Array<{ key: string; text: string }> | null,
+        imageRef: q.imageRef,
+        image: serializeImageSummary(q.image),
         imageUrl: q.imageUrl,
         imageUrls: q.imageUrls,
         correctAnswer: q.correctAnswer,
@@ -847,6 +866,91 @@ export async function createTutorAssignment(
     questionCount: questions.length,
     status: "IN_PROGRESS" as const,
     startedAt: session.startedAt.toISOString(),
+  };
+}
+
+// ── POST /practice/sessions/:sessionId/retake ────────────────────────────────
+
+export async function retakePracticeSession(
+  prisma: PrismaClient,
+  sessionId: string,
+  studentId: string,
+) {
+  const original = await prisma.practiceSession.findUnique({
+    where: { id: sessionId },
+    select: {
+      id: true,
+      studentId: true,
+      topicId: true,
+      sourceType: true,
+      difficulty: true,
+      status: true,
+      sessionQuestions: {
+        orderBy: { order: "asc" },
+        select: { questionId: true, order: true },
+      },
+    },
+  });
+
+  if (!original) throw createHttpError(404, "Practice session not found");
+  if (original.studentId !== studentId)
+    throw createHttpError(403, "You do not have access to this session");
+  if (original.status !== "COMPLETED")
+    throw createHttpError(422, "Only completed sessions can be retaken");
+
+  // Resolve topic / subject metadata
+  let topicMeta: { id: string; name: string; subject: { id: string; name: string } } | null = null;
+  if (original.topicId) {
+    topicMeta = await prisma.topic.findUnique({
+      where: { id: original.topicId },
+      select: { id: true, name: true, subject: { select: { id: true, name: true } } },
+    });
+  }
+
+  const questionIds = original.sessionQuestions.map((sq) => sq.questionId);
+
+  const session = await prisma.$transaction(async (tx) => {
+    const created = await tx.practiceSession.create({
+      data: {
+        studentId,
+        topicId: original.topicId,
+        sourceType: original.sourceType,
+        status: "IN_PROGRESS",
+        difficulty: original.difficulty,
+        questionCount: questionIds.length,
+      },
+      select: { id: true, startedAt: true },
+    });
+
+    await tx.practiceSessionQuestion.createMany({
+      data: questionIds.map((qId, i) => ({
+        sessionId: created.id,
+        questionId: qId,
+        order: i + 1,
+      })),
+    });
+
+    return created;
+  });
+
+  const sessionQuestions = await prisma.practiceSessionQuestion.findMany({
+    where: { sessionId: session.id },
+    orderBy: { order: "asc" },
+    select: PRACTICE_QUESTION_SELECT,
+  });
+
+  return {
+    sessionId: session.id,
+    topicId: topicMeta?.id ?? null,
+    topicName: topicMeta?.name ?? null,
+    subjectId: topicMeta?.subject.id ?? null,
+    subjectName: topicMeta?.subject.name ?? null,
+    sourceType: original.sourceType,
+    difficulty: formatDifficulty(original.difficulty),
+    questionCount: questionIds.length,
+    status: "IN_PROGRESS" as const,
+    startedAt: session.startedAt.toISOString(),
+    questions: sessionQuestions.map(formatQuestion),
   };
 }
 
