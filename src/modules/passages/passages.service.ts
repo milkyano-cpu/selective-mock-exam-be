@@ -13,22 +13,23 @@ import type { CreatePassageBody, ListPassagesQuery, UpdatePassageBody } from "./
 // ── Select shape ──────────────────────────────────────────────────────────────
 
 const PASSAGE_SELECT = {
-  id:            true,
-  externalId:    true,
-  title:         true,
-  content:       true,
-  passageFormat: true,
-  imageUrl:      true,
-  imageRef:      true,
-  image:         { select: IMAGE_SUMMARY_SELECT },
-  passageType:   true,
-  section:       true,
-  difficulty:    true,
-  topic:         true,
-  latexEnabled:  true,
-  notes:         true,
-  createdAt:     true,
-  updatedAt:     true,
+  id:                   true,
+  externalId:           true,
+  title:                true,
+  content:              true,
+  passageFormat:        true,
+  imageUrl:             true,
+  imageRef:             true,
+  image:                { select: IMAGE_SUMMARY_SELECT },
+  passageType:          true,
+  imageDisplayPosition: true,
+  section:              true,
+  difficulty:           true,
+  topic:                true,
+  latexEnabled:         true,
+  notes:                true,
+  createdAt:            true,
+  updatedAt:            true,
 } as const;
 
 const RELATED_QUESTION_SELECT = {
@@ -84,17 +85,18 @@ export async function createPassage(prisma: PrismaClient, body: CreatePassageBod
   const created = await prisma.passage.create({
     data: {
       externalId,
-      title:         body.title ?? null,
-      content:       body.content ?? null,
-      passageFormat: body.passageFormat ?? null,
-      imageUrl:      body.imageUrl ?? null,
-      imageRef:      imageRef || null,
-      passageType:   body.passageType ?? null,
-      section:       body.section ?? null,
-      difficulty:    body.difficulty ?? null,
-      topic:         body.topic ?? null,
-      latexEnabled:  body.latexEnabled ?? false,
-      notes:         body.notes ?? null,
+      title:                body.title ?? null,
+      content:              body.content ?? null,
+      passageFormat:        body.passageFormat ?? null,
+      imageUrl:             body.imageUrl ?? null,
+      imageRef:             imageRef || null,
+      passageType:          body.passageType ?? null,
+      imageDisplayPosition: body.imageDisplayPosition ?? null,
+      section:              body.section ?? null,
+      difficulty:           body.difficulty ?? null,
+      topic:                body.topic ?? null,
+      latexEnabled:         body.latexEnabled ?? false,
+      notes:                body.notes ?? null,
     },
     select: { id: true },
   });
@@ -162,18 +164,19 @@ export async function updatePassage(prisma: PrismaClient, id: string, body: Upda
   await prisma.passage.update({
     where: { id },
     data: {
-      ...(body.externalId    !== undefined && { externalId:    body.externalId }),
-      ...(body.title         !== undefined && { title:         body.title }),
-      ...(body.content       !== undefined && { content:       body.content }),
-      ...(body.passageFormat !== undefined && { passageFormat: body.passageFormat }),
-      ...(body.imageUrl      !== undefined && { imageUrl:      body.imageUrl }),
-      ...(body.imageRef      !== undefined && { imageRef:      nextImageRef || null }),
-      ...(body.passageType   !== undefined && { passageType:   body.passageType }),
-      ...(body.section       !== undefined && { section:       body.section }),
-      ...(body.difficulty    !== undefined && { difficulty:    body.difficulty }),
-      ...(body.topic         !== undefined && { topic:         body.topic }),
-      ...(body.latexEnabled  !== undefined && { latexEnabled:  body.latexEnabled }),
-      ...(body.notes         !== undefined && { notes:         body.notes }),
+      ...(body.externalId           !== undefined && { externalId:           body.externalId }),
+      ...(body.title                !== undefined && { title:                body.title }),
+      ...(body.content              !== undefined && { content:              body.content }),
+      ...(body.passageFormat        !== undefined && { passageFormat:        body.passageFormat }),
+      ...(body.imageUrl             !== undefined && { imageUrl:             body.imageUrl }),
+      ...(body.imageRef             !== undefined && { imageRef:             nextImageRef || null }),
+      ...(body.passageType          !== undefined && { passageType:          body.passageType }),
+      ...(body.imageDisplayPosition !== undefined && { imageDisplayPosition: body.imageDisplayPosition }),
+      ...(body.section              !== undefined && { section:              body.section }),
+      ...(body.difficulty           !== undefined && { difficulty:           body.difficulty }),
+      ...(body.topic                !== undefined && { topic:                body.topic }),
+      ...(body.latexEnabled         !== undefined && { latexEnabled:         body.latexEnabled }),
+      ...(body.notes                !== undefined && { notes:                body.notes }),
     },
   });
 
@@ -201,27 +204,26 @@ export async function deletePassage(prisma: PrismaClient, id: string) {
 type CsvRow = Record<string, string | undefined>;
 
 const PASSAGE_TYPE_MAP: Record<string, "TEXT" | "IMAGE" | "TEXT_IMAGE"> = {
-  text:       "TEXT",
-  TEXT:       "TEXT",
-  image:      "IMAGE",
-  IMAGE:      "IMAGE",
+  text:          "TEXT",
+  image:         "IMAGE",
   "text+image":  "TEXT_IMAGE",
-  "TEXT+IMAGE":  "TEXT_IMAGE",
   textimage:     "TEXT_IMAGE",
-  TEXTIMAGE:     "TEXT_IMAGE",
   text_image:    "TEXT_IMAGE",
-  TEXT_IMAGE:    "TEXT_IMAGE",
   "text image":  "TEXT_IMAGE",
-  "TEXT IMAGE":  "TEXT_IMAGE",
 };
 
 const DIFFICULTY_MAP: Record<string, string> = {
   easy:   "EASY",
-  EASY:   "EASY",
   medium: "MEDIUM",
-  MEDIUM: "MEDIUM",
   hard:   "HARD",
-  HARD:   "HARD",
+};
+
+const IMAGE_DISPLAY_POSITION_MAP: Record<string, "ABOVE" | "MIDDLE" | "BELOW" | "BESIDE" | "MAIN"> = {
+  above:  "ABOVE",
+  middle: "MIDDLE",
+  below:  "BELOW",
+  beside: "BESIDE",
+  main:   "MAIN",
 };
 
 function parseBool(value: string | undefined): boolean {
@@ -294,8 +296,9 @@ export async function importPassages(
     const imageUrl      = raw["PassageImageURL"]?.trim() || null;
     const imageRef      = normalizeImageFileName(raw["PassageImageRef"]?.trim() || null) || null;
     const imageAltText  = raw["ImageAltText"]?.trim() || null;
-    const imageCaption  = raw["ImagesCaption"]?.trim() || null;
+    const imageCaption  = raw["ImageCaption"]?.trim() || null;
     const rawType       = raw["PassageType"]?.trim() ?? "";
+    const rawPosition   = raw["ImageDisplayPosition"]?.trim() ?? "";
     const section       = raw["Section"]?.trim() || null;
     const rawDiff       = raw["Difficulty"]?.trim() ?? "";
     const topic         = raw["Topic"]?.trim() || null;
@@ -308,16 +311,17 @@ export async function importPassages(
       rowErrors.push("PassageTitle is required");
     }
 
-    if (!content) {
-      rowErrors.push("PassageText is required");
-    }
-
-    const passageType = rawType ? PASSAGE_TYPE_MAP[rawType] : undefined;
+    const passageType = rawType ? PASSAGE_TYPE_MAP[rawType.toLowerCase()] : undefined;
     if (rawType && !passageType) {
       rowErrors.push(`PassageType "${rawType}" must be Text, Image, or Text+Image`);
     }
 
-    const difficulty = rawDiff ? (DIFFICULTY_MAP[rawDiff] ?? null) : null;
+    const imageDisplayPosition = rawPosition ? IMAGE_DISPLAY_POSITION_MAP[rawPosition.toLowerCase()] : undefined;
+    if (rawPosition && !imageDisplayPosition) {
+      rowErrors.push(`ImageDisplayPosition "${rawPosition}" must be Above, Middle, Below, Beside, or Main`);
+    }
+
+    const difficulty = rawDiff ? (DIFFICULTY_MAP[rawDiff.toLowerCase()] ?? null) : null;
     if (rawDiff && !difficulty) {
       rowErrors.push(`Difficulty "${rawDiff}" must be Easy, Medium, or Hard`);
     }
@@ -336,6 +340,7 @@ export async function importPassages(
       imageUrl,
       imageRef,
       passageType: passageType ?? null,
+      imageDisplayPosition: imageDisplayPosition ?? null,
       section,
       difficulty,
       topic,

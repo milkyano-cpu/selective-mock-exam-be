@@ -28,13 +28,28 @@ type SessionAnswerReviewStatus = "NOT_APPLICABLE" | "AI_GRADED" | "PENDING_REVIE
 type ExamGradingType = "AUTO" | "MANUAL";
 const MANUAL_SCORE_CORRECT_THRESHOLD = 50;
 
+interface RankingThresholds {
+  thresholdSuperior: number;
+  thresholdAboveAverage: number;
+  thresholdHighAverage: number;
+  thresholdAverage: number;
+}
+
+const DEFAULT_THRESHOLDS: RankingThresholds = {
+  thresholdSuperior: 72,
+  thresholdAboveAverage: 60,
+  thresholdHighAverage: 50,
+  thresholdAverage: 40,
+};
+
 function calculateRankingLevel(
-  score: number
+  score: number,
+  t: RankingThresholds = DEFAULT_THRESHOLDS
 ): "SUPERIOR" | "ABOVE_AVERAGE" | "HIGH_AVERAGE" | "AVERAGE" | "LOW_AVERAGE" {
-  if (score >= 90) return "SUPERIOR";
-  if (score >= 75) return "ABOVE_AVERAGE";
-  if (score >= 60) return "HIGH_AVERAGE";
-  if (score >= 45) return "AVERAGE";
+  if (score >= t.thresholdSuperior) return "SUPERIOR";
+  if (score >= t.thresholdAboveAverage) return "ABOVE_AVERAGE";
+  if (score >= t.thresholdHighAverage) return "HIGH_AVERAGE";
+  if (score >= t.thresholdAverage) return "AVERAGE";
   return "LOW_AVERAGE";
 }
 
@@ -223,6 +238,7 @@ function evaluateSessionOutcome(params: {
       aiFeedback?: unknown;
     }
   >;
+  thresholds?: RankingThresholds;
 }) {
   let pendingReviewCount = 0;
   let correctCount = 0;
@@ -297,7 +313,7 @@ function evaluateSessionOutcome(params: {
   return {
     status: "GRADED" as const,
     finalScore,
-    rankingLevel: calculateRankingLevel(finalScore),
+    rankingLevel: calculateRankingLevel(finalScore, params.thresholds),
     pendingReviewCount,
     correctCount,
   };
@@ -315,6 +331,10 @@ const EXAM_SELECT = {
   createdBy: true,
   createdAt: true,
   updatedAt: true,
+  thresholdSuperior: true,
+  thresholdAboveAverage: true,
+  thresholdHighAverage: true,
+  thresholdAverage: true,
   creator: { select: { fullName: true } },
   _count: { select: { questions: true, sessions: true } },
 } as const;
@@ -331,6 +351,10 @@ function serializeExam(exam: {
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
+  thresholdSuperior: number;
+  thresholdAboveAverage: number;
+  thresholdHighAverage: number;
+  thresholdAverage: number;
   creator: { fullName: string };
   _count: { questions: number; sessions?: number };
 }) {
@@ -347,6 +371,10 @@ function serializeExam(exam: {
     hasSessions: (exam._count.sessions ?? 0) > 0,
     createdAt: exam.createdAt.toISOString(),
     updatedAt: exam.updatedAt.toISOString(),
+    thresholdSuperior: exam.thresholdSuperior,
+    thresholdAboveAverage: exam.thresholdAboveAverage,
+    thresholdHighAverage: exam.thresholdHighAverage,
+    thresholdAverage: exam.thresholdAverage,
   };
 }
 
@@ -364,6 +392,10 @@ export async function createExamRecord(
       durationMinutes: body.durationMinutes,
       gradingType: body.gradingType,
       createdBy,
+      ...(body.thresholdSuperior !== undefined && { thresholdSuperior: body.thresholdSuperior }),
+      ...(body.thresholdAboveAverage !== undefined && { thresholdAboveAverage: body.thresholdAboveAverage }),
+      ...(body.thresholdHighAverage !== undefined && { thresholdHighAverage: body.thresholdHighAverage }),
+      ...(body.thresholdAverage !== undefined && { thresholdAverage: body.thresholdAverage }),
     },
     select: EXAM_SELECT,
   });
@@ -439,6 +471,10 @@ export async function updateExamRecord(
       ...(body.examType !== undefined && { examType: body.examType }),
       ...(body.durationMinutes !== undefined && { durationMinutes: body.durationMinutes }),
       ...(body.gradingType !== undefined && { gradingType: body.gradingType }),
+      ...(body.thresholdSuperior !== undefined && { thresholdSuperior: body.thresholdSuperior }),
+      ...(body.thresholdAboveAverage !== undefined && { thresholdAboveAverage: body.thresholdAboveAverage }),
+      ...(body.thresholdHighAverage !== undefined && { thresholdHighAverage: body.thresholdHighAverage }),
+      ...(body.thresholdAverage !== undefined && { thresholdAverage: body.thresholdAverage }),
     },
     select: EXAM_SELECT,
   });
@@ -730,6 +766,7 @@ export async function startOrResumeSession(
                   title: true,
                   content: true,
                   imageRef: true,
+                  imageDisplayPosition: true,
                   image: { select: IMAGE_SUMMARY_SELECT },
                 },
               },
@@ -885,6 +922,7 @@ export async function startRetakeSession(
                   title: true,
                   content: true,
                   imageRef: true,
+                  imageDisplayPosition: true,
                   image: { select: IMAGE_SUMMARY_SELECT },
                 },
               },
@@ -1778,6 +1816,18 @@ export async function getReviewSession(
                   correctAnswer: true,
                   explanation: true,
                   maxMarks: true,
+                  imageRef: true,
+                  image: { select: IMAGE_SUMMARY_SELECT },
+                  passage: {
+                    select: {
+                      id: true,
+                      title: true,
+                      content: true,
+                      imageRef: true,
+                      imageDisplayPosition: true,
+                      image: { select: IMAGE_SUMMARY_SELECT },
+                    },
+                  },
                 },
               },
             },
@@ -1834,6 +1884,8 @@ export async function getReviewSession(
       const studentAnswer = answer?.studentAnswer ?? "";
       const aiFeedback = serializeAiFeedback(answer?.aiFeedback ?? null);
 
+      const passage = eq.question.passage ?? null;
+
       return {
         answerId: answer?.id ?? null,
         questionId: eq.questionId,
@@ -1845,6 +1897,18 @@ export async function getReviewSession(
         correctAnswer: eq.question.correctAnswer,
         explanation: eq.question.explanation ?? null,
         maxMarks: normalizeQuestionMaxMarks(eq.question.maxMarks),
+        imageRef: eq.question.imageRef,
+        image: serializeImageSummary(eq.question.image ?? null),
+        passage: passage
+          ? {
+              id: passage.id,
+              title: passage.title,
+              content: passage.content,
+              imageRef: passage.imageRef,
+              imageDisplayPosition: passage.imageDisplayPosition,
+              image: serializeImageSummary(passage.image),
+            }
+          : null,
         studentAnswer,
         timeSpentSeconds: answer?.timeSpentSeconds ?? 0,
         isCorrect: answer?.isCorrect ?? false,
@@ -1878,6 +1942,10 @@ export async function submitManualGrades(
       exam: {
         select: {
           gradingType: true,
+          thresholdSuperior: true,
+          thresholdAboveAverage: true,
+          thresholdHighAverage: true,
+          thresholdAverage: true,
           questions: {
             select: {
               questionId: true,
@@ -2039,6 +2107,12 @@ export async function submitManualGrades(
           },
         ])
       ),
+      thresholds: {
+        thresholdSuperior: session.exam.thresholdSuperior,
+        thresholdAboveAverage: session.exam.thresholdAboveAverage,
+        thresholdHighAverage: session.exam.thresholdHighAverage,
+        thresholdAverage: session.exam.thresholdAverage,
+      },
     });
 
     await tx.examSession.update({

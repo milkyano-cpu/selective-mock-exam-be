@@ -17,8 +17,8 @@ export interface UploadQuestionImageInput {
 }
 
 export interface UploadImageInput {
-  imageId: string;
-  filename: string;
+  imageType: "QUESTION" | "PASSAGE";
+  key: string;
   body: Buffer;
   contentType: string;
   contentLength: number;
@@ -55,8 +55,10 @@ export interface ObjectStorage {
   getProfilePhotoSignedUrl(key: string): Promise<string>;
   deleteProfilePhoto(key: string): Promise<void>;
   ensureImageBucketExists(): Promise<void>;
+  ensurePassageBucketExists(): Promise<void>;
   uploadImage(input: UploadImageInput): Promise<string>;
   deleteImageObject(key: string): Promise<void>;
+  deleteObject(bucket: string, key: string): Promise<void>;
   ensureQuestionImageBucketExists(): Promise<void>;
   uploadQuestionImage(input: UploadQuestionImageInput): Promise<string>;
   ensureBannerImageBucketExists(): Promise<void>;
@@ -81,6 +83,7 @@ interface CreateObjectStorageOptions {
   signedUrlExpiresInSeconds: number;
   imageBucket: string;
   questionImageBucket: string;
+  passageBucket: string;
   bannerImageBucket: string;
   bannerImageMaxSizeBytes: number;
   resourceBucket: string;
@@ -185,21 +188,38 @@ export function createObjectStorage(
         buildPublicReadBucketPolicy(options.imageBucket)
       );
     },
+    async ensurePassageBucketExists() {
+      const bucketExists = await client.bucketExists(options.passageBucket);
+
+      if (!bucketExists) {
+        await client.makeBucket(options.passageBucket, options.region);
+      }
+
+      await client.setBucketPolicy(
+        options.passageBucket,
+        buildPublicReadBucketPolicy(options.passageBucket)
+      );
+    },
     async uploadImage(input) {
-      const key = `${input.imageId}/${Date.now()}-${input.filename}`;
+      const bucket = input.imageType === "PASSAGE"
+        ? options.passageBucket
+        : options.questionImageBucket;
 
       await client.putObject(
-        options.imageBucket,
-        key,
+        bucket,
+        input.key,
         input.body,
         input.contentLength,
         { "Content-Type": input.contentType }
       );
 
-      return `${endpointBase}/${options.imageBucket}/${key}`;
+      return `${endpointBase}/${bucket}/${input.key}`;
     },
     async deleteImageObject(key) {
       await client.removeObject(options.imageBucket, key);
+    },
+    async deleteObject(bucket, key) {
+      await client.removeObject(bucket, key);
     },
     async ensureQuestionImageBucketExists() {
       const bucketExists = await client.bucketExists(options.questionImageBucket);

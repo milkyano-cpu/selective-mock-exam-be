@@ -24,6 +24,15 @@ import type {
 
 // ── SELECT shapes ─────────────────────────────────────────────────────────────
 
+const PASSAGE_SELECT_FOR_SESSION = {
+  id: true,
+  title: true,
+  content: true,
+  imageRef: true,
+  imageDisplayPosition: true,
+  image: { select: IMAGE_SUMMARY_SELECT },
+} as const;
+
 const PRACTICE_QUESTION_SELECT = {
   questionId: true,
   order: true,
@@ -40,6 +49,7 @@ const PRACTICE_QUESTION_SELECT = {
       imageUrls: true,
       correctAnswer: true,
       explanation: true,
+      passage: { select: PASSAGE_SELECT_FOR_SESSION },
     },
   },
 } as const;
@@ -62,6 +72,7 @@ const PRACTICE_QUESTION_WITH_ANSWER_SELECT = {
       explanation: true,
       topicId: true,
       subjectId: true,
+      passage: { select: PASSAGE_SELECT_FOR_SESSION },
     },
   },
 } as const;
@@ -86,8 +97,17 @@ function formatQuestion(sq: {
     image: ImageSummaryRecord | null;
     imageUrl: string | null;
     imageUrls: string[];
+    passage?: {
+      id: string;
+      title: string | null;
+      content: string | null;
+      imageRef: string | null;
+      imageDisplayPosition: string | null;
+      image: ImageSummaryRecord | null;
+    } | null;
   };
 }) {
+  const passage = sq.question.passage ?? null;
   return {
     questionId: sq.questionId,
     order: sq.order,
@@ -101,6 +121,16 @@ function formatQuestion(sq: {
     imageUrls: sq.question.imageUrls,
     correctAnswer: (sq.question as any).correctAnswer as string,
     explanation: (sq.question as any).explanation as string | null,
+    passage: passage
+      ? {
+          id: passage.id,
+          title: passage.title,
+          content: passage.content,
+          imageRef: passage.imageRef,
+          imageDisplayPosition: passage.imageDisplayPosition,
+          image: serializeImageSummary(passage.image),
+        }
+      : null,
   };
 }
 
@@ -482,6 +512,7 @@ export async function getPracticeSession(
             correctAnswer: string;
             explanation: string | null;
           };
+          const passage = (q as any).passage ?? null;
           return {
             questionId: sq.questionId,
             order: sq.order,
@@ -495,6 +526,16 @@ export async function getPracticeSession(
             imageUrls: q.imageUrls,
             correctAnswer: q.correctAnswer,
             explanation: q.explanation,
+            passage: passage
+              ? {
+                  id: passage.id,
+                  title: passage.title,
+                  content: passage.content,
+                  imageRef: passage.imageRef,
+                  imageDisplayPosition: passage.imageDisplayPosition,
+                  image: serializeImageSummary(passage.image),
+                }
+              : null,
             studentAnswer: ans?.studentAnswer ?? "",
             isCorrect: ans?.isCorrect ?? false,
             timeSpentSeconds: ans?.timeSpentSeconds ?? 0,
@@ -672,6 +713,7 @@ export async function submitPracticeSession(
         correctAnswer: string;
         explanation: string | null;
       };
+      const passage = (q as any).passage ?? null;
       return {
         questionId: sq.questionId,
         order: sq.order,
@@ -685,6 +727,16 @@ export async function submitPracticeSession(
         imageUrls: q.imageUrls,
         correctAnswer: q.correctAnswer,
         explanation: q.explanation,
+        passage: passage
+          ? {
+              id: passage.id,
+              title: passage.title,
+              content: passage.content,
+              imageRef: passage.imageRef,
+              imageDisplayPosition: passage.imageDisplayPosition,
+              image: serializeImageSummary(passage.image),
+            }
+          : null,
         studentAnswer: submitted?.studentAnswer ?? "",
         isCorrect: graded?.isCorrect ?? false,
         timeSpentSeconds: submitted?.timeSpentSeconds ?? 0,

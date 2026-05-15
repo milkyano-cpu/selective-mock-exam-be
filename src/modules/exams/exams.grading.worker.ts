@@ -52,13 +52,28 @@ function toAiRubricInput(aiRubric: {
   return aiRubric;
 }
 
+interface RankingThresholds {
+  thresholdSuperior: number;
+  thresholdAboveAverage: number;
+  thresholdHighAverage: number;
+  thresholdAverage: number;
+}
+
+const DEFAULT_THRESHOLDS: RankingThresholds = {
+  thresholdSuperior: 72,
+  thresholdAboveAverage: 60,
+  thresholdHighAverage: 50,
+  thresholdAverage: 40,
+};
+
 function calculateRankingLevel(
-  score: number
+  score: number,
+  t: RankingThresholds = DEFAULT_THRESHOLDS
 ): "SUPERIOR" | "ABOVE_AVERAGE" | "HIGH_AVERAGE" | "AVERAGE" | "LOW_AVERAGE" {
-  if (score >= 90) return "SUPERIOR";
-  if (score >= 75) return "ABOVE_AVERAGE";
-  if (score >= 60) return "HIGH_AVERAGE";
-  if (score >= 45) return "AVERAGE";
+  if (score >= t.thresholdSuperior) return "SUPERIOR";
+  if (score >= t.thresholdAboveAverage) return "ABOVE_AVERAGE";
+  if (score >= t.thresholdHighAverage) return "HIGH_AVERAGE";
+  if (score >= t.thresholdAverage) return "AVERAGE";
   return "LOW_AVERAGE";
 }
 
@@ -85,6 +100,10 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
           title: true,
           createdBy: true,
           gradingType: true,
+          thresholdSuperior: true,
+          thresholdAboveAverage: true,
+          thresholdHighAverage: true,
+          thresholdAverage: true,
           questions: {
             select: {
               questionId: true,
@@ -312,7 +331,12 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
 
   if (gradingType === "AUTO" && pendingReviewCount === 0) {
     finalScore = totalPossibleMarks > 0 ? (totalAwardedMarks / totalPossibleMarks) * 100 : 0;
-    rankingLevel = calculateRankingLevel(finalScore);
+    rankingLevel = calculateRankingLevel(finalScore, {
+      thresholdSuperior: session.exam.thresholdSuperior,
+      thresholdAboveAverage: session.exam.thresholdAboveAverage,
+      thresholdHighAverage: session.exam.thresholdHighAverage,
+      thresholdAverage: session.exam.thresholdAverage,
+    });
   }
 
   // ── Build topic correctness map (includes AI-graded essays) ──────────────

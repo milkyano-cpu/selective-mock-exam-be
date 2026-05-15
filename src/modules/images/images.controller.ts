@@ -4,7 +4,6 @@ import type { ListImagesQuery, UpdateImageBody } from "./images.schema.js";
 import {
   deleteImage,
   listImages,
-  normalizeImageFileName,
   updateImageMetadata,
   uploadImage,
   uploadImageFileByUuid,
@@ -37,6 +36,8 @@ export async function listImagesHandler(request: FastifyRequest, reply: FastifyR
   });
 }
 
+const VALID_IMAGE_TYPES = new Set(["QUESTION", "PASSAGE"]);
+
 export async function createImageHandler(request: FastifyRequest, reply: FastifyReply) {
   const data = await request.file();
   if (!data) throw createHttpError(400, "No file uploaded");
@@ -45,12 +46,17 @@ export async function createImageHandler(request: FastifyRequest, reply: Fastify
 
   const buffer = await data.toBuffer();
   const fields = (data as { fields?: MultipartFields }).fields;
-  const fileName = normalizeImageFileName(getMultipartField(fields, "fileName") || getMultipartField(fields, "file_name") || data.filename);
+  const rawImageType = (getMultipartField(fields, "imageType") || getMultipartField(fields, "image_type") || "").toUpperCase();
+  if (!VALID_IMAGE_TYPES.has(rawImageType)) {
+    throw createHttpError(400, "imageType is required and must be QUESTION or PASSAGE");
+  }
+  const imageType = rawImageType as "QUESTION" | "PASSAGE";
   const altText = getMultipartField(fields, "altText") || getMultipartField(fields, "alt_text") || null;
   const caption = getMultipartField(fields, "caption") || null;
 
   const image = await uploadImage(request.server.prisma, request.server.storage, {
-    fileName,
+    imageType,
+    originalFileName: data.filename,
     altText,
     caption,
     body: buffer,

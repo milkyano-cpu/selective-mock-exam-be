@@ -20,10 +20,10 @@ function periodStartDate(period: LeaderboardQuery["period"]): Date | null {
 }
 
 function deriveRankingLevel(avg: number): string {
-  if (avg >= 90) return "SUPERIOR";
-  if (avg >= 75) return "ABOVE_AVERAGE";
-  if (avg >= 60) return "HIGH_AVERAGE";
-  if (avg >= 45) return "AVERAGE";
+  if (avg >= 72) return "SUPERIOR";
+  if (avg >= 60) return "ABOVE_AVERAGE";
+  if (avg >= 50) return "HIGH_AVERAGE";
+  if (avg >= 40) return "AVERAGE";
   return "LOW_AVERAGE";
 }
 

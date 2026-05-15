@@ -1,9 +1,13 @@
 import { z } from "zod";
 import { buildJsonSchemas } from "../../utils/build-schemas.js";
 
+const imageTypeEnum = z.enum(["QUESTION", "PASSAGE"]);
+
 const imageSchema = z.object({
   uuid: z.string().uuid(),
   fileName: z.string(),
+  imageType: imageTypeEnum,
+  refId: z.string().nullable(),
   altText: z.string().nullable(),
   caption: z.string().nullable(),
   url: z.string().nullable(),

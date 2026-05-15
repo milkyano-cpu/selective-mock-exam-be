@@ -59,11 +59,17 @@ const aiFeedbackSchema = z.object({
 
 // ── Exam CRUD schemas ─────────────────────────────────────────────────────────
 
+const rankingThresholdSchema = z.number().int().min(0).max(100);
+
 const createExamBodySchema = z.object({
   title: z.string().trim().min(1).max(300),
   examType: examTypeEnum,
   durationMinutes: z.number().int().min(1).max(600),
   gradingType: gradingTypeEnum,
+  thresholdSuperior: rankingThresholdSchema.optional(),
+  thresholdAboveAverage: rankingThresholdSchema.optional(),
+  thresholdHighAverage: rankingThresholdSchema.optional(),
+  thresholdAverage: rankingThresholdSchema.optional(),
 });
 
 const updateExamBodySchema = z
@@ -72,6 +78,10 @@ const updateExamBodySchema = z
     examType: examTypeEnum.optional(),
     durationMinutes: z.number().int().min(1).max(600).optional(),
     gradingType: gradingTypeEnum.optional(),
+    thresholdSuperior: rankingThresholdSchema.optional(),
+    thresholdAboveAverage: rankingThresholdSchema.optional(),
+    thresholdHighAverage: rankingThresholdSchema.optional(),
+    thresholdAverage: rankingThresholdSchema.optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: "At least one field must be provided",
@@ -90,6 +100,10 @@ const examItemSchema = z.object({
   hasSessions: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  thresholdSuperior: z.number(),
+  thresholdAboveAverage: z.number(),
+  thresholdHighAverage: z.number(),
+  thresholdAverage: z.number(),
 });
 
 const publishExamBodySchema = z.object({

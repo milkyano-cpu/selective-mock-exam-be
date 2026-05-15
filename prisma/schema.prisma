@@ -215,22 +215,31 @@ enum PassageType {
   TEXT_IMAGE
 }
 
+enum ImageDisplayPosition {
+  ABOVE
+  MIDDLE
+  BELOW
+  BESIDE
+  MAIN
+}
+
 model Passage {
-  id            String       @id @default(uuid())
-  externalId    String?      @unique @map("external_id")
-  title         String?
-  content       String?
-  passageFormat String?      @map("passage_format")
-  imageUrl      String?      @map("image_url")
-  imageRef      String?      @map("image_ref")
-  passageType   PassageType? @map("passage_type")
-  section       String?
-  difficulty    String?
-  topic         String?
-  latexEnabled  Boolean      @default(false) @map("latex_enabled")
-  notes         String?
-  createdAt     DateTime     @default(now()) @map("created_at")
-  updatedAt     DateTime     @updatedAt @map("updated_at")
+  id                    String                @id @default(uuid())
+  externalId            String?               @unique @map("external_id")
+  title                 String?
+  content               String?
+  passageFormat         String?               @map("passage_format")
+  imageUrl              String?               @map("image_url")
+  imageRef              String?               @map("image_ref")
+  passageType           PassageType?          @map("passage_type")
+  imageDisplayPosition  ImageDisplayPosition? @map("image_display_position")
+  section               String?
+  difficulty            String?
+  topic                 String?
+  latexEnabled          Boolean               @default(false) @map("latex_enabled")
+  notes                 String?
+  createdAt             DateTime              @default(now()) @map("created_at")
+  updatedAt             DateTime              @updatedAt @map("updated_at")
 
   questions Question[]
   image     Image?     @relation("PassageImage", fields: [imageRef], references: [fileName], onDelete: SetNull, onUpdate: Cascade)
@@ -395,6 +404,11 @@ model Exam {
   createdBy       String      @map("created_by")
   createdAt       DateTime    @default(now()) @map("created_at")
   updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  thresholdSuperior     Int @default(72) @map("threshold_superior")
+  thresholdAboveAverage Int @default(60) @map("threshold_above_average")
+  thresholdHighAverage  Int @default(50) @map("threshold_high_average")
+  thresholdAverage      Int @default(40) @map("threshold_average")
 
   creator   User           @relation("AdminExams", fields: [createdBy], references: [id])
   questions ExamQuestion[]
@@ -923,9 +937,16 @@ model Banner {
   @@map("banners")
 }
 
+enum ImageType {
+  QUESTION
+  PASSAGE
+}
+
 model Image {
   uuid        String    @id @default(uuid())
   fileName    String    @unique @map("file_name")
+  imageType   ImageType @default(QUESTION) @map("image_type")
+  refId       String?   @unique @map("ref_id")
   altText     String?   @map("alt_text")
   caption     String?
   url         String?

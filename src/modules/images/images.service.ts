@@ -7,6 +7,8 @@ import type { ListImagesQuery, UpdateImageBody } from "./images.schema.js";
 const IMAGE_SELECT = {
   uuid: true,
   fileName: true,
+  imageType: true,
+  refId: true,
   altText: true,
   caption: true,
   url: true,
@@ -50,6 +52,19 @@ function serializeImage(image: ImageRecord) {
   };
 }
 
+const IMAGE_TYPE_FOLDER: Record<string, string> = {
+  QUESTION: "questions",
+  PASSAGE: "passages",
+};
+
+function generateRefId() {
+  return crypto.randomUUID();
+}
+
+function extractBaseName(filePath: string) {
+  return filePath.split("/").filter(Boolean).pop() ?? filePath;
+}
+
 function oneMonthFrom(date = new Date()) {
   const next = new Date(date);
   next.setMonth(next.getMonth() + 1);
@@ -66,28 +81,40 @@ export function normalizeImageFileName(value?: string | null) {
 
   const withoutQuery = trimmed.split(/[?#]/)[0] ?? "";
   const normalizedPath = withoutQuery.replace(/\\/g, "/");
-  return normalizedPath.split("/").filter(Boolean).pop()?.trim() ?? "";
+  return normalizedPath.replace(/^\/+|\/+$/g, "").trim();
 }
 
 function storageSafeFileName(fileName: string) {
   return fileName.replace(/[^A-Za-z0-9._-]/g, "_");
 }
 
-function getImageObjectKeyFromUrl(url: string | null) {
+const KNOWN_IMAGE_BUCKETS = () => [
+  env.S3_IMAGE_BUCKET,
+  env.S3_QUESTION_IMAGE_BUCKET,
+  env.S3_PASSAGE_BUCKET,
+];
+
+function parseBucketAndKey(url: string | null): { bucket: string; key: string } | null {
   if (!url) return null;
+
+  const buckets = KNOWN_IMAGE_BUCKETS();
 
   try {
     const parsed = new URL(url);
     const parts = parsed.pathname.split("/").filter(Boolean);
-    const bucketIndex = parts.findIndex((part) => part === env.S3_IMAGE_BUCKET);
-    if (bucketIndex >= 0) {
-      return parts.slice(bucketIndex + 1).map(decodeURIComponent).join("/");
+    for (const bucket of buckets) {
+      const idx = parts.findIndex((part) => part === bucket);
+      if (idx >= 0) {
+        return { bucket, key: parts.slice(idx + 1).map(decodeURIComponent).join("/") };
+      }
     }
   } catch {
     const normalized = url.replace(/^\/+/, "");
-    const bucketPrefix = `${env.S3_IMAGE_BUCKET}/`;
-    if (normalized.startsWith(bucketPrefix)) {
-      return normalized.slice(bucketPrefix.length);
+    for (const bucket of buckets) {
+      const prefix = `${bucket}/`;
+      if (normalized.startsWith(prefix)) {
+        return { bucket, key: normalized.slice(prefix.length) };
+      }
     }
   }
 
@@ -95,10 +122,9 @@ function getImageObjectKeyFromUrl(url: string | null) {
 }
 
 async function deleteImageObjectByUrl(storage: ObjectStorage, url: string | null) {
-  const key = getImageObjectKeyFromUrl(url);
-  if (key) {
-    await storage.deleteImageObject(key);
-  }
+  const parsed = parseBucketAndKey(url);
+  if (!parsed) return;
+  await storage.deleteObject(parsed.bucket, parsed.key);
 }
 
 async function getImageUsageCounts(prisma: PrismaClient, fileName: string) {
@@ -249,7 +275,8 @@ export async function uploadImage(
   prisma: PrismaClient,
   storage: ObjectStorage,
   input: {
-    fileName: string;
+    imageType: "QUESTION" | "PASSAGE";
+    originalFileName: string;
     altText?: string | null;
     caption?: string | null;
     body: Buffer;
@@ -257,46 +284,39 @@ export async function uploadImage(
     contentLength: number;
   }
 ) {
-  const fileName = normalizeImageFileName(input.fileName);
-  if (!fileName) throw createHttpError(400, "file_name is required");
+  const baseName = extractBaseName(input.originalFileName);
+  if (!baseName) throw createHttpError(400, "File name is required");
 
-  let image = await prisma.image.findUnique({ where: { fileName }, select: IMAGE_SELECT });
-  if (!image) {
-    image = await prisma.image.create({
-      data: {
-        fileName,
-        altText: input.altText?.trim() || null,
-        caption: input.caption?.trim() || null,
-        expiredDate: oneMonthFrom(),
-      },
-      select: IMAGE_SELECT,
-    });
-  }
+  const refId = generateRefId();
+  const folder = IMAGE_TYPE_FOLDER[input.imageType];
+  const fileName = `${folder}/${refId}/${baseName}`;
+  const s3Key = `${refId}/${storageSafeFileName(baseName)}`;
+
+  const image = await prisma.image.create({
+    data: {
+      fileName,
+      imageType: input.imageType,
+      refId,
+      altText: input.altText?.trim() || null,
+      caption: input.caption?.trim() || null,
+      expiredDate: oneMonthFrom(),
+    },
+    select: IMAGE_SELECT,
+  });
 
   const url = await storage.uploadImage({
-    imageId: image.uuid,
-    filename: storageSafeFileName(fileName),
+    imageType: input.imageType,
+    key: s3Key,
     body: input.body,
     contentType: input.contentType,
     contentLength: input.contentLength,
   });
 
-  const { passageCount, questionCount } = await getImageUsageCounts(prisma, fileName);
-  const oldUrl = image.url;
   const updated = await prisma.image.update({
     where: { uuid: image.uuid },
-    data: {
-      url,
-      expiredDate: passageCount + questionCount > 0 ? null : oneMonthFrom(),
-      ...(input.altText !== undefined && { altText: input.altText?.trim() || null }),
-      ...(input.caption !== undefined && { caption: input.caption?.trim() || null }),
-    },
+    data: { url },
     select: IMAGE_SELECT,
   });
-
-  if (oldUrl && oldUrl !== url) {
-    await deleteImageObjectByUrl(storage, oldUrl).catch(() => undefined);
-  }
 
   return serializeImage(updated);
 }
@@ -315,19 +335,41 @@ export async function uploadImageFileByUuid(
   const image = await prisma.image.findUnique({ where: { uuid }, select: IMAGE_SELECT });
   if (!image) throw createHttpError(404, "Image not found");
 
-  const uploadedName = normalizeImageFileName(input.filename);
-  if (uploadedName !== image.fileName) {
-    throw createHttpError(400, `Uploaded file name must match "${image.fileName}"`);
+  const uploadedBaseName = extractBaseName(input.filename);
+  const storedBaseName = extractBaseName(image.fileName);
+  if (uploadedBaseName !== storedBaseName) {
+    throw createHttpError(400, `Uploaded file name must match "${storedBaseName}"`);
   }
 
-  return uploadImage(prisma, storage, {
-    fileName: image.fileName,
-    altText: image.altText,
-    caption: image.caption,
+  const parts = image.fileName.split("/");
+  const s3Key = parts.slice(1).map((seg, i, arr) =>
+    i === arr.length - 1 ? storageSafeFileName(seg) : seg
+  ).join("/");
+
+  const url = await storage.uploadImage({
+    imageType: image.imageType,
+    key: s3Key,
     body: input.body,
     contentType: input.contentType,
     contentLength: input.contentLength,
   });
+
+  const { passageCount, questionCount } = await getImageUsageCounts(prisma, image.fileName);
+  const oldUrl = image.url;
+  const updated = await prisma.image.update({
+    where: { uuid: image.uuid },
+    data: {
+      url,
+      expiredDate: passageCount + questionCount > 0 ? null : oneMonthFrom(),
+    },
+    select: IMAGE_SELECT,
+  });
+
+  if (oldUrl && oldUrl !== url) {
+    await deleteImageObjectByUrl(storage, oldUrl).catch(() => undefined);
+  }
+
+  return serializeImage(updated);
 }
 
 export async function deleteImage(prisma: PrismaClient, storage: ObjectStorage, uuid: string) {

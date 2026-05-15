@@ -42,6 +42,7 @@ const envSchema = z.object({
     .min(1),
   S3_IMAGE_BUCKET: z.string().default("images"),
   S3_QUESTION_IMAGE_BUCKET: z.string().default("questions"),
+  S3_PASSAGE_BUCKET: z.string().default("passages"),
   S3_BANNER_IMAGE_BUCKET: z.string().default("banners"),
   S3_RESOURCE_BUCKET: z.string().default("resources"),
   S3_INVOICE_BUCKET: z.string().default("invoices"),
