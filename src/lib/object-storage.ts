@@ -47,6 +47,21 @@ export interface UploadInvoicePdfInput {
   contentLength: number;
 }
 
+export interface UploadCsvTemplateInput {
+  key: string;
+  body: Buffer;
+  contentType: string;
+  contentLength: number;
+  downloadFileName: string;
+}
+
+export interface StoredObjectInfo {
+  size: number;
+  lastModified?: Date;
+  etag?: string;
+  contentType?: string;
+}
+
 export interface ObjectStorage {
   profilePhotoMaxSizeBytes: number;
   signedUrlExpiresInSeconds: number;
@@ -70,6 +85,10 @@ export interface ObjectStorage {
   ensureInvoiceBucketExists(): Promise<void>;
   uploadInvoicePdf(input: UploadInvoicePdfInput): Promise<string>;
   getInvoicePdfSignedUrl(key: string): Promise<string>;
+  ensureCsvTemplateBucketExists(): Promise<void>;
+  uploadCsvTemplate(input: UploadCsvTemplateInput): Promise<void>;
+  getCsvTemplateSignedUrl(key: string): Promise<string>;
+  getCsvTemplateObjectInfo(key: string): Promise<StoredObjectInfo>;
 }
 
 interface CreateObjectStorageOptions {
@@ -88,6 +107,7 @@ interface CreateObjectStorageOptions {
   bannerImageMaxSizeBytes: number;
   resourceBucket: string;
   invoiceBucket: string;
+  csvTemplateBucket: string;
 }
 
 function parseEndpointUrl(endpointUrl: string) {
@@ -346,6 +366,48 @@ export function createObjectStorage(
         key,
         options.signedUrlExpiresInSeconds
       );
+    },
+    async ensureCsvTemplateBucketExists() {
+      const bucketExists = await client.bucketExists(options.csvTemplateBucket);
+
+      if (!bucketExists) {
+        await client.makeBucket(options.csvTemplateBucket, options.region);
+      }
+
+      await client.setBucketPolicy(
+        options.csvTemplateBucket,
+        buildPrivateBucketPolicy(options.csvTemplateBucket)
+      );
+    },
+    async uploadCsvTemplate(input) {
+      await client.putObject(
+        options.csvTemplateBucket,
+        input.key,
+        input.body,
+        input.contentLength,
+        {
+          "Content-Type": input.contentType,
+          "Content-Disposition": `attachment; filename="${input.downloadFileName}"`,
+        }
+      );
+    },
+    async getCsvTemplateSignedUrl(key) {
+      return client.presignedGetObject(
+        options.csvTemplateBucket,
+        key,
+        options.signedUrlExpiresInSeconds
+      );
+    },
+    async getCsvTemplateObjectInfo(key) {
+      const stat = await client.statObject(options.csvTemplateBucket, key);
+      const info: StoredObjectInfo = { size: stat.size };
+      const contentType = stat.metaData?.["content-type"];
+
+      if (stat.lastModified) info.lastModified = stat.lastModified;
+      if (stat.etag) info.etag = stat.etag;
+      if (contentType) info.contentType = contentType;
+
+      return info;
     },
   };
 }

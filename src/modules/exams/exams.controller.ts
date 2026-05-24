@@ -258,7 +258,7 @@ export async function submitManualGradesHandler(
 ) {
   const { sessionId } = request.params as { sessionId: string };
   const body = request.body as SubmitManualGradesBody;
-  const data = await submitManualGrades(request.server.prisma, sessionId, body);
+  const data = await submitManualGrades(request.server.prisma, sessionId, body, request.user.sub);
   return reply.send({ success: true, message: "Manual grades saved", data });
 }
 

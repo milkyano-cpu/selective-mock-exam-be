@@ -14,7 +14,6 @@ import {
   rejectQuestion,
   bulkImportQuestions,
   resolveAndSavePendingRows,
-  uploadQuestionImage,
   getNextQuestionId,
 } from "./questions.service.js";
 
@@ -215,36 +214,3 @@ export async function resolveImportHandler(request: FastifyRequest, reply: Fasti
   });
 }
 
-export async function uploadQuestionImageHandler(request: FastifyRequest, reply: FastifyReply) {
-  const { id } = request.params as { id: string };
-
-  const data = await request.file();
-  if (!data) throw createHttpError(400, "No file uploaded");
-
-  const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-  if (!allowedTypes.includes(data.mimetype)) {
-    throw createHttpError(400, "Only JPEG, PNG, WebP, and GIF images are allowed");
-  }
-
-  const buffer = await data.toBuffer();
-  const ext = data.filename.split(".").pop() ?? "jpg";
-  const safeFilename = `image-${Date.now()}.${ext}`;
-
-  const imageUrl = await request.server.storage.uploadQuestionImage({
-    questionId: id,
-    filename: safeFilename,
-    body: buffer,
-    contentType: data.mimetype,
-    contentLength: buffer.length,
-  });
-
-  const question = await uploadQuestionImage(request.server.prisma, id, imageUrl);
-
-  request.log.info({ questionId: id, uploadedBy: request.user.sub, imageUrl }, "Question image uploaded");
-
-  return reply.send({
-    success: true,
-    message: "Image uploaded successfully",
-    data: question,
-  });
-}

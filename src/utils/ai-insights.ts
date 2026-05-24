@@ -27,8 +27,12 @@ export async function generateSessionInsightsWithAi(
   input: SessionAiInsightInput,
 ): Promise<SessionAiInsightResult | null> {
   if (!env.ANTHROPIC_API_KEY) return null;
+  if (!env.ANTHROPIC_INSIGHTS_MODEL) {
+    throw new Error("ANTHROPIC_INSIGHTS_MODEL is not configured (set it in .env)");
+  }
 
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+  const insightsModel = env.ANTHROPIC_INSIGHTS_MODEL;
 
   // Group by topic to find weak spots
   const topicStats: Record<string, { total: number; correct: number; time: number }> = {};
@@ -72,7 +76,7 @@ Respond strictly with a JSON object (no markdown formatting, no extra text):
 
   try {
     const message = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: insightsModel,
       max_tokens: 1024,
       messages: [{ role: "user", content: prompt }],
     });

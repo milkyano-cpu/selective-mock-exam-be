@@ -40,11 +40,13 @@ const pluginMocks = {
   flashcardRoutes: jest.fn(),
   forumRoutes: jest.fn(),
   aiRubricRoutes: jest.fn(),
+  aiRubricWritingTypeRoutes: jest.fn(),
   pathwayRoutes: jest.fn(),
   practiceRoutes: jest.fn(),
   billingRoutes: jest.fn(),
   resourceRoutes: jest.fn(),
   studentCalendarRoutes: jest.fn(),
+  csvTemplateRoutes: jest.fn(),
 };
 
 const mappedError = Object.assign(new Error("Mapped conflict"), { statusCode: 409 });
@@ -127,6 +129,9 @@ jest.unstable_mockModule("../../src/modules/forum/forum.route.js", () => ({
 jest.unstable_mockModule("../../src/modules/ai-rubrics/ai-rubrics.route.js", () => ({
   aiRubricRoutes: pluginMocks.aiRubricRoutes,
 }));
+jest.unstable_mockModule("../../src/modules/ai-rubric-writing-types/ai-rubric-writing-types.route.js", () => ({
+  aiRubricWritingTypeRoutes: pluginMocks.aiRubricWritingTypeRoutes,
+}));
 jest.unstable_mockModule("../../src/modules/pathways/pathways.route.js", () => ({
   pathwayRoutes: pluginMocks.pathwayRoutes,
 }));
@@ -141,6 +146,9 @@ jest.unstable_mockModule("../../src/modules/resources/resources.route.js", () =>
 }));
 jest.unstable_mockModule("../../src/modules/student-calendar/student-calendar.route.js", () => ({
   studentCalendarRoutes: pluginMocks.studentCalendarRoutes,
+}));
+jest.unstable_mockModule("../../src/modules/csv-templates/csv-templates.route.js", () => ({
+  csvTemplateRoutes: pluginMocks.csvTemplateRoutes,
 }));
 jest.unstable_mockModule("../../src/modules/auth/auth.schema.js", () => ({
   authSchemas: [{ $id: "auth" }],
@@ -196,6 +204,9 @@ jest.unstable_mockModule("../../src/modules/forum/forum.schema.js", () => ({
 jest.unstable_mockModule("../../src/modules/ai-rubrics/ai-rubrics.schema.js", () => ({
   aiRubricSchemas: [{ $id: "aiRubric" }],
 }));
+jest.unstable_mockModule("../../src/modules/ai-rubric-writing-types/ai-rubric-writing-types.schema.js", () => ({
+  aiRubricWritingTypeSchemas: [{ $id: "aiRubricWritingType" }],
+}));
 jest.unstable_mockModule("../../src/modules/pathways/pathways.schema.js", () => ({
   pathwaySchemas: [{ $id: "pathway" }],
 }));
@@ -210,6 +221,9 @@ jest.unstable_mockModule("../../src/modules/resources/resources.schema.js", () =
 }));
 jest.unstable_mockModule("../../src/modules/student-calendar/student-calendar.schema.js", () => ({
   studentCalendarSchemas: [{ $id: "studentCalendar" }],
+}));
+jest.unstable_mockModule("../../src/modules/csv-templates/csv-templates.schema.js", () => ({
+  csvTemplateSchemas: [{ $id: "csvTemplate" }],
 }));
 
 const { buildApp } = await import("../../src/app.js");
@@ -247,7 +261,7 @@ describe("app builder", () => {
     expect(options.trustProxy).toBe(true);
     expect(options.genReqId({ headers: { "x-trace-id": "trace-1" } })).toBe("trace-1");
     expect(options.genReqId({ headers: {} })).toEqual(expect.any(String));
-    expect(fakeApp.addSchema).toHaveBeenCalledTimes(24);
+    expect(fakeApp.addSchema).toHaveBeenCalledTimes(26);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.securityPlugin);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.storagePlugin);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.profilePhotoCleanupPlugin);
@@ -262,9 +276,11 @@ describe("app builder", () => {
     expect(pluginMocks.imageRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/images" });
     expect(pluginMocks.questionRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/questions" });
     expect(pluginMocks.webhookRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/webhooks" });
+    expect(pluginMocks.aiRubricWritingTypeRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/ai-rubric-writing-types" });
     expect(pluginMocks.billingRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/billing" });
     expect(pluginMocks.resourceRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/resources" });
     expect(pluginMocks.studentCalendarRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/student-calendar" });
+    expect(pluginMocks.csvTemplateRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/csv-templates" });
     expect(fakeApp.setErrorHandler).toHaveBeenCalledWith(expect.any(Function));
     expect(fakeApp.setNotFoundHandler).toHaveBeenCalledWith(expect.any(Function));
   });

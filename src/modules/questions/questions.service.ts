@@ -4,12 +4,12 @@ import { parse } from "csv-parse/sync";
 import { createHttpError } from "../../utils/http-error.js";
 import {
   findMissingImageRefs,
-  IMAGE_SUMMARY_SELECT,
+  loadImageSummariesByFileNames,
   markImagesLinked,
   normalizeImageFileName,
   refreshImageExpirations,
-  serializeImageSummary,
 } from "../images/images.service.js";
+import { assertWritingTypeAllowed } from "../ai-rubric-writing-types/ai-rubric-writing-types.service.js";
 import type { CreateQuestionBody, ListQuestionsQuery, RejectQuestionBody, ResolveImportBody, UnresolvedRowData, UnresolvedRowItem, UpdateQuestionBody } from "./questions.schema.js";
 
 // ── Select shape ──────────────────────────────────────────────────────────────
@@ -26,14 +26,14 @@ const QUESTION_SELECT = {
   type: true,
   difficulty: true,
   questionText: true,
+  writingType: true,
+  promptText: true,
+  markingGuide: true,
   options: true,
   correctAnswer: true,
   explanation: true,
   timeLimitSeconds: true,
-  imageUrl: true,
-  imageRef: true,
-  image: { select: IMAGE_SUMMARY_SELECT },
-  imageUrls: true,
+  imageRefs: true,
   subtopics: true,
   notes: true,
   latexEnabled: true,
@@ -80,15 +80,34 @@ type BulkImportResult = {
 
 type QuestionRecord = Prisma.QuestionGetPayload<{ select: typeof QUESTION_SELECT }>;
 
+export type SerializedQuestion = ReturnType<typeof serializeQuestion> & {
+  images: Array<{ fileName: string; url: string | null; altText: string | null; caption: string | null }>;
+};
+
 function serializeQuestion(question: QuestionRecord) {
-  const { subject, topic, aiRubric, image, ...rest } = question;
+  const { subject, topic, aiRubric, ...rest } = question;
 
   return {
     ...rest,
     subjectName: subject.name,
     topicName: topic.name,
     aiRubric,
-    image: serializeImageSummary(image),
+  };
+}
+
+async function attachImages<T extends { imageRefs: string[] }>(prisma: PrismaClient, q: T) {
+  const summaries = await loadImageSummariesByFileNames(prisma, q.imageRefs);
+  return {
+    ...q,
+    images: q.imageRefs.map((fileName) => {
+      const found = summaries.get(fileName);
+      return {
+        fileName,
+        url: found?.url ?? null,
+        altText: found?.altText ?? null,
+        caption: found?.caption ?? null,
+      };
+    }),
   };
 }
 
@@ -98,20 +117,6 @@ function splitImageRefs(value?: string | null): string[] {
     .split("|")
     .map((item) => item.trim())
     .filter(Boolean);
-}
-
-function isUploadedImageRef(value: string) {
-  return value.startsWith("http://") || value.startsWith("https://");
-}
-
-function hasPendingImageRef(question: { imageUrl: string | null; imageUrls: string[]; imageRef?: string | null; image?: { url: string | null } | null }) {
-  if (question.imageRef && !question.image?.url) return true;
-
-  const refs = question.imageUrls.length > 0
-    ? question.imageUrls
-    : splitImageRefs(question.imageUrl);
-
-  return refs.some((ref) => !isUploadedImageRef(ref));
 }
 
 // Matches UnresolvedRowData in schema — kept in sync manually
@@ -131,10 +136,12 @@ type QuestionIdSeed = {
 // Matches the updated CSV template columns
 type CsvRow = {
   QuestionID?: string; // kept for backward-compat but ignored — IDs are auto-generated
-  TestName: string;
   Section: string;
   QuestionNumber: string;
   QuestionText: string;
+  WritingType?: string;
+  PromptText?: string;
+  MarkingGuide?: string;
   OptionA: string;
   OptionB: string;
   OptionC: string;
@@ -167,7 +174,7 @@ async function findQuestionById(prisma: PrismaClient, id: string) {
     select: QUESTION_SELECT,
   });
   if (!question) throw createHttpError(404, "Question not found");
-  return serializeQuestion(question);
+  return attachImages(prisma, serializeQuestion(question));
 }
 
 async function assertActiveAiRubricExists(prisma: PrismaClient, aiRubricId: string) {
@@ -177,6 +184,41 @@ async function assertActiveAiRubricExists(prisma: PrismaClient, aiRubricId: stri
   });
   if (!aiRubric) throw createHttpError(400, `AIRubricID "${aiRubricId}" was not found or is inactive`);
   return aiRubric;
+}
+
+function normalizeQuestionMarkingType(rawType: string | undefined | null, questionType: "MCQ" | "ESSAY"): "AUTO" | "AI" | "MANUAL" {
+  const normalized = rawType?.trim().toLowerCase();
+  if (questionType === "MCQ") return "AUTO";
+  if (!normalized) return "AI";
+  if (normalized === "ai" || normalized === "ai_rubric" || normalized === "airubric") return "AI";
+  if (normalized === "manual") return "MANUAL";
+  return "AI";
+}
+
+function normalizeWritingType(value: string | null | undefined) {
+  const normalized = value?.trim().toUpperCase();
+  if (!normalized) return null;
+  return normalized;
+}
+
+async function assertPassageAllowedForQuestion(
+  prisma: PrismaClient,
+  params: { type: "MCQ" | "ESSAY"; passageId?: string | null; subjectId: string },
+) {
+  if (!params.passageId) return;
+  if (params.type === "ESSAY") {
+    throw createHttpError(400, "ESSAY questions must not use a passage");
+  }
+
+  const subject = await prisma.subject.findUnique({
+    where: { id: params.subjectId },
+    select: { name: true },
+  });
+  if (!subject) throw createHttpError(404, "Subject not found");
+
+  if (!subject.name.toLowerCase().includes("reading")) {
+    throw createHttpError(400, "Passages can only be linked to Reading Comprehension MCQ questions");
+  }
 }
 
 async function findActiveAiRubricScores(prisma: PrismaClient, aiRubricIds: string[]) {
@@ -269,10 +311,6 @@ function normalizeImportKey(value: string) {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-function examImportKey(testName: string, subjectId: string, questionNumber: number) {
-  return `${normalizeImportKey(testName)}${SEP}${subjectId}${SEP}${questionNumber}`;
-}
-
 function questionBankImportKey(row: Pick<InsertableRow, "resolvedSubjectId" | "resolvedTopicId" | "type" | "questionText">) {
   return `${row.resolvedSubjectId}${SEP}${row.resolvedTopicId}${SEP}${row.type}${SEP}${normalizeImportKey(row.questionText)}`;
 }
@@ -284,64 +322,14 @@ async function findExistingImportDuplicateRows(
 ) {
   const duplicateRowNumbers = new Set<number>();
 
-  const examRows = rows.filter((row) => row.testName && row.questionNumber != null);
-  // Normalize testNames for case-insensitive lookup; keep a map back to original DB titles
-  const rawTestNames = [...new Set(examRows.map((row) => row.testName!).filter(Boolean))];
-
-  if (rawTestNames.length > 0) {
-    const existingExams = await prisma.exam.findMany({
-      where: { createdBy: creatorId, title: { in: rawTestNames, mode: "insensitive" } },
-      select: { id: true, title: true },
-    });
-
-    const examIdToTitle = new Map(existingExams.map((exam) => [exam.id, exam.title]));
-    const examIds = existingExams.map((exam) => exam.id);
-    const questionNumbers = [...new Set(
-      examRows.map((row) => row.questionNumber).filter((value): value is number => value != null)
-    )];
-
-    if (examIds.length > 0 && questionNumbers.length > 0) {
-      const existingExamQuestions = await prisma.examQuestion.findMany({
-        where: {
-          examId: { in: examIds },
-          order: { in: questionNumbers },
-        },
-        select: {
-          examId: true,
-          order: true,
-          question: {
-            select: { subjectId: true },
-          },
-        },
-      });
-
-      const existingExamKeys = new Set(
-        existingExamQuestions.flatMap((examQuestion) => {
-          const title = examIdToTitle.get(examQuestion.examId);
-          return title ? [examImportKey(title, examQuestion.question.subjectId, examQuestion.order)] : [];
-        }),
-      );
-
-      for (const row of examRows) {
-        if (row.testName && row.questionNumber != null && existingExamKeys.has(examImportKey(row.testName, row.resolvedSubjectId, row.questionNumber))) {
-          duplicateRowNumbers.add(row.rowNumber);
-        }
-      }
-    }
-  }
-
-  const standaloneRows = rows.filter((row) => !row.testName);
-  if (standaloneRows.length > 0) {
-    // Collect the distinct topicIds from the import to scope the DB query
-    const topicIds = [...new Set(standaloneRows.map((row) => row.resolvedTopicId))];
-
-    // Query by tutorId + topicId only — no wide OR clause, filter questionText in memory
+  if (rows.length > 0) {
+    const topicIds = [...new Set(rows.map((row) => row.resolvedTopicId))];
     const existingQuestions = await prisma.question.findMany({
       where: { tutorId: creatorId, topicId: { in: topicIds } },
       select: { subjectId: true, topicId: true, type: true, questionText: true },
     });
 
-    const existingStandaloneKeys = new Set(
+    const existingKeys = new Set(
       existingQuestions.map((question) => questionBankImportKey({
         resolvedSubjectId: question.subjectId,
         resolvedTopicId: question.topicId,
@@ -350,8 +338,8 @@ async function findExistingImportDuplicateRows(
       })),
     );
 
-    for (const row of standaloneRows) {
-      if (existingStandaloneKeys.has(questionBankImportKey(row))) {
+    for (const row of rows) {
+      if (existingKeys.has(questionBankImportKey(row))) {
         duplicateRowNumbers.add(row.rowNumber);
       }
     }
@@ -375,9 +363,7 @@ async function dropExistingImportDuplicates(
 
     errors?.push({
       row: row.rowNumber,
-      reason: row.testName && row.questionNumber != null
-        ? `Question already exists for TestName "${row.testName}", Section "${row.subjectName}", QuestionNumber ${row.questionNumber}`
-        : `Question already exists for Section "${row.subjectName}", Topic "${row.topicName}", and the same QuestionText`,
+      reason: `Question already exists for Section "${row.subjectName}", Topic "${row.topicName}", type "${row.type}", and the same QuestionText`,
     });
     rows.splice(i, 1);
   }
@@ -397,12 +383,42 @@ export async function createQuestion(
 ) {
   const latexEnabled = body.latexEnabled ?? false;
   const generatedQuestionId = body.questionId?.trim() || (await generateNextQuestionId(prisma, body.subjectId)).questionId;
-  let maxMarks = body.maxMarks ?? (body.type === "ESSAY" ? 20 : 1);
-  const imageRef = normalizeImageFileName(body.imageRef);
-  if (imageRef) {
-    const missingRefs = await findMissingImageRefs(prisma, [imageRef]);
+  // MCQ maxMarks is locked to 1 per design. ESSAY default 20, but can be set
+  // freely (or derived from aiRubric.totalMaxScore later in this function).
+  let maxMarks = body.type === "MCQ" ? 1 : (body.maxMarks ?? 20);
+  if (body.type === "MCQ" && body.maxMarks !== undefined && body.maxMarks !== 1) {
+    throw createHttpError(400, "MCQ questions must have maxMarks = 1");
+  }
+  const imageRefs = (body.imageRefs ?? []).map(normalizeImageFileName).filter(Boolean);
+  const markingType = normalizeQuestionMarkingType(body.markingType, body.type);
+  const writingType = normalizeWritingType(body.writingType);
+
+  await assertPassageAllowedForQuestion(prisma, {
+    type: body.type,
+    passageId: body.passageId ?? null,
+    subjectId: body.subjectId,
+  });
+
+  if (body.type === "ESSAY") {
+    if (!writingType) throw createHttpError(400, "WritingType is required for ESSAY questions");
+    await assertWritingTypeAllowed(prisma, writingType);
+    if (!body.promptText?.trim()) throw createHttpError(400, "PromptText is required for ESSAY questions");
+    if (markingType !== "AI" && markingType !== "MANUAL") {
+      throw createHttpError(400, "ESSAY questions must use AI or MANUAL marking");
+    }
+    if (markingType === "AI" && !body.aiRubricId) {
+      throw createHttpError(400, "AIRubricID is required for ESSAY questions graded by AI");
+    }
+  }
+
+  if (body.type === "MCQ" && markingType !== "AUTO") {
+    throw createHttpError(400, "MCQ questions must use AUTO marking");
+  }
+
+  if (imageRefs.length > 0) {
+    const missingRefs = await findMissingImageRefs(prisma, imageRefs);
     if (missingRefs.length > 0) {
-      throw createHttpError(400, `ImageRef "${imageRef}" was not found in master images`);
+      throw createHttpError(400, `ImageRef(s) not found in master images: ${missingRefs.join(", ")}`);
     }
   }
 
@@ -424,16 +440,17 @@ export async function createQuestion(
       type: body.type,
       difficulty: body.difficulty,
       questionText: body.questionText,
+      writingType: body.type === "ESSAY" ? writingType : null,
+      promptText: body.type === "ESSAY" ? (body.promptText?.trim() ?? null) : null,
+      markingGuide: body.type === "ESSAY" ? (body.markingGuide?.trim() || null) : null,
       latexEnabled,
-      markingType: body.markingType ?? (body.type === "ESSAY" ? "AI_RUBRIC" : "AUTO"),
+      markingType,
       maxMarks,
       options: body.options ?? Prisma.DbNull,
-      correctAnswer: body.correctAnswer ?? "",
+      correctAnswer: body.type === "MCQ" ? (body.correctAnswer ?? "") : "",
       explanation: body.explanation ?? null,
       timeLimitSeconds: body.timeLimitSeconds ?? null,
-      imageRef: imageRef || null,
-      imageUrl: body.imageUrls?.[0] ?? body.imageUrl ?? null,
-      imageUrls: body.imageUrls ?? splitImageRefs(body.imageUrl),
+      imageRefs,
       subtopics: body.subtopics ?? [],
       notes: body.notes ?? null,
       adaptiveTags: body.adaptiveTags ?? [],
@@ -445,11 +462,11 @@ export async function createQuestion(
     select: QUESTION_SELECT,
   });
 
-  if (imageRef) {
-    await markImagesLinked(prisma, [imageRef]);
+  if (imageRefs.length > 0) {
+    await markImagesLinked(prisma, imageRefs);
   }
 
-  return serializeQuestion(question);
+  return attachImages(prisma, serializeQuestion(question));
 }
 
 export async function listQuestions(prisma: PrismaClient, query: ListQuestionsQuery) {
@@ -470,9 +487,7 @@ export async function listQuestions(prisma: PrismaClient, query: ListQuestionsQu
   if (difficulty) where.difficulty = difficulty;
   if (status) where.status = status;
   if (hasImage !== undefined) {
-    where.OR = hasImage
-      ? [{ imageRef: { not: null } }, { imageUrl: { not: null } }, { imageUrls: { isEmpty: false } }]
-      : [{ imageRef: null }, { imageUrl: null }, { imageUrls: { isEmpty: true } }];
+    where.imageRefs = hasImage ? { isEmpty: false } : { isEmpty: true };
   }
 
   const [data, total] = await Promise.all([
@@ -487,7 +502,7 @@ export async function listQuestions(prisma: PrismaClient, query: ListQuestionsQu
   ]);
 
   return {
-    data: data.map(serializeQuestion),
+    data: await Promise.all(data.map((q) => attachImages(prisma, serializeQuestion(q)))),
     meta: {
       page,
       limit,
@@ -513,11 +528,32 @@ export async function updateQuestion(
   }
 
   const effectiveType = body.type ?? existing.type;
-  const effectiveMarkingType = body.markingType ?? existing.markingType;
+  const effectiveMarkingType = normalizeQuestionMarkingType(body.markingType ?? existing.markingType, effectiveType);
   const effectiveAiRubricId = body.aiRubricId !== undefined ? body.aiRubricId : existing.aiRubricId;
+  const effectiveSubjectId = body.subjectId ?? existing.subjectId;
+  const effectivePassageId = body.passageId !== undefined ? body.passageId : existing.passageId;
+  const effectiveWritingType = body.writingType !== undefined
+    ? normalizeWritingType(body.writingType)
+    : normalizeWritingType(existing.writingType);
+  const effectivePromptText = body.promptText !== undefined ? body.promptText : existing.promptText;
+
+  await assertPassageAllowedForQuestion(prisma, {
+    type: effectiveType,
+    passageId: effectivePassageId,
+    subjectId: effectiveSubjectId,
+  });
 
   if (effectiveType === "MCQ" && body.aiRubricId) {
     throw createHttpError(400, "MCQ questions must not use a aiRubric");
+  }
+
+  if (effectiveType === "ESSAY") {
+    if (!effectiveWritingType) throw createHttpError(400, "WritingType is required for ESSAY questions");
+    await assertWritingTypeAllowed(prisma, effectiveWritingType);
+    if (!effectivePromptText?.trim()) throw createHttpError(400, "PromptText is required for ESSAY questions");
+    if (effectiveMarkingType === "AI" && !effectiveAiRubricId) {
+      throw createHttpError(400, "AIRubricID is required for ESSAY questions graded by AI");
+    }
   }
 
   if (effectiveType === "ESSAY" && effectiveAiRubricId) {
@@ -529,12 +565,12 @@ export async function updateQuestion(
     if (body.aiRubricId !== undefined && body.maxMarks === undefined) body.maxMarks = aiRubric.totalMaxScore;
   }
 
-  if (effectiveType === "MCQ" && effectiveMarkingType === "AI_RUBRIC") {
+  if (effectiveType === "MCQ" && effectiveMarkingType !== "AUTO") {
     throw createHttpError(400, "MCQ questions must use AUTO marking");
   }
 
   if (effectiveType === "ESSAY" && effectiveMarkingType === "AUTO") {
-    throw createHttpError(400, "ESSAY questions must use AI_RUBRIC marking");
+    throw createHttpError(400, "ESSAY questions must use AI or MANUAL marking");
   }
 
   if (body.type === "MCQ" && existing.type !== "MCQ") {
@@ -551,29 +587,25 @@ export async function updateQuestion(
   if (body.type !== undefined) updateData.type = body.type;
   if (body.difficulty !== undefined) updateData.difficulty = body.difficulty;
   if (body.questionText !== undefined) updateData.questionText = body.questionText;
+  if (body.writingType !== undefined) updateData.writingType = body.writingType ? normalizeWritingType(body.writingType) : null;
+  if (body.promptText !== undefined) updateData.promptText = body.promptText?.trim() || null;
+  if (body.markingGuide !== undefined) updateData.markingGuide = body.markingGuide?.trim() || null;
   if (body.latexEnabled !== undefined) {
     updateData.latexEnabled = body.latexEnabled;
   }
-  if (body.correctAnswer !== undefined) updateData.correctAnswer = body.correctAnswer;
+  if (body.correctAnswer !== undefined) updateData.correctAnswer = effectiveType === "MCQ" ? body.correctAnswer : "";
   if (body.explanation !== undefined) updateData.explanation = body.explanation;
   if (body.timeLimitSeconds !== undefined) updateData.timeLimitSeconds = body.timeLimitSeconds;
-  const nextImageRef = body.imageRef !== undefined
-    ? normalizeImageFileName(body.imageRef)
-    : undefined;
-  if (nextImageRef) {
-    const missingRefs = await findMissingImageRefs(prisma, [nextImageRef]);
-    if (missingRefs.length > 0) {
-      throw createHttpError(400, `ImageRef "${nextImageRef}" was not found in master images`);
+  let nextImageRefs: string[] | undefined;
+  if (body.imageRefs !== undefined) {
+    nextImageRefs = body.imageRefs.map(normalizeImageFileName).filter(Boolean);
+    if (nextImageRefs.length > 0) {
+      const missingRefs = await findMissingImageRefs(prisma, nextImageRefs);
+      if (missingRefs.length > 0) {
+        throw createHttpError(400, `ImageRef(s) not found in master images: ${missingRefs.join(", ")}`);
+      }
     }
-  }
-  if (body.imageRef !== undefined) updateData.imageRef = nextImageRef || null;
-  if (body.imageUrl !== undefined) {
-    updateData.imageUrl = body.imageUrl;
-    updateData.imageUrls = splitImageRefs(body.imageUrl);
-  }
-  if (body.imageUrls !== undefined) {
-    updateData.imageUrls = body.imageUrls;
-    updateData.imageUrl = body.imageUrls[0] ?? null;
+    updateData.imageRefs = nextImageRefs;
   }
   if (body.subtopics !== undefined) updateData.subtopics = body.subtopics;
   if (body.notes !== undefined) updateData.notes = body.notes;
@@ -581,14 +613,28 @@ export async function updateQuestion(
   if (body.skillTags !== undefined) updateData.skillTags = body.skillTags;
   if (body.questionId !== undefined) updateData.questionId = body.questionId;
   if (body.questionNumber !== undefined) updateData.questionNumber = body.questionNumber;
-  if (body.markingType !== undefined) updateData.markingType = body.markingType;
-  if (body.maxMarks !== undefined) updateData.maxMarks = body.maxMarks;
-  if (body.type !== undefined && body.markingType === undefined) updateData.markingType = body.type === "ESSAY" ? "AI_RUBRIC" : "AUTO";
+  if (body.markingType !== undefined) updateData.markingType = effectiveMarkingType;
+  if (body.maxMarks !== undefined) {
+    if (effectiveType === "MCQ" && body.maxMarks !== 1) {
+      throw createHttpError(400, "MCQ questions must have maxMarks = 1");
+    }
+    updateData.maxMarks = body.maxMarks;
+  }
+  if (body.type !== undefined && body.markingType === undefined) updateData.markingType = body.type === "ESSAY" ? "AI" : "AUTO";
   if (body.type !== undefined && body.maxMarks === undefined) updateData.maxMarks = body.type === "ESSAY" ? 20 : 1;
-  if (effectiveType === "MCQ") updateData.aiRubricId = null;
+  // If type changed to MCQ, force maxMarks = 1
+  if (body.type === "MCQ") updateData.maxMarks = 1;
+  if (effectiveType === "MCQ") {
+    updateData.aiRubricId = null;
+    updateData.writingType = null;
+    updateData.promptText = null;
+    updateData.markingGuide = null;
+  }
 
   if (effectiveType === "ESSAY") {
     updateData.options = Prisma.DbNull;
+    updateData.correctAnswer = "";
+    updateData.passageId = null;
   } else if (body.options !== undefined) {
     updateData.options = body.options;
   }
@@ -599,11 +645,13 @@ export async function updateQuestion(
     select: QUESTION_SELECT,
   });
 
-  if (body.imageRef !== undefined) {
-    await refreshImageExpirations(prisma, [existing.imageRef, nextImageRef]);
+  if (nextImageRefs !== undefined) {
+    const removed = existing.imageRefs.filter((r) => !nextImageRefs!.includes(r));
+    await refreshImageExpirations(prisma, removed);
+    await markImagesLinked(prisma, nextImageRefs);
   }
 
-  return serializeQuestion(question);
+  return attachImages(prisma, serializeQuestion(question));
 }
 
 export async function deleteQuestion(prisma: PrismaClient, id: string, role: string) {
@@ -612,7 +660,7 @@ export async function deleteQuestion(prisma: PrismaClient, id: string, role: str
     select: {
       id: true,
       status: true,
-      imageRef: true,
+      imageRefs: true,
       _count: {
         select: {
           examQuestions: true,
@@ -641,7 +689,7 @@ export async function deleteQuestion(prisma: PrismaClient, id: string, role: str
   }
 
   await prisma.question.delete({ where: { id } });
-  await refreshImageExpirations(prisma, [question.imageRef]);
+  await refreshImageExpirations(prisma, question.imageRefs);
 }
 
 export async function submitQuestion(prisma: PrismaClient, id: string) {
@@ -651,8 +699,10 @@ export async function submitQuestion(prisma: PrismaClient, id: string) {
     throw createHttpError(400, "Only draft questions can be submitted for review");
   }
 
-  if (hasPendingImageRef(existingQuestion)) {
-    throw createHttpError(400, "Please upload all required images for this question before submitting");
+  if (existingQuestion.type === "ESSAY") {
+    if (!existingQuestion.writingType || !existingQuestion.promptText || !existingQuestion.aiRubricId) {
+      throw createHttpError(400, "Essay questions require WritingType, PromptText, and AIRubricID before submitting");
+    }
   }
 
   const updatedQuestion = await prisma.question.update({
@@ -661,7 +711,7 @@ export async function submitQuestion(prisma: PrismaClient, id: string) {
     select: QUESTION_SELECT,
   });
 
-  return serializeQuestion(updatedQuestion);
+  return attachImages(prisma, serializeQuestion(updatedQuestion));
 }
 
 export async function bulkSubmitQuestions(prisma: PrismaClient, ids: string[]) {
@@ -687,8 +737,8 @@ export async function bulkSubmitQuestions(prisma: PrismaClient, ids: string[]) {
       failures.push({ id, reason: "Only draft questions can be submitted for review" });
       continue;
     }
-    if (hasPendingImageRef(question)) {
-      failures.push({ id, reason: "Please upload all required images before submitting" });
+    if (question.type === "ESSAY" && (!question.writingType || !question.promptText || !question.aiRubricId)) {
+      failures.push({ id, reason: "Essay questions require WritingType, PromptText, and AIRubricID before submitting" });
       continue;
     }
     eligibleIds.push(id);
@@ -722,7 +772,7 @@ export async function approveQuestion(prisma: PrismaClient, id: string) {
     select: QUESTION_SELECT,
   });
 
-  return serializeQuestion(updatedQuestion);
+  return attachImages(prisma, serializeQuestion(updatedQuestion));
 }
 
 export async function rejectQuestion(
@@ -732,8 +782,8 @@ export async function rejectQuestion(
 ) {
   const existingQuestion = await findQuestionById(prisma, id);
 
-  if (existingQuestion.status !== "PENDING_APPROVAL") {
-    throw createHttpError(400, "Only questions pending approval can be rejected");
+  if (existingQuestion.status !== "PENDING_APPROVAL" && existingQuestion.status !== "PUBLISHED") {
+    throw createHttpError(400, "Only pending or published questions can be rejected");
   }
 
   const updatedQuestion = await prisma.question.update({
@@ -742,7 +792,7 @@ export async function rejectQuestion(
     select: QUESTION_SELECT,
   });
 
-  return serializeQuestion(updatedQuestion);
+  return attachImages(prisma, serializeQuestion(updatedQuestion));
 }
 
 // ── CSV helpers ───────────────────────────────────────────────────────────────
@@ -763,11 +813,12 @@ function normalizeQuestionType(rawType: string | undefined, hasOptions: boolean)
   return "";
 }
 
-function normalizeMarkingType(rawType: string | undefined, questionType: "MCQ" | "ESSAY" | ""): "AUTO" | "AI_RUBRIC" | "" {
+function normalizeMarkingType(rawType: string | undefined, questionType: "MCQ" | "ESSAY" | ""): "AUTO" | "AI" | "MANUAL" | "" {
   const normalized = rawType?.trim().toLowerCase();
-  if (!normalized) return questionType === "ESSAY" ? "AI_RUBRIC" : "AUTO";
+  if (!normalized) return questionType === "ESSAY" ? "AI" : "AUTO";
   if (normalized === "auto") return "AUTO";
-  if (normalized === "ai_rubric" || normalized === "airubric") return "AI_RUBRIC";
+  if (normalized === "ai" || normalized === "ai_rubric" || normalized === "airubric") return "AI";
+  if (normalized === "manual") return "MANUAL";
   return "";
 }
 
@@ -810,16 +861,17 @@ function buildQuestionInsertData(
     type:             row.type as "MCQ" | "ESSAY",
     difficulty:       row.difficulty as "EASY" | "MEDIUM" | "HARD",
     questionText:     row.questionText,
+    writingType:      row.type === "ESSAY" ? row.writingType : null,
+    promptText:       row.type === "ESSAY" ? row.promptText : null,
+    markingGuide:     row.type === "ESSAY" ? row.markingGuide : null,
     latexEnabled:    isLatex,
-    markingType:      row.markingType,
+    markingType:      normalizeQuestionMarkingType(row.markingType, row.type as "MCQ" | "ESSAY"),
     maxMarks:         row.maxMarks,
     options,
-    correctAnswer:    row.correctAnswer || "",
+    correctAnswer:    row.type === "MCQ" ? (row.correctAnswer || "") : "",
     explanation:      row.explanation,
     timeLimitSeconds: row.timeLimitSeconds,
-    imageRef:         row.imageRef || null,
-    imageUrl:         row.imageUrls[0] ?? row.imageUrl,
-    imageUrls:        row.imageUrls,
+    imageRefs:        row.imageRefs ?? [],
     subtopics:        row.subtopics,
     notes:            row.notes,
     adaptiveTags:     row.adaptiveTags ?? [],
@@ -882,6 +934,11 @@ export async function bulkImportQuestions(
 
   const validRows: Array<{ rowNumber: number; row: NormalisedRow }> = [];
 
+  // Pre-fetch allowed writing types once for efficient per-row validation
+  const allowedWritingTypes = new Set(
+    (await prisma.aiRubricWritingType.findMany({ select: { name: true } })).map((w) => w.name),
+  );
+
   // ── Validation + normalisation pass ──────────────────────────────────────
 
   for (const [i, raw] of rows.entries()) {
@@ -897,22 +954,34 @@ export async function bulkImportQuestions(
     const rawMarkingType = raw.MarkingType?.trim() ?? "";
     const markingType = normalizeMarkingType(rawMarkingType, questionType);
     const aiRubricId = raw.AIRubricID?.trim() || null;
+    const writingType = normalizeWritingType(raw.WritingType);
     const maxMarksRaw = raw.MaxMarks?.trim();
-    const maxMarks = maxMarksRaw ? parseInt(maxMarksRaw, 10) : questionType === "ESSAY" ? 20 : 1;
+    // MCQ locked to 1 per design. CSV-provided maxMarks for MCQ is ignored.
+    const maxMarks = questionType === "MCQ"
+      ? 1
+      : (maxMarksRaw ? parseInt(maxMarksRaw, 10) : 20);
 
     const rawDifficulty = raw.Difficulty?.trim() ?? "";
     const difficulty = DIFFICULTY_MAP[rawDifficulty.toLowerCase()] ?? "";
 
-    const questionText = raw.QuestionText?.trim() ?? "";
+    const questionText = raw.QuestionText?.trim() || raw.PromptText?.trim() || "";
+    const promptText = raw.PromptText?.trim() || (questionType === "ESSAY" ? questionText : "");
     const correctAnswer = raw.CorrectAnswer?.trim().toUpperCase() ?? "";
 
     if (!subjectName) rowErrors.push("Section (subject) is required");
     if (!topicName) rowErrors.push("Topic is required");
     if (!questionType) rowErrors.push(`QuestionType "${rawQuestionType}" must be MCQ or Essay`);
-    if (!markingType) rowErrors.push(`MarkingType "${rawMarkingType}" must be Auto or AI_Rubric`);
+    if (!markingType) rowErrors.push(`MarkingType "${rawMarkingType}" must be Auto, AI, or Manual`);
     if (questionType === "MCQ" && aiRubricId) rowErrors.push("AIRubricID must not be provided for MCQ");
-    if (questionType === "MCQ" && markingType === "AI_RUBRIC") rowErrors.push("MCQ questions must use Auto marking");
-    if (questionType === "ESSAY" && markingType === "AUTO") rowErrors.push("Essay questions must use AI_RUBRIC marking");
+    if (questionType === "MCQ" && markingType !== "AUTO") rowErrors.push("MCQ questions must use Auto marking");
+    if (questionType === "ESSAY" && markingType === "AUTO") rowErrors.push("Essay questions must use AI or Manual marking");
+    if (questionType === "ESSAY" && !writingType) {
+      rowErrors.push("WritingType is required for Essay");
+    } else if (writingType && !allowedWritingTypes.has(writingType)) {
+      rowErrors.push(`WritingType "${writingType}" is not registered. Allowed values: ${[...allowedWritingTypes].join(", ") || "(none — create writing types first)"}`);
+    }
+    if (questionType === "ESSAY" && !promptText) rowErrors.push("PromptText is required for Essay");
+    if (questionType === "ESSAY" && markingType === "AI" && !aiRubricId) rowErrors.push("AIRubricID is required for Essay graded by AI");
     if (!Number.isFinite(maxMarks) || maxMarks < 1) rowErrors.push(`MaxMarks "${maxMarksRaw ?? ""}" must be a positive integer`);
     if (!difficulty) rowErrors.push(`Difficulty "${rawDifficulty}" must be Easy, Medium, or Hard`);
     if (!questionText) rowErrors.push("QuestionText is required");
@@ -929,6 +998,9 @@ export async function bulkImportQuestions(
         rowErrors.push(`CorrectAnswer "${correctAnswer}" must be A, B, C, D, or E`);
       }
     }
+    if (questionType === "ESSAY" && raw.PassageID?.trim()) {
+      rowErrors.push("PassageID must not be provided for Essay questions");
+    }
 
     if (rowErrors.length > 0) {
       errors.push({ row: rowNumber, reason: rowErrors.join("; ") });
@@ -936,7 +1008,7 @@ export async function bulkImportQuestions(
     }
 
     const normalizedQuestionType = questionType as "MCQ" | "ESSAY";
-    const normalizedMarkingType = markingType as "AUTO" | "AI_RUBRIC";
+    const normalizedMarkingType = markingType as "AUTO" | "AI";
 
     const timeLimitRaw = raw.TimeLimitSeconds?.trim();
     const timeLimitSeconds = timeLimitRaw ? parseInt(timeLimitRaw, 10) || null : null;
@@ -944,11 +1016,12 @@ export async function bulkImportQuestions(
     const subtopics = raw.Subtopics?.trim()
       ? raw.Subtopics.split("|").map((s) => s.trim()).filter(Boolean)
       : [];
-    const imageRef = normalizeImageFileName(raw.ImageRef?.trim() || null) || null;
-    const legacyImageRefs = splitImageRefs(raw.ImageURL?.trim() || null);
+    // CSV may provide single ImageRef or pipe-separated refs via ImageRef column
+    const csvImageRefs = splitImageRefs(raw.ImageRef?.trim() || null)
+      .map((ref) => normalizeImageFileName(ref))
+      .filter(Boolean);
 
     const latexEnabled = parseCsvBoolean(raw.LatexEnabled);
-    const testName = raw.TestName?.trim() || null;
     const qnumRaw = raw.QuestionNumber?.trim() ?? "";
     let questionNumber: number | null = null;
     if (qnumRaw) {
@@ -959,10 +1032,6 @@ export async function bulkImportQuestions(
         questionNumber = parsed;
       }
     }
-    if (testName && questionNumber === null) {
-      rowErrors.push("QuestionNumber is required when TestName is provided");
-    }
-
     if (rowErrors.length > 0) {
       errors.push({ row: rowNumber, reason: rowErrors.join("; ") });
       continue;
@@ -972,13 +1041,15 @@ export async function bulkImportQuestions(
       rowNumber,
       row: {
         questionId:        "", // auto-generated; CSV column ignored
-        testName,
         questionNumber,
         subjectName,
         topicName,
         type:              normalizedQuestionType,
         difficulty,
         questionText,
+        writingType:       normalizedQuestionType === "ESSAY" ? writingType : null,
+        promptText:        normalizedQuestionType === "ESSAY" ? promptText : null,
+        markingGuide:      normalizedQuestionType === "ESSAY" ? (raw.MarkingGuide?.trim() || null) : null,
         optionA:           raw.OptionA?.trim() ?? "",
         optionB:           raw.OptionB?.trim() ?? "",
         optionC:           raw.OptionC?.trim() ?? "",
@@ -987,9 +1058,7 @@ export async function bulkImportQuestions(
         correctAnswer:     normalizedQuestionType === "MCQ" ? correctAnswer : "",
         explanation:       raw.Explanation?.trim() || null,
         timeLimitSeconds,
-        imageRef,
-        imageUrl:          imageRef ? null : legacyImageRefs[0] ?? null,
-        imageUrls:         imageRef ? [] : legacyImageRefs,
+        imageRefs: csvImageRefs,
         passageExternalId: raw.PassageID?.trim() || null,
         aiRubricId,
         subtopics,
@@ -1020,6 +1089,9 @@ export async function bulkImportQuestions(
     if (row.row.type === "MCQ" && effectiveAiRubricId) {
       errors.push({ row: row.rowNumber, reason: `AIRubricID must not be provided for MCQ questions` });
       validRows.splice(i, 1);
+    } else if (row.row.type === "ESSAY" && !effectiveAiRubricId) {
+      errors.push({ row: row.rowNumber, reason: `AIRubricID is required for Essay questions` });
+      validRows.splice(i, 1);
     } else if (effectiveAiRubricId) {
       const aiRubricMaxScore = aiRubricScoreById.get(effectiveAiRubricId);
       if (aiRubricMaxScore === undefined) {
@@ -1032,14 +1104,18 @@ export async function bulkImportQuestions(
     }
   }
 
-  const missingImageRefs = await findMissingImageRefs(prisma, validRows.map((r) => r.row.imageRef));
+  const allRefs = validRows.flatMap((r) => r.row.imageRefs);
+  const missingImageRefs = await findMissingImageRefs(prisma, allRefs);
   if (missingImageRefs.length > 0) {
     const missingSet = new Set(missingImageRefs);
     for (let i = validRows.length - 1; i >= 0; i--) {
       const row = validRows[i];
-      if (!row?.row.imageRef || !missingSet.has(row.row.imageRef)) continue;
-      errors.push({ row: row.rowNumber, reason: `ImageRef "${row.row.imageRef}" was not found in master images` });
-      validRows.splice(i, 1);
+      if (!row) continue;
+      const rowMissing = row.row.imageRefs.filter((ref) => missingSet.has(ref));
+      if (rowMissing.length > 0) {
+        errors.push({ row: row.rowNumber, reason: `ImageRef(s) not found in master images: ${rowMissing.join(", ")}` });
+        validRows.splice(i, 1);
+      }
     }
   }
 
@@ -1085,12 +1161,12 @@ export async function bulkImportQuestions(
 
   const foundPassages = uniquePassageIds.length > 0
     ? await prisma.passage.findMany({
-        where: { externalId: { in: uniquePassageIds } },
-        select: { id: true, externalId: true },
+        where: { passageId: { in: uniquePassageIds } },
+        select: { id: true, passageId: true },
       })
     : [];
 
-  const passageExtIdToId = new Map(foundPassages.map((p) => [p.externalId!, p.id]));
+  const passageExtIdToId = new Map(foundPassages.map((p) => [p.passageId!, p.id]));
 
   // ── Build insertable list ─────────────────────────────────────────────────
 
@@ -1135,20 +1211,19 @@ export async function bulkImportQuestions(
 
   await assignGeneratedQuestionIds(prisma, insertableRows);
 
-  // ── Detect duplicate (TestName, QuestionNumber) pairs ─────────────────────
+  // ── Detect duplicate question-bank content inside the same CSV ─────────────
 
   {
     const seen = new Map<string, number>(); // key -> first rowNumber
     const dupRowNumbers = new Set<number>();
     for (const row of insertableRows) {
-      if (!row.testName || row.questionNumber == null) continue;
-      const key = `${row.testName}|${row.resolvedSubjectId}|${row.questionNumber}`;
+      const key = questionBankImportKey(row);
       const first = seen.get(key);
       if (first !== undefined) {
         dupRowNumbers.add(row.rowNumber);
         errors.push({
           row: row.rowNumber,
-          reason: `Duplicate QuestionNumber ${row.questionNumber} for TestName "${row.testName}" in the same subject (also at row ${first})`,
+          reason: `Duplicate question content for the same subject, topic, and type (also at row ${first})`,
         });
       } else {
         seen.set(key, row.rowNumber);
@@ -1176,73 +1251,14 @@ export async function bulkImportQuestions(
   const createdQuestions = await bulkInsertQuestions(
     prisma, insertableRows, passageExtIdToId, creatorId,
   );
-  await markImagesLinked(prisma, insertableRows.map((row) => row.imageRef));
+  await markImagesLinked(prisma, insertableRows.flatMap((row) => row.imageRefs));
 
-  const createdQuestionsWithRowNumbers = insertableRows.map((row, idx) => ({
-    rowNumber: row.rowNumber,
-    question: serializeQuestion(createdQuestions[idx]!),
-  }));
-
-  // ── Upsert Exams from TestName + create ExamQuestion links ────────────────
-
-  const examRows = insertableRows
-    .map((row, idx) => ({ row, questionId: createdQuestions[idx]?.id }))
-    .filter((r): r is { row: InsertableRow; questionId: string } =>
-      Boolean(r.questionId && r.row.testName && r.row.questionNumber != null),
-    );
-
-  if (examRows.length > 0) {
-    // Group rows by testName to determine examType/gradingType per exam
-    const byTestName = new Map<string, typeof examRows>();
-    for (const r of examRows) {
-      const key = r.row.testName!;
-      if (!byTestName.has(key)) byTestName.set(key, []);
-      byTestName.get(key)!.push(r);
-    }
-
-    // Find or create Exam per testName
-    const testNameToExamId = new Map<string, string>();
-    for (const [testName, group] of byTestName.entries()) {
-      const existing = await prisma.exam.findFirst({
-        where: { title: testName, createdBy: creatorId },
-        select: { id: true },
-      });
-
-      if (existing) {
-        testNameToExamId.set(testName, existing.id);
-      } else {
-        const types = new Set(group.map((g) => g.row.type));
-        const gradingType: "AUTO" | "MANUAL" =
-          types.has("MCQ") ? "AUTO" : "MANUAL";
-
-        const created = await prisma.exam.create({
-          data: {
-            title:           testName,
-            examType:        "MOCK_EXAM",
-            durationMinutes: null,
-            gradingType,
-            createdBy:       creatorId,
-          },
-          select: { id: true },
-        });
-        testNameToExamId.set(testName, created.id);
-      }
-    }
-
-    // Bulk-create ExamQuestion links (skipDuplicates handles re-imports)
-    const examQuestionData = examRows.map((r) => ({
-      examId:     testNameToExamId.get(r.row.testName!)!,
-      questionId: r.questionId,
-      order:      r.row.questionNumber!,
-    }));
-
-    if (examQuestionData.length > 0) {
-      await prisma.examQuestion.createMany({
-        data: examQuestionData,
-        skipDuplicates: true,
-      });
-    }
-  }
+  const createdQuestionsWithRowNumbers = await Promise.all(
+    insertableRows.map(async (row, idx) => ({
+      rowNumber: row.rowNumber,
+      question: await attachImages(prisma, serializeQuestion(createdQuestions[idx]!)),
+    }))
+  );
 
   const created = insertableRows.length;
 
@@ -1327,10 +1343,56 @@ export async function resolveAndSavePendingRows(
   const aiRubricIds = [...new Set(insertableRows.map((row) => row.aiRubricId).filter(Boolean) as string[])];
   const aiRubricScoreById = await findActiveAiRubricScores(prisma, aiRubricIds);
   const aiRubricIssues: string[] = [];
+  const resolveAllowedWritingTypes = new Set(
+    (await prisma.aiRubricWritingType.findMany({ select: { name: true } })).map((w) => w.name),
+  );
 
   for (const row of insertableRows) {
-    if (row.type === "MCQ" && row.aiRubricId) {
+    const rowType = row.type === "ESSAY" ? "ESSAY" : "MCQ";
+    row.type = rowType;
+    row.markingType = normalizeQuestionMarkingType(row.markingType, rowType);
+    row.writingType = rowType === "ESSAY" ? normalizeWritingType(row.writingType) : null;
+    if (rowType === "ESSAY") {
+      row.correctAnswer = "";
+    }
+
+    if (rowType === "MCQ" && row.markingType !== "AUTO") {
+      aiRubricIssues.push(`row ${row.rowNumber}: MCQ questions must use Auto marking`);
+      continue;
+    }
+
+    if (rowType === "MCQ" && row.aiRubricId) {
       aiRubricIssues.push(`row ${row.rowNumber}: AIRubricID must not be provided for MCQ`);
+      continue;
+    }
+
+    if (rowType === "ESSAY" && row.markingType !== "AI" && row.markingType !== "MANUAL") {
+      aiRubricIssues.push(`row ${row.rowNumber}: Essay questions must use AI or Manual marking`);
+      continue;
+    }
+
+    if (rowType === "ESSAY" && !row.writingType) {
+      aiRubricIssues.push(`row ${row.rowNumber}: WritingType is required for Essay`);
+      continue;
+    }
+
+    if (rowType === "ESSAY" && row.writingType && !resolveAllowedWritingTypes.has(row.writingType)) {
+      aiRubricIssues.push(`row ${row.rowNumber}: WritingType "${row.writingType}" is not registered`);
+      continue;
+    }
+
+    if (rowType === "ESSAY" && !row.promptText?.trim()) {
+      aiRubricIssues.push(`row ${row.rowNumber}: PromptText is required for Essay`);
+      continue;
+    }
+
+    if (rowType === "ESSAY" && row.passageExternalId) {
+      aiRubricIssues.push(`row ${row.rowNumber}: PassageID must not be provided for Essay questions`);
+      continue;
+    }
+
+    if (rowType === "ESSAY" && row.markingType === "AI" && !row.aiRubricId) {
+      aiRubricIssues.push(`row ${row.rowNumber}: AIRubricID is required for Essay graded by AI`);
       continue;
     }
 
@@ -1350,7 +1412,7 @@ export async function resolveAndSavePendingRows(
     throw createHttpError(400, `Cannot save resolved import rows. ${shownIssues}${extraCount}`);
   }
 
-  const missingImageRefs = await findMissingImageRefs(prisma, insertableRows.map((row) => row.imageRef));
+  const missingImageRefs = await findMissingImageRefs(prisma, insertableRows.flatMap((row) => row.imageRefs));
   if (missingImageRefs.length > 0) {
     throw createHttpError(400, `Cannot save resolved import rows. Missing ImageRef: ${missingImageRefs.slice(0, 5).join(", ")}${missingImageRefs.length > 5 ? "; and more" : ""}`);
   }
@@ -1370,12 +1432,12 @@ export async function resolveAndSavePendingRows(
 
   const foundPassages = uniquePassageIds.length > 0
     ? await prisma.passage.findMany({
-        where: { externalId: { in: uniquePassageIds } },
-        select: { id: true, externalId: true },
+        where: { passageId: { in: uniquePassageIds } },
+        select: { id: true, passageId: true },
       })
     : [];
 
-  const passageExtIdToId = new Map(foundPassages.map((p) => [p.externalId!, p.id]));
+  const passageExtIdToId = new Map(foundPassages.map((p) => [p.passageId!, p.id]));
 
   const missingPassageIds = uniquePassageIds.filter((extId) => !passageExtIdToId.has(extId));
   if (missingPassageIds.length > 0) {
@@ -1386,104 +1448,15 @@ export async function resolveAndSavePendingRows(
   const createdQuestions = await bulkInsertQuestions(
     prisma, insertableRows, passageExtIdToId, creatorId,
   );
-  await markImagesLinked(prisma, insertableRows.map((row) => row.imageRef));
+  await markImagesLinked(prisma, insertableRows.flatMap((row) => row.imageRefs));
 
-  const createdQuestionsWithRowNumbers = insertableRows.map((row, idx) => ({
-    rowNumber: row.rowNumber,
-    question: serializeQuestion(createdQuestions[idx]!),
-  }));
-
-  // Exam linking
-  const examRows = insertableRows
-    .map((row, idx) => ({ row, questionId: createdQuestions[idx]?.id }))
-    .filter((r): r is { row: InsertableRow; questionId: string } =>
-      Boolean(r.questionId && r.row.testName && r.row.questionNumber != null),
-    );
-
-  if (examRows.length > 0) {
-    const byTestName = new Map<string, typeof examRows>();
-    for (const r of examRows) {
-      const key = r.row.testName!;
-      if (!byTestName.has(key)) byTestName.set(key, []);
-      byTestName.get(key)!.push(r);
-    }
-
-    const testNameToExamId = new Map<string, string>();
-    for (const [testName, group] of byTestName.entries()) {
-      const existing = await prisma.exam.findFirst({
-        where: { title: testName, createdBy: creatorId },
-        select: { id: true },
-      });
-
-      if (existing) {
-        testNameToExamId.set(testName, existing.id);
-      } else {
-        const types = new Set(group.map((g) => g.row.type));
-        const gradingType: "AUTO" | "MANUAL" =
-          types.has("MCQ") ? "AUTO" : "MANUAL";
-
-        const created = await prisma.exam.create({
-          data: {
-            title:           testName,
-            examType:        "MOCK_EXAM",
-            durationMinutes: null,
-            gradingType,
-            createdBy:       creatorId,
-          },
-          select: { id: true },
-        });
-        testNameToExamId.set(testName, created.id);
-      }
-    }
-
-    const examQuestionData = examRows.map((r) => ({
-      examId:     testNameToExamId.get(r.row.testName!)!,
-      questionId: r.questionId,
-      order:      r.row.questionNumber!,
-    }));
-
-    if (examQuestionData.length > 0) {
-      await prisma.examQuestion.createMany({
-        data: examQuestionData,
-        skipDuplicates: true,
-      });
-    }
-  }
+  const createdQuestionsWithRowNumbers = await Promise.all(
+    insertableRows.map(async (row, idx) => ({
+      rowNumber: row.rowNumber,
+      question: await attachImages(prisma, serializeQuestion(createdQuestions[idx]!)),
+    }))
+  );
 
   return { saved: insertableRows.length, stillUnresolved, createdQuestions: createdQuestionsWithRowNumbers };
 }
 
-export async function uploadQuestionImage(
-  prisma: PrismaClient,
-  id: string,
-  imageUrl: string,
-) {
-  const existingQuestion = await findQuestionById(prisma, id);
-
-  if (existingQuestion.status === "PUBLISHED") {
-    throw createHttpError(400, "Cannot update image of a published question");
-  }
-
-  const currentImageUrls = existingQuestion.imageUrls.length > 0
-    ? existingQuestion.imageUrls
-    : splitImageRefs(existingQuestion.imageUrl);
-  const pendingIndex = currentImageUrls.findIndex((ref) => !isUploadedImageRef(ref));
-  const nextImageUrls = [...currentImageUrls];
-
-  if (pendingIndex >= 0) {
-    nextImageUrls[pendingIndex] = imageUrl;
-  } else {
-    throw createHttpError(400, "This question does not need any more images");
-  }
-
-  const updatedQuestion = await prisma.question.update({
-    where: { id },
-    data: {
-      imageUrl: nextImageUrls[0] ?? null,
-      imageUrls: nextImageUrls,
-    },
-    select: QUESTION_SELECT,
-  });
-
-  return serializeQuestion(updatedQuestion);
-}

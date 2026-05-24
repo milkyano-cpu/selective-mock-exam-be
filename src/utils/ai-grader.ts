@@ -1,27 +1,45 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod";
 import { env } from "../config/env.js";
 
 export interface AiGradeInput {
+  writingType: string | null;
   questionText: string;
-  correctAnswer: string;
+  promptText: string;
+  /**
+   * Pre-resolved prompt images (base64-encoded). Caller is responsible for
+   * fetching the bytes from object storage and converting to base64 via
+   * `resolveImagesAsBase64` in images.service. Empty/undefined means no
+   * image prompts.
+   */
+  images?: Array<{ data: string; mediaType: string }> | null;
+  markingGuide?: string | null;
   studentAnswer: string;
-  aiRubric?: AiRubricInput | null;
+  aiRubric: AiRubricInput;
 }
 
 export interface AiRubricInput {
   id: string;
   name: string;
   totalMaxScore: number;
+  bandDescriptors: Array<{
+    bandLabel: string;
+    scoreMin: number;
+    scoreMax: number;
+    descriptor: string;
+  }>;
+  calibrationNotes: Array<{
+    category: string | null;
+    instruction: string;
+  }>;
   criteria: Array<{
     id: string;
     criterionName: string;
     criterionDescription: string;
     maxScore: number;
-    bandDescriptors: Array<{
-      scoreMin: number;
-      scoreMax: number;
-      descriptor: string;
-    }>;
+    highScoringIndicators: string[];
+    lowScoringIndicators: string[];
+    aiCalibrationNotes: string[];
   }>;
 }
 
@@ -31,195 +49,317 @@ export interface AiCriterionScore {
   score: number;
   maxScore: number;
   feedback: string;
+  strengths: string[];
+  improvements: string[];
 }
 
 export interface AiGradeResult {
   isCorrect: boolean;
   confidence: "high" | "medium" | "low";
-  feedback: string;
+  overallFeedback: string;
+  strengths: string[];
+  improvements: string[];
   gradedAt: string;
-  aiRubric?: {
+  aiModel: string;
+  aiRubric: {
     id: string;
     name: string;
     totalMaxScore: number;
   };
-  criterionScores?: AiCriterionScore[];
-  totalAwardedMarks?: number;
-  totalPossibleMarks?: number;
-  scorePercent?: number;
+  criterionScores: AiCriterionScore[];
+  totalAwardedMarks: number;
+  totalPossibleMarks: number;
+  scorePercent: number;
+  bandLabel: string | null;
+  bandDescriptor: string | null;
 }
 
-/**
- * Use Claude to evaluate whether a student's essay answer is correct.
- * Returns null if ANTHROPIC_API_KEY is not configured.
- */
-export async function gradeEssayWithAi(
-  input: AiGradeInput,
-): Promise<AiGradeResult | null> {
-  if (!env.ANTHROPIC_API_KEY) return null;
+const aiCriterionScoreSchema = z.object({
+  criterionId: z.string(),
+  criterionName: z.string().optional(),
+  score: z.number(),
+  maxScore: z.number().optional(),
+  feedback: z.string().optional(),
+  strengths: z.array(z.string()).optional(),
+  improvements: z.array(z.string()).optional(),
+});
 
-  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+// JSON shape returned by the AI. Per final-design the array key is `criteria`.
+// Accept legacy `criterionScores` too for backward compatibility, then
+// normalise below.
+const aiGradeResponseSchema = z.object({
+  criteria: z.array(aiCriterionScoreSchema).optional(),
+  criterionScores: z.array(aiCriterionScoreSchema).optional(),
+  overall_feedback: z.string(),
+  strengths: z.array(z.string()).default([]),
+  improvements: z.array(z.string()).default([]),
+  confidence: z.enum(["high", "medium", "low"]).default("medium"),
+});
 
-  const aiRubricBlock = input.aiRubric
-    ? `AI_RUBRIC:
-${JSON.stringify({
-  id: input.aiRubric.id,
-  name: input.aiRubric.name,
-  totalMaxScore: input.aiRubric.totalMaxScore,
-  criteria: input.aiRubric.criteria.map((criterion) => ({
-    criterionId: criterion.id,
-    criterionName: criterion.criterionName,
-    criterionDescription: criterion.criterionDescription,
-    maxScore: criterion.maxScore,
-    bandDescriptors: criterion.bandDescriptors,
-  })),
-}, null, 2)}
-`
-    : "";
+function extractJsonObject(text: string) {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed;
 
-  const prompt = input.aiRubric
-    ? `You are an essay examiner. Score the student's answer using the aiRubric exactly.
+  const first = trimmed.indexOf("{");
+  const last = trimmed.lastIndexOf("}");
+  if (first >= 0 && last > first) return trimmed.slice(first, last + 1);
+  return trimmed;
+}
 
-QUESTION:
-${input.questionText}
+function findBand(
+  scorePercent: number,
+  bands: AiRubricInput["bandDescriptors"],
+) {
+  return bands.find((band) => scorePercent >= band.scoreMin && scorePercent <= band.scoreMax) ?? null;
+}
 
-REFERENCE ANSWER / TEACHER NOTES (may be blank):
-${input.correctAnswer}
+export function buildEssayAiFeedback(result: AiGradeResult) {
+  return {
+    overallFeedback: result.overallFeedback,
+    strengths: result.strengths,
+    improvements: result.improvements,
+    confidence: result.confidence,
+    gradedAt: result.gradedAt,
+    aiModel: result.aiModel,
+    aiRubric: result.aiRubric,
+    totalAwardedMarks: result.totalAwardedMarks,
+    totalPossibleMarks: result.totalPossibleMarks,
+    scorePercent: result.scorePercent,
+    bandLabel: result.bandLabel,
+    bandDescriptor: result.bandDescriptor,
+    criterionScores: result.criterionScores,
+  };
+}
 
-STUDENT'S ANSWER:
-${input.studentAnswer}
+export async function gradeEssayWithAi(input: AiGradeInput): Promise<AiGradeResult> {
+  if (!env.ANTHROPIC_API_KEY) {
+    throw new Error("ANTHROPIC_API_KEY is not configured");
+  }
+  if (!env.ANTHROPIC_GRADING_MODEL) {
+    throw new Error("ANTHROPIC_GRADING_MODEL is not configured (set it in .env)");
+  }
+  if (!env.ANTHROPIC_GRADING_TIMEOUT_MS) {
+    throw new Error("ANTHROPIC_GRADING_TIMEOUT_MS is not configured (set it in .env)");
+  }
+  if (env.ANTHROPIC_GRADING_MAX_RETRIES === undefined) {
+    throw new Error("ANTHROPIC_GRADING_MAX_RETRIES is not configured (set it in .env)");
+  }
 
-${aiRubricBlock}
-GRADING RULES:
-- Award an integer score for each criterion from 0 to that criterion's maxScore.
-- Use band descriptors as guidance. If a descriptor range applies, choose the best integer score inside that range.
-- Do not exceed each criterion maxScore.
-- totalAwardedMarks must equal the sum of criterion scores.
-- totalPossibleMarks must equal the aiRubric totalMaxScore.
-- isCorrect should be true when scorePercent is at least 50.
-- confidence should reflect how confidently the aiRubric was applied.
+  if (!input.aiRubric || input.aiRubric.criteria.length === 0) {
+    throw new Error("AI rubric with criteria is required for essay grading");
+  }
 
-Respond with a JSON object ONLY (no markdown, no extra text):
+  const aiModel = env.ANTHROPIC_GRADING_MODEL;
+  const client = new Anthropic({
+    apiKey: env.ANTHROPIC_API_KEY,
+    timeout: env.ANTHROPIC_GRADING_TIMEOUT_MS,
+    maxRetries: env.ANTHROPIC_GRADING_MAX_RETRIES,
+  });
+
+  // Filter calibration notes: keep only General + notes matching the writing type.
+  // Categories are stored as strings like "General", "Creative", "Persuasive".
+  // Matching is case-insensitive against input.writingType (e.g. "CREATIVE").
+  const normalizedWritingType = input.writingType?.trim().toUpperCase() ?? null;
+  const relevantCalibrationNotes = input.aiRubric.calibrationNotes.filter((note) => {
+    const cat = note.category?.trim().toUpperCase() ?? "";
+    if (cat === "GENERAL") return true;
+    if (normalizedWritingType && cat === normalizedWritingType) return true;
+    return false;
+  });
+
+  const rubricPayload = {
+    id: input.aiRubric.id,
+    name: input.aiRubric.name,
+    totalMaxScore: input.aiRubric.totalMaxScore,
+    bandDescriptors: input.aiRubric.bandDescriptors,
+    calibrationNotes: relevantCalibrationNotes,
+    criteria: input.aiRubric.criteria.map((criterion) => ({
+      criterionId: criterion.id,
+      criterionName: criterion.criterionName,
+      criterionDescription: criterion.criterionDescription,
+      maxScore: criterion.maxScore,
+      highScoringIndicators: criterion.highScoringIndicators,
+      lowScoringIndicators: criterion.lowScoringIndicators,
+      aiCalibrationNotes: criterion.aiCalibrationNotes,
+    })),
+  };
+
+  // --- Prompt caching strategy (per final-design Step 4) ---
+  // Anthropic cache_control markers create cache breakpoints. We use 3 markers
+  // hierarchically:
+  //   1. system prompt   → cached (stable across all grading)
+  //   2. RUBRIC block    → cached per rubric_id (sections 1-3)
+  //   3. QUESTION block  → cached per question_id (sections 4-6, incl. images)
+  //   4. STUDENT block   → NEVER cached (section 7)
+  //
+  // Hierarchy means: same rubric different question → rubric portion still HIT.
+  const systemPrompt = `You are an examiner grading a selective entry Writing essay. Use the rubric data exactly and return JSON only.
+
+RULES:
+- Score every criterion from 0 to that criterion's maxScore.
+- Do not invent criteria or omit criteria.
+- Use calibration notes, high/low indicators, and band descriptors as grading guidance.
+- total score will be calculated by the application from criterion scores; do not scale it yourself.
+- Be specific, constructive, and age-appropriate.
+
+Respond with a JSON object only:
 {
-  "criterionScores": [
+  "overall_feedback": "Overall feedback for the student.",
+  "strengths": ["short strength"],
+  "improvements": ["short improvement"],
+  "confidence": "high",
+  "criteria": [
     {
-      "criterionId": "criterion id from aiRubric",
-      "criterionName": "criterion name from aiRubric",
-      "score": integer,
-      "maxScore": integer,
-      "feedback": "Specific feedback for this criterion."
+      "criterionId": "criterion id from RUBRIC_JSON",
+      "criterionName": "criterion name from RUBRIC_JSON",
+      "score": 0,
+      "maxScore": 5,
+      "feedback": "Specific criterion feedback.",
+      "strengths": ["criterion strength"],
+      "improvements": ["criterion improvement"]
     }
-  ],
-  "totalAwardedMarks": integer,
-  "totalPossibleMarks": integer,
-  "scorePercent": number from 0 to 100,
-  "isCorrect": true or false,
-  "confidence": "high" or "medium" or "low",
-  "feedback": "Overall feedback in two or three sentences."
-}`
-    : `You are an exam grader. Evaluate whether the student's answer is correct based on the reference answer.
-
-QUESTION:
-${input.questionText}
-
-REFERENCE ANSWER (the correct answer as set by the teacher):
-${input.correctAnswer}
-
-STUDENT'S ANSWER:
-${input.studentAnswer}
-
-GRADING RULES:
-- A short but accurate answer can be CORRECT even if the reference answer is more detailed.
-- The student does not need to match the exact wording — correct concept = correct.
-- An answer is INCORRECT if it contradicts the reference answer, is completely off-topic, or is blank/gibberish.
-- Partial answers that cover the core concept should be marked CORRECT.
-
-Respond with a JSON object ONLY (no markdown, no extra text):
-{
-  "isCorrect": true or false,
-  "confidence": "high" or "medium" or "low",
-  "feedback": "One or two sentences explaining the verdict."
+  ]
 }`;
 
-  try {
-    const maxTokens = input.aiRubric
-      ? Math.max(1024, input.aiRubric.criteria.length * 300 + 256)
-      : 512;
+  // Block A — RUBRIC (sections 1-3): cacheable per rubric_id
+  const rubricBlock = [
+    `RUBRIC_JSON:\n${JSON.stringify(rubricPayload, null, 2)}`,
+    `WRITING_TYPE:\n${input.writingType ?? "UNSPECIFIED"}`,
+  ].join("\n\n");
 
-    const message = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: maxTokens,
-      messages: [{ role: "user", content: prompt }],
-    });
+  // Block B — QUESTION (sections 4-6): cacheable per question_id
+  const questionTextBlock = [
+    `QUESTION_TEXT:\n${input.questionText}`,
+    `PROMPT_TEXT:\n${input.promptText}`,
+    input.markingGuide ? `MARKING_GUIDE:\n${input.markingGuide}` : null,
+  ].filter(Boolean).join("\n\n");
 
-    const text = message.content
-      .filter((c) => c.type === "text")
-      .map((c) => (c as { type: "text"; text: string }).text)
-      .join("");
+  // Block C — STUDENT (section 7): never cached
+  const studentSection = `STUDENT_RESPONSE:\n${input.studentAnswer}`;
 
-    const parsed = JSON.parse(text.trim()) as {
-      isCorrect: boolean;
-      confidence: "high" | "medium" | "low";
-      feedback: string;
-      criterionScores?: Array<{
-        criterionId: string;
-        criterionName: string;
-        score: number;
-        maxScore: number;
-        feedback: string;
-      }>;
-      totalAwardedMarks?: number;
-      totalPossibleMarks?: number;
-      scorePercent?: number;
-    };
+  // Assemble user content blocks. Cache marker goes on the LAST block of each
+  // cacheable group so Anthropic caches everything up to and including it.
+  type ContentBlock =
+    | { type: "text"; text: string; cache_control?: { type: "ephemeral" } }
+    | { type: "image"; source: { type: "base64"; media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp"; data: string }; cache_control?: { type: "ephemeral" } };
 
-    if (input.aiRubric) {
-      const criterionById = new Map(input.aiRubric.criteria.map((criterion) => [criterion.id, criterion]));
-      const criterionScores = input.aiRubric.criteria.map((criterion) => {
-        const raw = parsed.criterionScores?.find((score) => score.criterionId === criterion.id);
-        const score = Math.min(
-          criterion.maxScore,
-          Math.max(0, Number.isFinite(raw?.score) ? Math.round(raw!.score) : 0),
-        );
+  const userContent: ContentBlock[] = [];
 
-        return {
-          criterionId: criterion.id,
-          criterionName: raw?.criterionName ?? criterion.criterionName,
-          score,
-          maxScore: criterion.maxScore,
-          feedback: raw?.feedback ?? "",
-        };
-      });
+  // 1. Rubric block — always end of rubric cache region
+  userContent.push({
+    type: "text",
+    text: rubricBlock,
+    cache_control: { type: "ephemeral" },
+  });
 
-      const totalAwardedMarks = criterionScores.reduce((sum, criterion) => sum + criterion.score, 0);
-      const totalPossibleMarks = input.aiRubric.totalMaxScore;
-      const scorePercent = totalPossibleMarks > 0 ? (totalAwardedMarks / totalPossibleMarks) * 100 : 0;
+  // 2. Question text — only mark as cache end if no images follow
+  const hasImages = (input.images?.length ?? 0) > 0;
+  userContent.push({
+    type: "text",
+    text: questionTextBlock,
+    ...(hasImages ? {} : { cache_control: { type: "ephemeral" as const } }),
+  });
 
-      return {
-        isCorrect: scorePercent >= 50,
-        confidence: parsed.confidence ?? "medium",
-        feedback: parsed.feedback ?? "",
-        gradedAt: new Date().toISOString(),
-        aiRubric: {
-          id: input.aiRubric.id,
-          name: input.aiRubric.name,
-          totalMaxScore: input.aiRubric.totalMaxScore,
+  // 3. Images — last one carries the cache marker (= end of question region)
+  if (hasImages && input.images) {
+    input.images.forEach((img, i) => {
+      const isLast = i === input.images!.length - 1;
+      userContent.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: img.mediaType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+          data: img.data,
         },
-        criterionScores: criterionScores.filter((score) => criterionById.has(score.criterionId)),
-        totalAwardedMarks,
-        totalPossibleMarks,
-        scorePercent,
-      };
-    }
+        ...(isLast ? { cache_control: { type: "ephemeral" as const } } : {}),
+      });
+    });
+  }
+
+  // 4. Student response — NO cache_control (section 7 must never be cached)
+  userContent.push({
+    type: "text",
+    text: studentSection,
+  });
+
+  const message = await client.messages.create({
+    model: aiModel,
+    max_tokens: Math.max(1200, input.aiRubric.criteria.length * 350 + 500),
+    system: [
+      {
+        type: "text" as const,
+        text: systemPrompt,
+        cache_control: { type: "ephemeral" as const },
+      },
+    ],
+    messages: [
+      {
+        role: "user",
+        content: userContent,
+      },
+    ],
+  });
+
+  const text = message.content
+    .filter((content) => content.type === "text")
+    .map((content) => (content as { type: "text"; text: string }).text)
+    .join("");
+
+  let parsed: z.infer<typeof aiGradeResponseSchema>;
+  try {
+    parsed = aiGradeResponseSchema.parse(JSON.parse(extractJsonObject(text)));
+  } catch (parseError) {
+    const snippet = text.length > 300 ? `${text.slice(0, 300)}…` : text;
+    throw new Error(`AI grading returned malformed JSON. Raw response: ${snippet}`);
+  }
+  // Prefer design-named `criteria`; fall back to legacy `criterionScores`.
+  const rawCriteria = parsed.criteria ?? parsed.criterionScores ?? [];
+  if (rawCriteria.length === 0) {
+    throw new Error("AI grading response missing 'criteria' array");
+  }
+  const rawByCriterionId = new Map(rawCriteria.map((score) => [score.criterionId, score]));
+
+  const criterionScores = input.aiRubric.criteria.map((criterion) => {
+    const raw = rawByCriterionId.get(criterion.id);
+    const score = Math.min(
+      criterion.maxScore,
+      Math.max(0, Number.isFinite(raw?.score) ? Math.round(raw!.score) : 0),
+    );
 
     return {
-      isCorrect: Boolean(parsed.isCorrect),
-      confidence: parsed.confidence ?? "medium",
-      feedback: parsed.feedback ?? "",
-      gradedAt: new Date().toISOString(),
+      criterionId: criterion.id,
+      criterionName: raw?.criterionName ?? criterion.criterionName,
+      score,
+      maxScore: criterion.maxScore,
+      feedback: raw?.feedback ?? "",
+      strengths: raw?.strengths ?? [],
+      improvements: raw?.improvements ?? [],
     };
-  } catch {
-    // If AI fails (network, parse error, etc.), return null so caller can handle gracefully
-    return null;
-  }
+  });
+
+  const totalAwardedMarks = criterionScores.reduce((sum, criterion) => sum + criterion.score, 0);
+  const totalPossibleMarks = input.aiRubric.totalMaxScore;
+  const scorePercent = totalPossibleMarks > 0 ? (totalAwardedMarks / totalPossibleMarks) * 100 : 0;
+  const band = findBand(scorePercent, input.aiRubric.bandDescriptors);
+
+  return {
+    isCorrect: scorePercent >= 50,
+    confidence: parsed.confidence,
+    overallFeedback: parsed.overall_feedback,
+    strengths: parsed.strengths,
+    improvements: parsed.improvements,
+    gradedAt: new Date().toISOString(),
+    aiModel,
+    aiRubric: {
+      id: input.aiRubric.id,
+      name: input.aiRubric.name,
+      totalMaxScore: input.aiRubric.totalMaxScore,
+    },
+    criterionScores,
+    totalAwardedMarks,
+    totalPossibleMarks,
+    scorePercent,
+    bandLabel: band?.bandLabel ?? null,
+    bandDescriptor: band?.descriptor ?? null,
+  };
 }

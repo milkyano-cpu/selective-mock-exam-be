@@ -208,7 +208,7 @@ describe("aiRubrics module", () => {
     });
 
     expect(prisma.tx.aiRubric.updateMany).toHaveBeenCalledWith({
-      where: { isDefault: true },
+      where: { isDefault: true, writingType: "selective_entry" },
       data: { isDefault: false },
     });
     expect(prisma.tx.aiRubric.create).toHaveBeenCalledWith({

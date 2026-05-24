@@ -37,11 +37,13 @@ import { analyticsRoutes } from "./modules/analytics/analytics.route.js";
 import { flashcardRoutes } from "./modules/flashcards/flashcards.route.js";
 import { forumRoutes } from "./modules/forum/forum.route.js";
 import { aiRubricRoutes } from "./modules/ai-rubrics/ai-rubrics.route.js";
+import { aiRubricWritingTypeRoutes } from "./modules/ai-rubric-writing-types/ai-rubric-writing-types.route.js";
 import { pathwayRoutes } from "./modules/pathways/pathways.route.js";
 import { practiceRoutes } from "./modules/practice/practice.route.js";
 import { billingRoutes } from "./modules/billing/billing.route.js";
 import { resourceRoutes } from "./modules/resources/resources.route.js";
 import { studentCalendarRoutes } from "./modules/student-calendar/student-calendar.route.js";
+import { csvTemplateRoutes } from "./modules/csv-templates/csv-templates.route.js";
 
 // Schemas
 import { authSchemas } from "./modules/auth/auth.schema.js";
@@ -62,11 +64,13 @@ import { analyticsSchemas } from "./modules/analytics/analytics.schema.js";
 import { flashcardSchemas } from "./modules/flashcards/flashcards.schema.js";
 import { forumSchemas } from "./modules/forum/forum.schema.js";
 import { aiRubricSchemas } from "./modules/ai-rubrics/ai-rubrics.schema.js";
+import { aiRubricWritingTypeSchemas } from "./modules/ai-rubric-writing-types/ai-rubric-writing-types.schema.js";
 import { pathwaySchemas } from "./modules/pathways/pathways.schema.js";
 import { practiceSchemas } from "./modules/practice/practice.schema.js";
 import { billingSchemas } from "./modules/billing/billing.schema.js";
 import { resourceSchemas } from "./modules/resources/resources.schema.js";
 import { studentCalendarSchemas } from "./modules/student-calendar/student-calendar.schema.js";
+import { csvTemplateSchemas } from "./modules/csv-templates/csv-templates.schema.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -109,11 +113,13 @@ export async function buildApp() {
     ...flashcardSchemas,
     ...forumSchemas,
     ...aiRubricSchemas,
+    ...aiRubricWritingTypeSchemas,
     ...pathwaySchemas,
     ...practiceSchemas,
     ...billingSchemas,
     ...resourceSchemas,
     ...studentCalendarSchemas,
+    ...csvTemplateSchemas,
   ]) {
     app.addSchema(schema);
   }
@@ -168,11 +174,13 @@ export async function buildApp() {
       await api.register(flashcardRoutes, { prefix: "/flashcards" });
       await api.register(forumRoutes, { prefix: "/forum" });
       await api.register(aiRubricRoutes, { prefix: "/ai-rubrics" });
+      await api.register(aiRubricWritingTypeRoutes, { prefix: "/ai-rubric-writing-types" });
       await api.register(pathwayRoutes, { prefix: "/pathways" });
       await api.register(practiceRoutes, { prefix: "/practice" });
       await api.register(billingRoutes, { prefix: "/billing" });
       await api.register(resourceRoutes, { prefix: "/resources" });
       await api.register(studentCalendarRoutes, { prefix: "/student-calendar" });
+      await api.register(csvTemplateRoutes, { prefix: "/csv-templates" });
     },
     { prefix: env.API_PREFIX }
   );

@@ -26,35 +26,43 @@ const imageSummarySchema = z.object({
 const practiceQuestionSchema = z.object({
   questionId: z.string(),
   order: z.number(),
+  type: z.enum(["MCQ", "ESSAY"]),
   questionText: z.string(),
+  writingType: z.string().nullable(),
+  promptText: z.string().nullable(),
   latexEnabled: z.boolean(),
   difficulty: difficultyEnum,
   options: z.array(mcqOptionSchema).nullable(),
-  imageRef: z.string().nullable(),
-  image: imageSummarySchema.nullable(),
-  imageUrl: z.string().nullable(),
-  imageUrls: z.array(z.string()),
+  imageRefs: z.array(z.string()),
+  images: z.array(imageSummarySchema),
   correctAnswer: z.string(),
   explanation: z.string().nullable(),
+  maxMarks: z.number(),
 });
 
 // Questions with correct answers and student responses (shown after COMPLETED)
 const practiceResultAnswerSchema = z.object({
   questionId: z.string(),
   order: z.number(),
+  type: z.enum(["MCQ", "ESSAY"]),
   questionText: z.string(),
+  writingType: z.string().nullable(),
+  promptText: z.string().nullable(),
   latexEnabled: z.boolean(),
   difficulty: difficultyEnum,
   options: z.array(mcqOptionSchema).nullable(),
-  imageRef: z.string().nullable(),
-  image: imageSummarySchema.nullable(),
-  imageUrl: z.string().nullable(),
-  imageUrls: z.array(z.string()),
+  imageRefs: z.array(z.string()),
+  images: z.array(imageSummarySchema),
   correctAnswer: z.string(),
   explanation: z.string().nullable(),
   studentAnswer: z.string(),
   isCorrect: z.boolean(),
   timeSpentSeconds: z.number(),
+  awardedMarks: z.number().nullable(),
+  bandLabel: z.string().nullable(),
+  bandDescriptor: z.string().nullable(),
+  gradingStatus: z.string(),
+  aiFeedback: z.any().nullable(),
 });
 
 // ── Request schemas ───────────────────────────────────────────────────────────
@@ -94,7 +102,7 @@ const submitPracticeBodySchema = z.object({
     .array(
       z.object({
         questionId: z.string().uuid(),
-        studentAnswer: z.string().min(1).max(10),
+        studentAnswer: z.string().min(1).max(10000),
         timeSpentSeconds: z.number().int().min(0).max(24 * 60 * 60),
       })
     )

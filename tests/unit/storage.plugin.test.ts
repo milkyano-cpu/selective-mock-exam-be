@@ -5,9 +5,11 @@ const storage = {
   ensureProfilePhotoBucketExists: jest.fn(),
   ensureImageBucketExists: jest.fn(),
   ensureQuestionImageBucketExists: jest.fn(),
+  ensurePassageBucketExists: jest.fn(),
   ensureBannerImageBucketExists: jest.fn(),
   ensureResourceBucketExists: jest.fn(),
   ensureInvoiceBucketExists: jest.fn(),
+  ensureCsvTemplateBucketExists: jest.fn(),
 };
 const createObjectStorage = jest.fn(() => storage);
 
@@ -19,6 +21,7 @@ const env = {
   S3_REGION: "ap-southeast-2",
   S3_PROFILE_PHOTO_BUCKET: "profile-photos",
   S3_IMAGE_BUCKET: "images",
+  S3_PASSAGE_BUCKET: "passages",
   PROFILE_PHOTO_MAX_SIZE_BYTES: 1024,
   IMAGE_MAX_SIZE_BYTES: 2048,
   RESOURCE_FILE_MAX_SIZE_BYTES: 1024,
@@ -28,6 +31,7 @@ const env = {
   BANNER_IMAGE_MAX_SIZE_BYTES: 2048,
   S3_RESOURCE_BUCKET: "resources",
   S3_INVOICE_BUCKET: "invoices",
+  S3_CSV_TEMPLATE_BUCKET: "csv-templates",
   S3_BUCKET_INIT_TIMEOUT_MS: 3000,
 };
 
@@ -55,9 +59,11 @@ describe("storage plugin", () => {
     storage.ensureProfilePhotoBucketExists.mockResolvedValue(undefined as never);
     storage.ensureImageBucketExists.mockResolvedValue(undefined as never);
     storage.ensureQuestionImageBucketExists.mockResolvedValue(undefined as never);
+    storage.ensurePassageBucketExists.mockResolvedValue(undefined as never);
     storage.ensureBannerImageBucketExists.mockResolvedValue(undefined as never);
     storage.ensureResourceBucketExists.mockResolvedValue(undefined as never);
     storage.ensureInvoiceBucketExists.mockResolvedValue(undefined as never);
+    storage.ensureCsvTemplateBucketExists.mockResolvedValue(undefined as never);
   });
 
   it("registers multipart, creates object storage, initializes buckets, and decorates fastify", async () => {
@@ -79,17 +85,21 @@ describe("storage plugin", () => {
       signedUrlExpiresInSeconds: 300,
       imageBucket: "images",
       questionImageBucket: "question-images",
+      passageBucket: "passages",
       bannerImageBucket: "banner-images",
       bannerImageMaxSizeBytes: 2048,
       resourceBucket: "resources",
       invoiceBucket: "invoices",
+      csvTemplateBucket: "csv-templates",
     });
     expect(storage.ensureProfilePhotoBucketExists).toHaveBeenCalled();
     expect(storage.ensureImageBucketExists).toHaveBeenCalled();
     expect(storage.ensureQuestionImageBucketExists).toHaveBeenCalled();
+    expect(storage.ensurePassageBucketExists).toHaveBeenCalled();
     expect(storage.ensureBannerImageBucketExists).toHaveBeenCalled();
     expect(storage.ensureResourceBucketExists).toHaveBeenCalled();
     expect(storage.ensureInvoiceBucketExists).toHaveBeenCalled();
+    expect(storage.ensureCsvTemplateBucketExists).toHaveBeenCalled();
     expect(fastify.decorate).toHaveBeenCalledWith("storage", storage);
   });
 

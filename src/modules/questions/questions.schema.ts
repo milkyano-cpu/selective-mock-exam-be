@@ -23,7 +23,14 @@ const mcqOptionsSchema = z
     }
   );
 
-const questionMarkingTypeSchema = z.enum(["AUTO", "AI_RUBRIC"]);
+const questionMarkingTypeSchema = z.enum(["AUTO", "AI", "MANUAL"]);
+// Writing type is validated against the AiRubricWritingType table at the service layer
+const essayWritingTypeSchema = z
+  .string()
+  .trim()
+  .min(1, "writingType must not be empty")
+  .max(50, "writingType must be at most 50 characters")
+  .regex(/^[A-Z0-9_]+$/, "writingType must be uppercase letters, digits, or underscore");
 
 // ── Request schemas ───────────────────────────────────────────────────────────
 
@@ -37,6 +44,9 @@ const createQuestionBodySchema = z
     type: z.enum(["MCQ", "ESSAY"]),
     difficulty: z.enum(["EASY", "MEDIUM", "HARD"]),
     questionText: z.string().min(1).max(5000),
+    writingType: essayWritingTypeSchema.optional(),
+    promptText: z.string().min(1).max(10000).optional(),
+    markingGuide: z.string().max(10000).nullable().optional(),
     latexEnabled: z.boolean().optional().default(false),
     adaptiveTags: z.array(z.string().min(1)).default([]),
     skillTags: z.array(z.string().min(1)).default([]),
@@ -45,10 +55,8 @@ const createQuestionBodySchema = z
     options: mcqOptionsSchema.optional(),
     correctAnswer: z.string().optional(),
     explanation: z.string().max(5000).optional(),
-    timeLimitSeconds: z.number().int().min(5).max(3600),
-    imageRef: z.string().max(255).optional(),
-    imageUrl: z.string().url().optional(),
-    imageUrls: z.array(z.string().min(1)).optional(),
+    timeLimitSeconds: z.number().int().min(5).max(3600).nullable().optional(),
+    imageRefs: z.array(z.string().min(1)).optional(),
     subtopics: z.array(z.string().min(1)).default([]),
     notes: z.string().max(2000).optional(),
     questionId: z.string().max(100).optional(),
@@ -72,14 +80,24 @@ const createQuestionBodySchema = z
     if (data.type === "ESSAY" && data.options !== undefined) {
       ctx.addIssue({ code: "custom", path: ["options"], message: "options must not be provided for ESSAY questions" });
     }
+    if (data.type === "ESSAY" && data.passageId) {
+      ctx.addIssue({ code: "custom", path: ["passageId"], message: "ESSAY questions must not use a passage" });
+    }
+    if (data.type === "ESSAY") {
+      if (!data.writingType) ctx.addIssue({ code: "custom", path: ["writingType"], message: "writingType is required for ESSAY questions" });
+      if (!data.promptText?.trim()) ctx.addIssue({ code: "custom", path: ["promptText"], message: "promptText is required for ESSAY questions" });
+      if (data.markingType !== "MANUAL" && !data.aiRubricId) {
+        ctx.addIssue({ code: "custom", path: ["aiRubricId"], message: "aiRubricId is required for ESSAY questions graded by AI" });
+      }
+    }
     if (data.type === "MCQ" && data.aiRubricId) {
       ctx.addIssue({ code: "custom", path: ["aiRubricId"], message: "MCQ questions must not use a aiRubric" });
     }
-    if (data.type === "MCQ" && data.markingType === "AI_RUBRIC") {
+    if (data.type === "MCQ" && data.markingType !== undefined && data.markingType !== "AUTO") {
       ctx.addIssue({ code: "custom", path: ["markingType"], message: "MCQ questions must use AUTO marking" });
     }
     if (data.type === "ESSAY" && data.markingType === "AUTO") {
-      ctx.addIssue({ code: "custom", path: ["markingType"], message: "ESSAY questions must use AI_RUBRIC marking" });
+      ctx.addIssue({ code: "custom", path: ["markingType"], message: "ESSAY questions must use AI or MANUAL marking" });
     }
   });
 
@@ -93,6 +111,9 @@ const updateQuestionBodySchema = z
     type: z.enum(["MCQ", "ESSAY"]).optional(),
     difficulty: z.enum(["EASY", "MEDIUM", "HARD"]).optional(),
     questionText: z.string().min(1).max(5000).optional(),
+    writingType: essayWritingTypeSchema.nullable().optional(),
+    promptText: z.string().min(1).max(10000).nullable().optional(),
+    markingGuide: z.string().max(10000).nullable().optional(),
     latexEnabled: z.boolean().optional(),
     adaptiveTags: z.array(z.string().min(1)).optional(),
     skillTags: z.array(z.string().min(1)).optional(),
@@ -102,9 +123,7 @@ const updateQuestionBodySchema = z
     correctAnswer: z.string().optional(),
     explanation: z.string().max(5000).optional(),
     timeLimitSeconds: z.number().int().min(5).max(3600).optional(),
-    imageRef: z.string().max(255).nullable().optional(),
-    imageUrl: z.string().url().nullable().optional(),
-    imageUrls: z.array(z.string().min(1)).optional(),
+    imageRefs: z.array(z.string().min(1)).optional(),
     subtopics: z.array(z.string().min(1)).optional(),
     notes: z.string().max(2000).nullable().optional(),
     questionId: z.string().max(100).optional(),
@@ -118,14 +137,17 @@ const updateQuestionBodySchema = z
     if (data.type === "ESSAY" && data.options !== undefined) {
       ctx.addIssue({ code: "custom", path: ["options"], message: "options must not be provided for ESSAY questions" });
     }
+    if (data.type === "ESSAY" && data.passageId) {
+      ctx.addIssue({ code: "custom", path: ["passageId"], message: "ESSAY questions must not use a passage" });
+    }
     if (data.type === "MCQ" && data.aiRubricId) {
       ctx.addIssue({ code: "custom", path: ["aiRubricId"], message: "MCQ questions must not use a aiRubric" });
     }
-    if (data.type === "MCQ" && data.markingType === "AI_RUBRIC") {
+    if (data.type === "MCQ" && data.markingType !== undefined && data.markingType !== "AUTO") {
       ctx.addIssue({ code: "custom", path: ["markingType"], message: "MCQ questions must use AUTO marking" });
     }
     if (data.type === "ESSAY" && data.markingType === "AUTO") {
-      ctx.addIssue({ code: "custom", path: ["markingType"], message: "ESSAY questions must use AI_RUBRIC marking" });
+      ctx.addIssue({ code: "custom", path: ["markingType"], message: "ESSAY questions must use AI or MANUAL marking" });
     }
   });
 
@@ -184,6 +206,9 @@ const questionSchema = z.object({
   type: z.enum(["MCQ", "ESSAY"]),
   difficulty: z.enum(["EASY", "MEDIUM", "HARD"]),
   questionText: z.string(),
+  writingType: z.string().nullable(),
+  promptText: z.string().nullable(),
+  markingGuide: z.string().nullable(),
   latexEnabled: z.boolean(),
   adaptiveTags: z.array(z.string()),
   skillTags: z.array(z.string()),
@@ -193,15 +218,13 @@ const questionSchema = z.object({
   correctAnswer: z.string(),
   explanation: z.string().nullable(),
   timeLimitSeconds: z.number().nullable(),
-  imageRef: z.string().nullable(),
-  image: z.object({
+  imageRefs: z.array(z.string()),
+  images: z.array(z.object({
     fileName: z.string(),
     url: z.string().nullable(),
     altText: z.string().nullable(),
     caption: z.string().nullable(),
-  }).nullable(),
-  imageUrl: z.string().nullable(),
-  imageUrls: z.array(z.string()),
+  })),
   subtopics: z.array(z.string()),
   notes: z.string().nullable(),
   status: z.enum(["DRAFT", "PENDING_APPROVAL", "PUBLISHED"]),
@@ -230,13 +253,15 @@ const paginatedQuestionsResponseSchema = z.object({
 
 const unresolvedRowDataSchema = z.object({
   questionId: z.string(),
-  testName: z.string().nullable(),
   questionNumber: z.number().nullable(),
   subjectName: z.string(),
   topicName: z.string(),
   type: z.string(),
   difficulty: z.string(),
   questionText: z.string(),
+  writingType: z.string().nullable(),
+  promptText: z.string().nullable(),
+  markingGuide: z.string().nullable(),
   optionA: z.string(),
   optionB: z.string(),
   optionC: z.string(),
@@ -245,9 +270,7 @@ const unresolvedRowDataSchema = z.object({
   correctAnswer: z.string(),
   explanation: z.string().nullable(),
   timeLimitSeconds: z.number().nullable(),
-  imageRef: z.string().nullable(),
-  imageUrl: z.string().nullable(),
-  imageUrls: z.array(z.string()),
+  imageRefs: z.array(z.string()),
   passageExternalId: z.string().nullable(),
   aiRubricId: z.string().nullable(),
   subtopics: z.array(z.string()),
@@ -304,12 +327,6 @@ const resolveImportResponseSchema = z.object({
   }),
 });
 
-const uploadQuestionImageResponseSchema = z.object({
-  success: z.literal(true),
-  message: z.string(),
-  data: questionSchema,
-});
-
 const bulkSubmitBodySchema = z.object({
   ids: z
     .array(z.string().uuid())
@@ -355,7 +372,6 @@ export const { schemas: questionSchemas, $ref: questionRef } = buildJsonSchemas(
   deleteQuestionResponseSchema,
   resolveImportBodySchema,
   resolveImportResponseSchema,
-  uploadQuestionImageResponseSchema,
 });
 
 export type BulkSubmitBody = z.infer<typeof bulkSubmitBodySchema>;

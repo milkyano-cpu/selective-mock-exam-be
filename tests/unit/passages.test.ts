@@ -14,16 +14,21 @@ const now = new Date("2026-05-08T00:00:00.000Z");
 function passage(overrides: Record<string, unknown> = {}) {
   return {
     id: "passage-1",
-    externalId: "P001",
+    passageId: "RC001",
     title: "Reading Passage",
-    content: "A short reading passage.",
-    imageUrl: null,
+    text: "A short reading passage.",
     imageRef: null,
     image: null,
-    passageType: "TEXT",
-    section: "Reading",
+    passageFormat: "text",
+    passageType: "comprehension",
+    imageDisplayPosition: null,
+    subjectId: "subject-reading",
+    subject: { id: "subject-reading", name: "Reading Comprehension" },
     difficulty: "MEDIUM",
-    topic: "Inference",
+    topicId: "topic-inference",
+    topic: { id: "topic-inference", name: "Inference" },
+    imageAltText: null,
+    imageCaption: null,
     latexEnabled: false,
     notes: null,
     createdAt: now,
@@ -55,6 +60,13 @@ function mockPrisma(overrides: Record<string, unknown> = {}) {
     question: {
       count: jest.fn(async () => 0),
     },
+    subject: {
+      findUnique: jest.fn(async () => ({ name: "Reading Comprehension" })),
+      findFirst: jest.fn(async () => ({ id: "subject-reading", name: "Reading Comprehension" })),
+    },
+    topic: {
+      findFirst: jest.fn(async () => ({ id: "topic-inference" })),
+    },
     image: {
       findUnique: jest.fn(async () => null),
       create: jest.fn(async () => ({ uuid: "image-1" })),
@@ -71,10 +83,11 @@ function csvBuffer(rows: Array<Record<string, string>>) {
     "PassageID",
     "PassageTitle",
     "PassageText",
-    "PassageImageURL",
+    "PassageFormat",
     "PassageImageRef",
     "ImageAltText",
-    "ImagesCaption",
+    "ImageCaption",
+    "ImageDisplayPosition",
     "PassageType",
     "Section",
     "Difficulty",
@@ -111,10 +124,13 @@ function mockRequest(overrides: Record<string, unknown> = {}) {
     query: { page: 1, limit: 20 },
     params: { id: "passage-1" },
     body: {
-      externalId: "P001",
       title: "Reading Passage",
-      content: "A short reading passage.",
-      passageType: "TEXT",
+      text: "A short reading passage.",
+      passageFormat: "text",
+      passageType: "comprehension",
+      subjectId: "subject-reading",
+      topicId: "topic-inference",
+      difficulty: "MEDIUM",
     },
     server: { prisma: mockPrisma() },
     log: { info: jest.fn() },
@@ -124,36 +140,40 @@ function mockRequest(overrides: Record<string, unknown> = {}) {
 }
 
 describe("passages module", () => {
-  it("creates a passage and returns its detail", async () => {
+  it("creates a passage with auto-generated passageId", async () => {
     const prisma = mockPrisma({
       passage: {
         ...mockPrisma().passage,
-        findUnique: jest
-          .fn()
-          .mockResolvedValueOnce(null as never)
-          .mockResolvedValueOnce(passageDetail() as never),
+        findMany: jest.fn(async () => []),
+        findUnique: jest.fn(async () => passageDetail()),
       },
     });
 
     const result = await createPassage(prisma as never, {
-      externalId: "P001",
       title: "Reading Passage",
-      content: "A short reading passage.",
-      passageType: "TEXT",
+      text: "A short reading passage.",
+      passageFormat: "text",
+      passageType: "comprehension",
+      subjectId: "subject-reading",
+      topicId: "topic-inference",
+      difficulty: "MEDIUM",
       latexEnabled: true,
     });
 
     expect(prisma.passage.create).toHaveBeenCalledWith({
       data: {
-        externalId: "P001",
+        passageId: "RC001",
         title: "Reading Passage",
-        content: "A short reading passage.",
-        imageUrl: null,
+        text: "A short reading passage.",
         imageRef: null,
-        passageType: "TEXT",
-        section: null,
-        difficulty: null,
-        topic: null,
+        imageAltText: null,
+        imageCaption: null,
+        passageFormat: "text",
+        passageType: "comprehension",
+        imageDisplayPosition: null,
+        subjectId: "subject-reading",
+        topicId: "topic-inference",
+        difficulty: "MEDIUM",
         latexEnabled: true,
         notes: null,
       },
@@ -162,15 +182,31 @@ describe("passages module", () => {
     expect(result).toEqual(passageDetail());
   });
 
-  it("rejects duplicate external ids on create", async () => {
-    await expect(
-      createPassage(mockPrisma() as never, {
-        externalId: "P001",
-        content: "Duplicate passage",
-      })
-    ).rejects.toMatchObject({
-      statusCode: 409,
-      message: 'Passage with externalId "P001" already exists',
+  it("auto-increments passageId based on existing rows", async () => {
+    const prisma = mockPrisma({
+      passage: {
+        ...mockPrisma().passage,
+        findMany: jest.fn(async () => [
+          { passageId: "RC001" },
+          { passageId: "RC005" },
+          { passageId: "RC003" },
+        ]),
+        findUnique: jest.fn(async () => passageDetail()),
+      },
+    });
+
+    await createPassage(prisma as never, {
+      text: "Next passage",
+      passageFormat: "text",
+      passageType: "comprehension",
+      subjectId: "subject-reading",
+      topicId: "topic-inference",
+      difficulty: "MEDIUM",
+    });
+
+    expect(prisma.passage.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ passageId: "RC006" }),
+      select: { id: true },
     });
   });
 
@@ -182,9 +218,9 @@ describe("passages module", () => {
     expect(prisma.passage.findMany).toHaveBeenCalledWith({
       where: {
         OR: [
-          { content: { contains: "logic", mode: "insensitive" } },
+          { text: { contains: "logic", mode: "insensitive" } },
           { title: { contains: "logic", mode: "insensitive" } },
-          { externalId: { contains: "logic", mode: "insensitive" } },
+          { passageId: { contains: "logic", mode: "insensitive" } },
         ],
       },
       select: expect.any(Object),
@@ -209,40 +245,20 @@ describe("passages module", () => {
     });
   });
 
-  it("updates a passage and rejects conflicting external ids", async () => {
+  it("updates a passage without touching passageId", async () => {
     const prisma = mockPrisma();
 
     await updatePassage(prisma as never, "passage-1", {
-      externalId: "P002",
       title: "Updated Passage",
       latexEnabled: true,
     });
 
-    expect(prisma.passage.findFirst).toHaveBeenCalledWith({
-      where: { externalId: "P002", NOT: { id: "passage-1" } },
-      select: { id: true },
-    });
     expect(prisma.passage.update).toHaveBeenCalledWith({
       where: { id: "passage-1" },
       data: {
-        externalId: "P002",
         title: "Updated Passage",
         latexEnabled: true,
       },
-    });
-
-    const conflictPrisma = mockPrisma({
-      passage: {
-        ...mockPrisma().passage,
-        findFirst: jest.fn(async () => ({ id: "other-passage" })),
-      },
-    });
-
-    await expect(
-      updatePassage(conflictPrisma as never, "passage-1", { externalId: "P002" })
-    ).rejects.toMatchObject({
-      statusCode: 409,
-      message: 'Another passage with externalId "P002" already exists',
     });
   });
 
@@ -264,16 +280,16 @@ describe("passages module", () => {
     });
   });
 
-  it("imports passages by generating RC ids, creating image metadata, and reporting row failures", async () => {
+  it("imports passages with auto-generated passageId, ignoring the CSV PassageID column", async () => {
     const prisma = mockPrisma({
       passage: {
         ...mockPrisma().passage,
+        findMany: jest.fn(async () => []),
         create: jest
           .fn()
           .mockResolvedValueOnce({ id: "created-passage" } as never)
           .mockResolvedValueOnce({ id: "image-passage" } as never)
           .mockRejectedValueOnce(new Error("db failed") as never),
-        update: jest.fn(async () => passage()),
       },
     });
 
@@ -285,6 +301,8 @@ describe("passages module", () => {
           PassageTitle: "Created",
           PassageText: "Text",
           PassageType: "text",
+          Section: "Reading Comprehension",
+          Topic: "Inference",
           Difficulty: "easy",
           LatexEnabled: "yes",
         },
@@ -293,20 +311,27 @@ describe("passages module", () => {
           PassageTitle: "Created with image",
           PassageImageRef: "images/passage.png",
           ImageAltText: "Passage alt",
-          ImagesCaption: "Passage caption",
+          ImageCaption: "Passage caption",
           PassageType: "image",
+          Section: "Reading Comprehension",
+          Topic: "Inference",
           Difficulty: "hard",
         },
         {
           PassageID: "P003",
           PassageTitle: "Invalid",
           PassageType: "Video",
+          Section: "Reading Comprehension",
+          Topic: "Inference",
           Difficulty: "Impossible",
         },
         {
           PassageID: "P004",
           PassageTitle: "DB error",
           PassageText: "Text",
+          Section: "Reading Comprehension",
+          Topic: "Inference",
+          Difficulty: "medium",
         },
       ])
     );
@@ -320,36 +345,92 @@ describe("passages module", () => {
         {
           row: 4,
           reason:
-            'At least one of PassageText or PassageImageRef is required; PassageType "Video" must be Text, Image, or Text+Image; Difficulty "Impossible" must be Easy, Medium, or Hard',
+            'PassageFormat is required or must be inferable from PassageText/PassageImageRef; PassageType "Video" must be comprehension, poem, or visual; PassageType is required or must be inferable from PassageFormat; Difficulty "Impossible" must be Easy, Medium, or Hard',
         },
         { row: 5, reason: "Database error while saving row" },
       ],
     });
     expect(prisma.passage.create).toHaveBeenNthCalledWith(1, {
       data: expect.objectContaining({
-        externalId: "RC001",
-        passageType: "TEXT",
+        passageId: "RC001",
+        text: "Text",
+        passageFormat: "text",
+        passageType: "comprehension",
         difficulty: "EASY",
         latexEnabled: true,
       }),
     });
     expect(prisma.passage.create).toHaveBeenNthCalledWith(2, {
       data: expect.objectContaining({
-        externalId: "RC002",
-        imageRef: "passage.png",
-        passageType: "IMAGE",
+        passageId: "RC002",
+        imageRef: "images/passage.png",
+        imageAltText: "Passage alt",
+        imageCaption: "Passage caption",
+        passageFormat: "image_only",
+        passageType: "visual",
         difficulty: "HARD",
       }),
     });
     expect(prisma.image.create).toHaveBeenCalledWith({
       data: {
-        fileName: "passage.png",
+        fileName: "images/passage.png",
         altText: "Passage alt",
         caption: "Passage caption",
         expiredDate: null,
       },
     });
     expect(prisma.passage.update).not.toHaveBeenCalled();
+  });
+
+  it("resolves passage Section and Topic columns from CSV", async () => {
+    const subjectFindFirst = jest.fn(async () => ({ id: "subject-reading", name: "Reading Comprehension" }));
+    const topicFindFirst = jest.fn(async () => ({ id: "topic-main-idea" }));
+    const prisma = mockPrisma({
+      subject: {
+        findFirst: subjectFindFirst,
+      },
+      topic: {
+        findFirst: topicFindFirst,
+      },
+      passage: {
+        ...mockPrisma().passage,
+        findMany: jest.fn(async () => []),
+        create: jest.fn(async () => ({ id: "created-passage" })),
+      },
+    });
+
+    const result = await importPassages(
+      prisma as never,
+      csvBuffer([
+        {
+          PassageID: "RC001",
+          PassageTitle: "Reading passage",
+          PassageText: "Text",
+          Section: "Reading Comprehension",
+          Topic: "Main Idea",
+          Difficulty: "medium",
+        },
+      ])
+    );
+
+    expect(result).toEqual({ total: 1, created: 1, updated: 0, failed: 0, errors: [] });
+    expect(subjectFindFirst).toHaveBeenCalledWith({
+      where: { name: { equals: "Reading Comprehension", mode: "insensitive" } },
+      select: { id: true, name: true },
+    });
+    expect(topicFindFirst).toHaveBeenCalledWith({
+      where: { name: { equals: "Main Idea", mode: "insensitive" }, subjectId: "subject-reading" },
+      select: { id: true },
+    });
+    expect(prisma.passage.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        passageFormat: "text",
+        passageType: "comprehension",
+        difficulty: "MEDIUM",
+        subjectId: "subject-reading",
+        topicId: "topic-main-idea",
+      }),
+    });
   });
 
   it("rejects malformed and oversized passage CSV files", async () => {
@@ -368,7 +449,7 @@ describe("passages module", () => {
     });
   });
 
-  it("imports passages without external ids as new rows", async () => {
+  it("reports remaining required-field errors even without PassageID column", async () => {
     const prisma = mockPrisma();
 
     const result = await importPassages(
@@ -376,23 +457,26 @@ describe("passages module", () => {
       csvBuffer([{ PassageTitle: "Ad hoc passage", PassageText: "Text without external id" }])
     );
 
-    expect(result).toEqual({ total: 1, created: 1, updated: 0, failed: 0, errors: [] });
-    expect(prisma.passage.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        title: "Ad hoc passage",
-        content: "Text without external id",
-      }),
+    expect(result).toEqual({
+      total: 1,
+      created: 0,
+      updated: 0,
+      failed: 1,
+      errors: [
+        {
+          row: 2,
+          reason: "Difficulty is required; Section is required; Topic is required",
+        },
+      ],
     });
+    expect(prisma.passage.create).not.toHaveBeenCalled();
   });
 
   it("handles passage controller CRUD responses", async () => {
     const prisma = mockPrisma({
       passage: {
         ...mockPrisma().passage,
-        findUnique: jest
-          .fn()
-          .mockResolvedValueOnce(null as never)
-          .mockResolvedValue(passageDetail() as never),
+        findUnique: jest.fn(async () => passageDetail()),
       },
     });
     const request = mockRequest({ server: { prisma } });
@@ -437,7 +521,13 @@ describe("passages module", () => {
       server: { prisma },
       file: jest.fn(async () => ({
         filename: "passages.csv",
-        toBuffer: jest.fn(async () => csvBuffer([{ PassageID: "P001", PassageText: "Text" }])),
+        toBuffer: jest.fn(async () => csvBuffer([{
+          PassageID: "P001",
+          PassageText: "Text",
+          Section: "Reading Comprehension",
+          Topic: "Inference",
+          Difficulty: "medium",
+        }])),
       })),
     });
     const reply = mockReply();

@@ -13,7 +13,6 @@ import {
   rejectQuestionHandler,
   bulkImportQuestionsHandler,
   resolveImportHandler,
-  uploadQuestionImageHandler,
   getNextQuestionIdHandler,
 } from "./questions.controller.js";
 
@@ -125,19 +124,6 @@ export async function questionRoutes(fastify: FastifyInstance) {
     },
     preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
     handler: deleteQuestionHandler,
-  });
-
-  // POST /questions/:id/image
-  fastify.post("/:id/image", {
-    schema: {
-      tags: ["Questions"],
-      summary: "Upload an image for a question (replaces imageUrl 'true' placeholder)",
-      consumes: ["multipart/form-data"],
-      params: questionRef("idParamSchema"),
-      response: { 200: questionRef("uploadQuestionImageResponseSchema") },
-    },
-    preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
-    handler: uploadQuestionImageHandler,
   });
 
   // PATCH /questions/:id/submit

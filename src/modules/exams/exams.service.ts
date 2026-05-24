@@ -6,7 +6,6 @@ import { generateSessionInsightsWithAi } from "../../utils/ai-insights.js";
 import {
   IMAGE_SUMMARY_SELECT,
   serializeImageSummary,
-  type ImageSummaryRecord,
 } from "../images/images.service.js";
 import type {
   CreateExamBody,
@@ -56,11 +55,6 @@ function calculateRankingLevel(
 
 function normalizeQuestionMaxMarks(maxMarks: number) {
   return Number.isFinite(maxMarks) && maxMarks > 0 ? maxMarks : 1;
-}
-
-function scorePercentToAwardedMarks(scorePercent: number, maxMarks: number) {
-  const boundedPercent = Math.min(100, Math.max(0, scorePercent));
-  return Number(((boundedPercent / 100) * maxMarks).toFixed(2));
 }
 
 function isAwardedMarksCorrect(awardedMarks: number, maxMarks: number) {
@@ -155,6 +149,11 @@ async function assertQuestionBelongsToExam(
   if (!examQuestion) throw createHttpError(404, "Question not found in this exam");
 }
 
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
 function serializeAiFeedback(aiFeedback: unknown) {
   if (!aiFeedback || typeof aiFeedback !== "object" || Array.isArray(aiFeedback)) return null;
 
@@ -172,11 +171,15 @@ function serializeAiFeedback(aiFeedback: unknown) {
             score: typeof score.score === "number" ? score.score : 0,
             maxScore: typeof score.maxScore === "number" ? score.maxScore : 0,
             feedback: typeof score.feedback === "string" ? score.feedback : "",
+            strengths: toStringArray(score.strengths),
+            improvements: toStringArray(score.improvements),
           };
         })
-        .filter((item): item is { criterionId: string; criterionName: string; score: number; maxScore: number; feedback: string } => item !== null && Boolean(item.criterionId))
+        .filter((item): item is { criterionId: string; criterionName: string; score: number; maxScore: number; feedback: string; strengths: string[]; improvements: string[] } => item !== null && Boolean(item.criterionId))
     : [];
 
+  // NOTE: `aiModel` is intentionally NOT passed through. Per final-design,
+  // the AI label must stay hidden from students.
   return {
     isCorrect: typeof value.isCorrect === "boolean" ? value.isCorrect : null,
     confidence:
@@ -184,6 +187,11 @@ function serializeAiFeedback(aiFeedback: unknown) {
         ? confidence
         : null,
     feedback: typeof value.feedback === "string" ? value.feedback : null,
+    overallFeedback: typeof value.overallFeedback === "string" ? value.overallFeedback : null,
+    strengths: toStringArray(value.strengths),
+    improvements: toStringArray(value.improvements),
+    bandLabel: typeof value.bandLabel === "string" ? value.bandLabel : null,
+    bandDescriptor: typeof value.bandDescriptor === "string" ? value.bandDescriptor : null,
     pendingReview: typeof value.pendingReview === "boolean" ? value.pendingReview : null,
     reason: typeof value.reason === "string" ? value.reason : null,
     gradedAt: typeof value.gradedAt === "string" ? value.gradedAt : null,
@@ -224,7 +232,7 @@ function evaluateSessionOutcome(params: {
     question: {
       id: string;
       type: "MCQ" | "ESSAY";
-      correctAnswer: string;
+      correctAnswer: string | null;
       maxMarks: number;
     };
   }>;
@@ -242,8 +250,10 @@ function evaluateSessionOutcome(params: {
 }) {
   let pendingReviewCount = 0;
   let correctCount = 0;
-  let totalAwardedMarks = 0;
-  let totalPossibleMarks = 0;
+  let mcqAwardedMarks = 0;
+  let mcqPossibleMarks = 0;
+  let essayAwardedMarks = 0;
+  let essayPossibleMarks = 0;
 
   for (const eq of params.examQuestions) {
     const answer = params.answerMap.get(eq.questionId);
@@ -251,15 +261,18 @@ function evaluateSessionOutcome(params: {
     const manualScore = answer?.manualScore ?? null;
     const aiFeedback = serializeAiFeedback(answer?.aiFeedback ?? null);
     const maxMarks = normalizeQuestionMaxMarks(eq.question.maxMarks);
-    totalPossibleMarks += maxMarks;
 
     if (eq.question.type === "MCQ") {
+      mcqPossibleMarks += maxMarks;
       const isCorrect =
-        studentAnswer.trim().toUpperCase() === eq.question.correctAnswer.trim().toUpperCase();
-      totalAwardedMarks += isCorrect ? maxMarks : 0;
+        studentAnswer.trim().toUpperCase() === (eq.question.correctAnswer ?? "").trim().toUpperCase();
+      mcqAwardedMarks += isCorrect ? maxMarks : 0;
       if (isCorrect) correctCount++;
       continue;
     }
+
+    // ESSAY from here on
+    essayPossibleMarks += maxMarks;
 
     if (params.gradingType === "MANUAL") {
       if (studentAnswer.trim() && manualScore === null) {
@@ -268,13 +281,13 @@ function evaluateSessionOutcome(params: {
       }
 
       const awardedMarks = manualScore ?? 0;
-      totalAwardedMarks += Math.min(maxMarks, Math.max(0, awardedMarks));
+      essayAwardedMarks += Math.min(maxMarks, Math.max(0, awardedMarks));
       if (isAwardedMarksCorrect(awardedMarks, maxMarks)) correctCount++;
       continue;
     }
 
     if (manualScore !== null) {
-      totalAwardedMarks += Math.min(maxMarks, Math.max(0, manualScore));
+      essayAwardedMarks += Math.min(maxMarks, Math.max(0, manualScore));
       if (isAwardedMarksCorrect(manualScore, maxMarks)) correctCount++;
       continue;
     }
@@ -289,8 +302,10 @@ function evaluateSessionOutcome(params: {
     }
 
     if (aiFeedback) {
-      const scorePercent = aiFeedback.scorePercent ?? (aiFeedback.isCorrect ? 100 : 0);
-      totalAwardedMarks += scorePercentToAwardedMarks(scorePercent, maxMarks);
+      // Per final-design: awardedMarks is the raw sum stored at AI grading time.
+      // Re-use the stored value instead of re-deriving from scorePercent.
+      const awarded = answer?.awardedMarks ?? 0;
+      essayAwardedMarks += Math.min(maxMarks, Math.max(0, Number(awarded)));
       if (aiFeedback.isCorrect) correctCount++;
       continue;
     }
@@ -298,21 +313,30 @@ function evaluateSessionOutcome(params: {
     pendingReviewCount++;
   }
 
+  const mcqScore = mcqPossibleMarks > 0 ? (mcqAwardedMarks / mcqPossibleMarks) * 100 : null;
+  const essayScore = essayPossibleMarks > 0 ? (essayAwardedMarks / essayPossibleMarks) * 100 : null;
+
   if (pendingReviewCount > 0) {
     return {
       status: "SUBMITTED" as const,
       finalScore: null,
+      mcqScore,
+      essayScore,
       rankingLevel: null,
       pendingReviewCount,
       correctCount,
     };
   }
 
+  const totalAwardedMarks = mcqAwardedMarks + essayAwardedMarks;
+  const totalPossibleMarks = mcqPossibleMarks + essayPossibleMarks;
   const finalScore = totalPossibleMarks > 0 ? (totalAwardedMarks / totalPossibleMarks) * 100 : 0;
 
   return {
     status: "GRADED" as const,
     finalScore,
+    mcqScore,
+    essayScore,
     rankingLevel: calculateRankingLevel(finalScore, params.thresholds),
     pendingReviewCount,
     correctCount,
@@ -566,11 +590,8 @@ function serializeExamQuestion(eq: {
     questionText: string;
     latexEnabled: boolean;
     options: unknown;
-    correctAnswer: string;
-    imageUrl: string | null;
-    imageRef: string | null;
-    image: ImageSummaryRecord | null;
-    imageUrls: string[];
+    correctAnswer: string | null;
+    imageRefs: string[];
     subject: { name: string };
     topic: { name: string };
   };
@@ -588,10 +609,8 @@ function serializeExamQuestion(eq: {
       latexEnabled: eq.question.latexEnabled,
       options: eq.question.options as Array<{ key: string; text: string }> | null,
       correctAnswer: eq.question.correctAnswer,
-      imageRef: eq.question.imageRef,
-      image: serializeImageSummary(eq.question.image),
-      imageUrl: eq.question.imageUrl,
-      imageUrls: eq.question.imageUrls,
+      imageRefs: eq.question.imageRefs,
+      images: eq.question.imageRefs.map((fileName) => ({ fileName, url: null, altText: null, caption: null })),
       subjectName: eq.question.subject.name,
       topicName: eq.question.topic.name,
     },
@@ -612,10 +631,7 @@ const EXAM_QUESTION_SELECT = {
       latexEnabled: true,
       options: true,
       correctAnswer: true,
-      imageRef: true,
-      image: { select: IMAGE_SUMMARY_SELECT },
-      imageUrl: true,
-      imageUrls: true,
+      imageRefs: true,
       subject: { select: { name: true } },
       topic: { select: { name: true } },
     },
@@ -754,17 +770,14 @@ export async function startOrResumeSession(
               questionText: true,
               latexEnabled: true,
               options: true,
-              imageUrl: true,
-              imageRef: true,
-              image: { select: IMAGE_SUMMARY_SELECT },
-              imageUrls: true,
+              imageRefs: true,
               subject: { select: { name: true } },
               topic: { select: { name: true } },
               passage: {
                 select: {
                   id: true,
                   title: true,
-                  content: true,
+                  text: true,
                   imageRef: true,
                   imageDisplayPosition: true,
                   image: { select: IMAGE_SUMMARY_SELECT },
@@ -842,18 +855,17 @@ export async function startOrResumeSession(
     questionText: eq.question.questionText,
     latexEnabled: eq.question.latexEnabled,
     options: eq.question.options as Array<{ key: string; text: string }> | null,
-    imageRef: eq.question.imageRef,
-    image: serializeImageSummary(eq.question.image),
-    imageUrl: eq.question.imageUrl,
-    imageUrls: eq.question.imageUrls,
+    imageRefs: eq.question.imageRefs,
+    images: eq.question.imageRefs.map((fileName) => ({ fileName, url: null, altText: null, caption: null })),
     subjectName: eq.question.subject.name,
     topicName: eq.question.topic.name,
     passage: eq.question.passage
       ? {
           id: eq.question.passage.id,
           title: eq.question.passage.title,
-          content: eq.question.passage.content,
+          text: eq.question.passage.text,
           imageRef: eq.question.passage.imageRef,
+          imageDisplayPosition: eq.question.passage.imageDisplayPosition,
           image: serializeImageSummary(eq.question.passage.image),
         }
       : null,
@@ -909,10 +921,7 @@ export async function startRetakeSession(
               questionText: true,
               latexEnabled: true,
               options: true,
-              imageUrl: true,
-              imageRef: true,
-              image: { select: IMAGE_SUMMARY_SELECT },
-              imageUrls: true,
+              imageRefs: true,
               subjectId: true,
               subject: { select: { name: true } },
               topic: { select: { name: true } },
@@ -920,7 +929,7 @@ export async function startRetakeSession(
                 select: {
                   id: true,
                   title: true,
-                  content: true,
+                  text: true,
                   imageRef: true,
                   imageDisplayPosition: true,
                   image: { select: IMAGE_SUMMARY_SELECT },
@@ -1057,18 +1066,17 @@ export async function startRetakeSession(
     questionText: eq.question.questionText,
     latexEnabled: eq.question.latexEnabled,
     options: eq.question.options as Array<{ key: string; text: string }> | null,
-    imageRef: eq.question.imageRef,
-    image: serializeImageSummary(eq.question.image),
-    imageUrl: eq.question.imageUrl,
-    imageUrls: eq.question.imageUrls,
+    imageRefs: eq.question.imageRefs,
+    images: eq.question.imageRefs.map((fileName) => ({ fileName, url: null, altText: null, caption: null })),
     subjectName: eq.question.subject.name,
     topicName: eq.question.topic.name,
     passage: eq.question.passage
       ? {
           id: eq.question.passage.id,
           title: eq.question.passage.title,
-          content: eq.question.passage.content,
+          text: eq.question.passage.text,
           imageRef: eq.question.passage.imageRef,
+          imageDisplayPosition: eq.question.passage.imageDisplayPosition,
           image: serializeImageSummary(eq.question.passage.image),
         }
       : null,
@@ -1136,6 +1144,8 @@ export async function getExamAttemptSummary(
       attemptNumber: true,
       retakeMode: true,
       finalScore: true,
+      mcqScore: true,
+      essayScore: true,
       rankingLevel: true,
       totalTimeSeconds: true,
       activeTimeSeconds: true,
@@ -1190,7 +1200,7 @@ export async function getExamAttemptSummary(
     subjectName: string;
     topicName: string;
     studentAnswer: string;
-    correctAnswer: string;
+    correctAnswer: string | null;
   }> = [];
 
   if (latestGraded) {
@@ -1258,7 +1268,7 @@ export async function getExamAttemptSummary(
     }));
   }
 
-  return {
+  const summary = {
     examId: exam.id,
     examTitle: exam.title,
     totalAttempts: sessions.length,
@@ -1268,6 +1278,36 @@ export async function getExamAttemptSummary(
     incorrectQuestions,
     subjects,
   };
+
+  await prisma.examAttemptSummary.upsert({
+    where: { examId_studentId: { examId, studentId } },
+    create: {
+      examId,
+      studentId,
+      totalAttempts: sessions.length,
+      firstSessionId: firstAttempt?.sessionId ?? null,
+      latestSessionId: latestAttempt?.sessionId ?? null,
+      bestSessionId: bestScore?.sessionId ?? null,
+      firstScore: firstAttempt?.finalScore ?? null,
+      latestScore: latestAttempt?.finalScore ?? null,
+      bestScore: bestScore?.finalScore ?? null,
+      incorrectQuestionIds: incorrectQuestions.map((question) => question.questionId),
+      subjectBreakdown: subjects as Prisma.InputJsonValue,
+    },
+    update: {
+      totalAttempts: sessions.length,
+      firstSessionId: firstAttempt?.sessionId ?? null,
+      latestSessionId: latestAttempt?.sessionId ?? null,
+      bestSessionId: bestScore?.sessionId ?? null,
+      firstScore: firstAttempt?.finalScore ?? null,
+      latestScore: latestAttempt?.finalScore ?? null,
+      bestScore: bestScore?.finalScore ?? null,
+      incorrectQuestionIds: incorrectQuestions.map((question) => question.questionId),
+      subjectBreakdown: subjects as Prisma.InputJsonValue,
+    },
+  });
+
+  return summary;
 }
 
 export async function upsertAnswer(
@@ -1691,6 +1731,8 @@ export async function listExamSubmissions(
         studentId: true,
         status: true,
         finalScore: true,
+        mcqScore: true,
+        essayScore: true,
         rankingLevel: true,
         endTime: true,
         totalTimeSeconds: true,
@@ -1783,6 +1825,8 @@ export async function getReviewSession(
       examId: true,
       status: true,
       finalScore: true,
+      mcqScore: true,
+      essayScore: true,
       rankingLevel: true,
       totalTimeSeconds: true,
       activeTimeSeconds: true,
@@ -1816,13 +1860,12 @@ export async function getReviewSession(
                   correctAnswer: true,
                   explanation: true,
                   maxMarks: true,
-                  imageRef: true,
-                  image: { select: IMAGE_SUMMARY_SELECT },
+                  imageRefs: true,
                   passage: {
                     select: {
                       id: true,
                       title: true,
-                      content: true,
+                      text: true,
                       imageRef: true,
                       imageDisplayPosition: true,
                       image: { select: IMAGE_SUMMARY_SELECT },
@@ -1845,6 +1888,9 @@ export async function getReviewSession(
           manualScore: true,
           tutorFeedback: true,
           aiFeedback: true,
+          isOverridden: true,
+          overrideScore: true,
+          overrideNotes: true,
         },
       },
     },
@@ -1866,6 +1912,8 @@ export async function getReviewSession(
       email: decryptField(session.student.emailEncrypted),
     },
     finalScore: session.finalScore !== null && session.finalScore !== undefined ? Number(session.finalScore) : null,
+    mcqScore: session.mcqScore !== null && session.mcqScore !== undefined ? Number(session.mcqScore) : null,
+    essayScore: session.essayScore !== null && session.essayScore !== undefined ? Number(session.essayScore) : null,
     rankingLevel: session.rankingLevel as
       | "SUPERIOR"
       | "ABOVE_AVERAGE"
@@ -1897,13 +1945,13 @@ export async function getReviewSession(
         correctAnswer: eq.question.correctAnswer,
         explanation: eq.question.explanation ?? null,
         maxMarks: normalizeQuestionMaxMarks(eq.question.maxMarks),
-        imageRef: eq.question.imageRef,
-        image: serializeImageSummary(eq.question.image ?? null),
+        imageRefs: eq.question.imageRefs,
+        images: eq.question.imageRefs.map((fileName) => ({ fileName, url: null, altText: null, caption: null })),
         passage: passage
           ? {
               id: passage.id,
               title: passage.title,
-              content: passage.content,
+              text: passage.text,
               imageRef: passage.imageRef,
               imageDisplayPosition: passage.imageDisplayPosition,
               image: serializeImageSummary(passage.image),
@@ -1923,6 +1971,9 @@ export async function getReviewSession(
           aiFeedback,
         }),
         aiFeedback,
+        isOverridden: answer?.isOverridden ?? false,
+        overrideScore: answer?.overrideScore !== null && answer?.overrideScore !== undefined ? Number(answer.overrideScore) : null,
+        overrideNotes: answer?.overrideNotes ?? null,
       };
     }),
   };
@@ -1931,7 +1982,8 @@ export async function getReviewSession(
 export async function submitManualGrades(
   prisma: PrismaClient,
   sessionId: string,
-  body: SubmitManualGradesBody
+  body: SubmitManualGradesBody,
+  graderId?: string,
 ) {
   const session = await prisma.examSession.findUnique({
     where: { id: sessionId },
@@ -2037,16 +2089,25 @@ export async function submitManualGrades(
       const tutorFeedback = normalizeTutorFeedback(grade.tutorFeedback);
 
       if (existingAnswer) {
+        // Tutor override: preserve AI's `awardedMarks` for audit trail.
+        // Per final-design: `isOverridden=true` → display logic shows `overrideScore`,
+        // `awardedMarks` keeps AI's original raw score untouched.
         await tx.studentAnswer.update({
           where: { id: existingAnswer.id },
           data: {
             manualScore,
-            awardedMarks,
             tutorFeedback,
             isCorrect,
+            isOverridden: true,
+            overrideScore: manualScore,
+            overrideNotes: tutorFeedback,
+            overriddenBy: graderId ?? null,
           },
         });
       } else {
+        // No prior AI grading exists for this question (e.g. tutor scoring a
+        // question the student skipped). awardedMarks stays null since AI
+        // never produced a score; overrideScore holds the tutor's value.
         const created = await tx.studentAnswer.create({
           data: {
             sessionId,
@@ -2054,9 +2115,13 @@ export async function submitManualGrades(
             studentAnswer: "",
             timeSpentSeconds: 0,
             manualScore,
-            awardedMarks,
+            awardedMarks: null,
             tutorFeedback,
             isCorrect,
+            isOverridden: true,
+            overrideScore: manualScore,
+            overrideNotes: tutorFeedback,
+            overriddenBy: graderId ?? null,
           },
           select: {
             id: true,
@@ -2120,6 +2185,8 @@ export async function submitManualGrades(
       data: {
         status: nextOutcome.status,
         finalScore: nextOutcome.finalScore,
+        mcqScore: nextOutcome.mcqScore,
+        essayScore: nextOutcome.essayScore,
         rankingLevel: nextOutcome.rankingLevel,
       },
     });
@@ -2178,6 +2245,8 @@ export async function submitManualGrades(
       studentId: true,
       status: true,
       finalScore: true,
+      mcqScore: true,
+      essayScore: true,
       rankingLevel: true,
       answers: {
         select: {
@@ -2230,6 +2299,10 @@ export async function submitManualGrades(
     }).catch(() => undefined);
   }
 
+  if (refreshedSession.status === "GRADED") {
+    await getExamAttemptSummary(prisma, refreshedSession.exam.id, refreshedSession.studentId);
+  }
+
   return {
     sessionId: refreshedSession.id,
     status: refreshedSession.status as "SUBMITTED" | "GRADED",
@@ -2261,6 +2334,8 @@ export async function getSessionResult(
       studentId: true,
       status: true,
       finalScore: true,
+      mcqScore: true,
+      essayScore: true,
       rankingLevel: true,
       totalTimeSeconds: true,
       activeTimeSeconds: true,
@@ -2302,6 +2377,9 @@ export async function getSessionResult(
           manualScore: true,
           tutorFeedback: true,
           aiFeedback: true,
+          isOverridden: true,
+          overrideScore: true,
+          overrideNotes: true,
         },
       },
     },
@@ -2348,6 +2426,9 @@ export async function getSessionResult(
       tutorFeedback: answer?.tutorFeedback ?? null,
       reviewStatus,
       aiFeedback,
+      isOverridden: answer?.isOverridden ?? false,
+      overrideScore: answer?.overrideScore !== null && answer?.overrideScore !== undefined ? Number(answer.overrideScore) : null,
+      overrideNotes: answer?.overrideNotes ?? null,
     };
   });
 
@@ -2357,6 +2438,8 @@ export async function getSessionResult(
     examTitle: session.exam.title,
     status: session.status as "SUBMITTED" | "GRADED",
     finalScore: session.finalScore !== null && session.finalScore !== undefined ? Number(session.finalScore) : null,
+    mcqScore: session.mcqScore !== null && session.mcqScore !== undefined ? Number(session.mcqScore) : null,
+    essayScore: session.essayScore !== null && session.essayScore !== undefined ? Number(session.essayScore) : null,
     rankingLevel: session.rankingLevel as
       | "SUPERIOR"
       | "ABOVE_AVERAGE"
@@ -2395,6 +2478,8 @@ export async function listStudentSessions(
         examId: true,
         status: true,
         finalScore: true,
+        mcqScore: true,
+        essayScore: true,
         rankingLevel: true,
         totalTimeSeconds: true,
         activeTimeSeconds: true,

@@ -8,6 +8,18 @@ import {
   importAiRubricsHandler,
   listAiRubricsHandler,
   updateAiRubricHandler,
+  createCriterionHandler,
+  updateCriterionHandler,
+  deleteCriterionHandler,
+  importCriteriaCsvHandler,
+  createBandHandler,
+  updateBandHandler,
+  deleteBandHandler,
+  importBandsCsvHandler,
+  createCalibrationNoteHandler,
+  updateCalibrationNoteHandler,
+  deleteCalibrationNoteHandler,
+  importCalibrationNotesCsvHandler,
 } from "./ai-rubrics.controller.js";
 
 export async function aiRubricRoutes(fastify: FastifyInstance) {
@@ -71,5 +83,140 @@ export async function aiRubricRoutes(fastify: FastifyInstance) {
     },
     preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
     handler: deactivateAiRubricHandler,
+  });
+
+  // ── Criteria (per-rubric CRUD + CSV import) ─────────────────────────────
+
+  fastify.post("/:rubricId/criteria", {
+    schema: {
+      tags: ["AI Rubrics"],
+      params: aiRubricRef("rubricIdOnlyParamsSchema"),
+      body: aiRubricRef("aiRubricCriterionInputSchema"),
+      response: { 201: aiRubricRef("singleCriterionResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
+    handler: createCriterionHandler,
+  });
+
+  fastify.patch("/:rubricId/criteria/:childId", {
+    schema: {
+      tags: ["AI Rubrics"],
+      params: aiRubricRef("rubricChildParamsSchema"),
+      body: aiRubricRef("updateCriterionInputSchema"),
+      response: { 200: aiRubricRef("singleCriterionResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
+    handler: updateCriterionHandler,
+  });
+
+  fastify.delete("/:rubricId/criteria/:childId", {
+    schema: {
+      tags: ["AI Rubrics"],
+      params: aiRubricRef("rubricChildParamsSchema"),
+      response: { 200: aiRubricRef("actionResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
+    handler: deleteCriterionHandler,
+  });
+
+  fastify.post("/import/criteria", {
+    schema: {
+      tags: ["AI Rubrics"],
+      summary: "Import criteria CSV (multi-rubric via RubricID column)",
+      consumes: ["multipart/form-data"],
+      response: { 200: aiRubricRef("importAiRubricsResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
+    handler: importCriteriaCsvHandler,
+  });
+
+  // ── Band Descriptors ────────────────────────────────────────────────────
+
+  fastify.post("/:rubricId/bands", {
+    schema: {
+      tags: ["AI Rubrics"],
+      params: aiRubricRef("rubricIdOnlyParamsSchema"),
+      body: aiRubricRef("aiRubricBandDescriptorInputSchema"),
+      response: { 201: aiRubricRef("singleBandResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
+    handler: createBandHandler,
+  });
+
+  fastify.patch("/:rubricId/bands/:childId", {
+    schema: {
+      tags: ["AI Rubrics"],
+      params: aiRubricRef("rubricChildParamsSchema"),
+      body: aiRubricRef("updateBandInputSchema"),
+      response: { 200: aiRubricRef("singleBandResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
+    handler: updateBandHandler,
+  });
+
+  fastify.delete("/:rubricId/bands/:childId", {
+    schema: {
+      tags: ["AI Rubrics"],
+      params: aiRubricRef("rubricChildParamsSchema"),
+      response: { 200: aiRubricRef("actionResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
+    handler: deleteBandHandler,
+  });
+
+  fastify.post("/import/bands", {
+    schema: {
+      tags: ["AI Rubrics"],
+      summary: "Import band descriptors CSV (multi-rubric via RubricID column)",
+      consumes: ["multipart/form-data"],
+      response: { 200: aiRubricRef("importAiRubricsResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
+    handler: importBandsCsvHandler,
+  });
+
+  // ── Calibration Notes ───────────────────────────────────────────────────
+
+  fastify.post("/:rubricId/calibration-notes", {
+    schema: {
+      tags: ["AI Rubrics"],
+      params: aiRubricRef("rubricIdOnlyParamsSchema"),
+      body: aiRubricRef("aiCalibrationNoteInputSchema"),
+      response: { 201: aiRubricRef("singleCalibrationNoteResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
+    handler: createCalibrationNoteHandler,
+  });
+
+  fastify.patch("/:rubricId/calibration-notes/:childId", {
+    schema: {
+      tags: ["AI Rubrics"],
+      params: aiRubricRef("rubricChildParamsSchema"),
+      body: aiRubricRef("updateCalibrationNoteInputSchema"),
+      response: { 200: aiRubricRef("singleCalibrationNoteResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
+    handler: updateCalibrationNoteHandler,
+  });
+
+  fastify.delete("/:rubricId/calibration-notes/:childId", {
+    schema: {
+      tags: ["AI Rubrics"],
+      params: aiRubricRef("rubricChildParamsSchema"),
+      response: { 200: aiRubricRef("actionResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
+    handler: deleteCalibrationNoteHandler,
+  });
+
+  fastify.post("/import/calibration-notes", {
+    schema: {
+      tags: ["AI Rubrics"],
+      summary: "Import calibration notes CSV (multi-rubric via RubricID column)",
+      consumes: ["multipart/form-data"],
+      response: { 200: aiRubricRef("importAiRubricsResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
+    handler: importCalibrationNotesCsvHandler,
   });
 }

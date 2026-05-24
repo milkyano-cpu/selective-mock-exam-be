@@ -18,6 +18,9 @@ const CSV_HEADERS = [
   "Section",
   "QuestionNumber",
   "QuestionText",
+  "WritingType",
+  "PromptText",
+  "MarkingGuide",
   "OptionA",
   "OptionB",
   "OptionC",
@@ -46,6 +49,9 @@ const DEFAULT_CSV_ROW: Record<(typeof CSV_HEADERS)[number], string> = {
   Section: "Verbal Reasoning",
   QuestionNumber: "1",
   QuestionText: "Complete the analogy.",
+  WritingType: "",
+  PromptText: "",
+  MarkingGuide: "",
   OptionA: "A",
   OptionB: "B",
   OptionC: "C",
@@ -99,6 +105,9 @@ function mockQuestionRecord(overrides: AnyRecord = {}) {
     type: "MCQ",
     difficulty: "EASY",
     questionText: "Complete the analogy.",
+    writingType: null,
+    promptText: null,
+    markingGuide: null,
     options: [
       { key: "A", text: "A" },
       { key: "B", text: "B" },
@@ -141,6 +150,9 @@ function mockPendingRow(overrides: Partial<UnresolvedRowData> = {}): ResolveImpo
     type: "MCQ",
     difficulty: "EASY",
     questionText: "Complete the analogy.",
+    writingType: null,
+    promptText: null,
+    markingGuide: null,
     optionA: "A",
     optionB: "B",
     optionC: "C",
@@ -197,8 +209,8 @@ function mockPrisma(overrides: AnyRecord = {}) {
       findMany: jest.fn(async () => []),
       update: jest.fn(async (args: AnyRecord) => args.data),
       create: jest.fn(async (args: AnyRecord) => ({
-        id: `passage-${args.data.externalId}`,
-        externalId: args.data.externalId,
+        id: `passage-${args.data.passageId}`,
+        passageId: args.data.passageId,
       })),
     },
     aiRubric: {
@@ -346,7 +358,7 @@ describe("questions.service import and image upload", () => {
   });
 
   describe("bulkImportQuestions", () => {
-    it("creates a valid MCQ question and exam link", async () => {
+    it("creates a valid MCQ question without creating exam links", async () => {
       const prisma = mockPrisma();
 
       const result = await bulkImportQuestions(prisma as never, csvBuffer([{}]), CREATOR_ID);
@@ -361,13 +373,8 @@ describe("questions.service import and image upload", () => {
           tutorId: CREATOR_ID,
         })],
       }));
-      expect(prisma.exam.create).toHaveBeenCalledWith(expect.objectContaining({
-        data: expect.objectContaining({ title: "Selective Entry 1", createdBy: CREATOR_ID }),
-      }));
-      expect(prisma.examQuestion.createMany).toHaveBeenCalledWith({
-        data: [{ examId: EXAM_ID, questionId: expect.any(String), order: 1 }],
-        skipDuplicates: true,
-      });
+      expect(prisma.exam.create).not.toHaveBeenCalled();
+      expect(prisma.examQuestion.createMany).not.toHaveBeenCalled();
     });
 
     it("resolves ImageRef from master images and clears legacy image fields", async () => {
@@ -415,10 +422,16 @@ describe("questions.service import and image upload", () => {
       expect(prisma.question.createMany).not.toHaveBeenCalled();
     });
 
-    it("skips an already imported TestName, Subject, and QuestionNumber without creating duplicates", async () => {
+    it("skips an already imported question-bank row without creating duplicates", async () => {
       const prisma = mockPrisma({
-        existingExams: [{ id: EXAM_ID, title: "Selective Entry 1" }],
-        existingExamQuestions: [{ examId: EXAM_ID, order: 1, question: { subjectId: SUBJECT_ID } }],
+        existingStandaloneQuestions: [
+          {
+            subjectId: SUBJECT_ID,
+            topicId: TOPIC_ID,
+            type: "MCQ",
+            questionText: "Complete the analogy.",
+          },
+        ],
       });
 
       const result = await bulkImportQuestions(prisma as never, csvBuffer([{}]), CREATOR_ID);
@@ -433,16 +446,16 @@ describe("questions.service import and image upload", () => {
       expect(prisma.examQuestion.createMany).not.toHaveBeenCalled();
     });
 
-    it("skips duplicate rows inside the same CSV with a validation error", async () => {
+    it("skips duplicate question-bank rows inside the same CSV with a validation error", async () => {
       const prisma = mockPrisma();
 
-      const result = await bulkImportQuestions(prisma as never, csvBuffer([{}, { QuestionText: "Duplicate row" }]), CREATOR_ID);
+      const result = await bulkImportQuestions(prisma as never, csvBuffer([{}, { QuestionNumber: "2" }]), CREATOR_ID);
 
       expect(result).toMatchObject({ total: 2, created: 1, failed: 1 });
       expect(result.errors).toEqual([
         expect.objectContaining({
           row: 3,
-          reason: expect.stringContaining("Duplicate QuestionNumber 1"),
+          reason: expect.stringContaining("Duplicate question content"),
         }),
       ]);
       expect(prisma.question.createMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -567,10 +580,7 @@ describe("questions.service import and image upload", () => {
           type: "MCQ",
         })],
       }));
-      expect(prisma.examQuestion.createMany).toHaveBeenCalledWith({
-        data: [{ examId: EXAM_ID, questionId: expect.any(String), order: 1 }],
-        skipDuplicates: true,
-      });
+      expect(prisma.examQuestion.createMany).not.toHaveBeenCalled();
     });
 
     it("rejects invalid aiRubric ids during resolve with a clear 400", async () => {
@@ -579,6 +589,8 @@ describe("questions.service import and image upload", () => {
         type: "ESSAY",
         markingType: "AI_RUBRIC",
         aiRubricId: "aiRubric-missing",
+        writingType: "CREATIVE",
+        promptText: "Write a story.",
         maxMarks: 20,
         correctAnswer: "",
       });
@@ -593,8 +605,14 @@ describe("questions.service import and image upload", () => {
 
     it("does not create a new question for existing duplicates during resolve", async () => {
       const prisma = mockPrisma({
-        existingExams: [{ id: EXAM_ID, title: "Selective Entry 1" }],
-        existingExamQuestions: [{ examId: EXAM_ID, order: 1, question: { subjectId: SUBJECT_ID } }],
+        existingStandaloneQuestions: [
+          {
+            subjectId: SUBJECT_ID,
+            topicId: TOPIC_ID,
+            type: "MCQ",
+            questionText: "Complete the analogy.",
+          },
+        ],
       });
 
       const result = await resolveAndSavePendingRows(prisma as never, [mockPendingRow()], CREATOR_ID);
@@ -607,10 +625,19 @@ describe("questions.service import and image upload", () => {
 
     it("returns saved 0 when all pending rows are duplicates", async () => {
       const prisma = mockPrisma({
-        existingExams: [{ id: EXAM_ID, title: "Selective Entry 1" }],
-        existingExamQuestions: [
-          { examId: EXAM_ID, order: 1, question: { subjectId: SUBJECT_ID } },
-          { examId: EXAM_ID, order: 2, question: { subjectId: SUBJECT_ID } },
+        existingStandaloneQuestions: [
+          {
+            subjectId: SUBJECT_ID,
+            topicId: TOPIC_ID,
+            type: "MCQ",
+            questionText: "Complete the analogy.",
+          },
+          {
+            subjectId: SUBJECT_ID,
+            topicId: TOPIC_ID,
+            type: "MCQ",
+            questionText: "Second duplicate.",
+          },
         ],
       });
 

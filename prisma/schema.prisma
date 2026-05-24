@@ -46,59 +46,61 @@ enum AnnouncementStatus {
 }
 
 model User {
-  id                String     @id @default(uuid())
-  email             String     @unique                 // HMAC-SHA256 blind index of normalized email
-  emailEncrypted    String     @map("email_encrypted") // AES-256-GCM encrypted actual email
-  passwordHash      String     @map("password_hash")
-  fullName          String     @map("full_name")        // AES-256-GCM encrypted
-  fullNameTokens    String[]   @default([]) @map("full_name_tokens") // HMAC blind indexes per word
-  role              Role
-  status            UserStatus @default(ACTIVE)
-  tier              Tier       @default(BASIC)
-  phoneNumber       String?    @map("phone_number")    // AES-256-GCM encrypted if set
-  address           String?                            // AES-256-GCM encrypted if set
-  gender       Gender?
-  yearLevel    String?    @map("year_level")
-  schoolName   String?    @map("student_school_name")
-  profilePhotoKey          String?   @map("profile_photo_key")
-  profilePhotoOriginalName String?   @map("profile_photo_original_name")
-  profilePhotoMimeType     String?   @map("profile_photo_mime_type")
-  profilePhotoSize         Int?      @map("profile_photo_size")
-  profilePhotoUpdatedAt    DateTime? @map("profile_photo_updated_at")
-  deletedAt    DateTime?  @map("deleted_at")
-  createdAt    DateTime   @default(now()) @map("created_at")
-  updatedAt    DateTime   @updatedAt @map("updated_at")
+  id                       String     @id @default(uuid())
+  email                    String     @unique // HMAC-SHA256 blind index of normalized email
+  emailEncrypted           String     @map("email_encrypted") // AES-256-GCM encrypted actual email
+  passwordHash             String     @map("password_hash")
+  fullName                 String     @map("full_name") // AES-256-GCM encrypted
+  fullNameTokens           String[]   @default([]) @map("full_name_tokens") // HMAC blind indexes per word
+  role                     Role
+  status                   UserStatus @default(ACTIVE)
+  tier                     Tier       @default(BASIC)
+  phoneNumber              String?    @map("phone_number") // AES-256-GCM encrypted if set
+  address                  String? // AES-256-GCM encrypted if set
+  gender                   Gender?
+  yearLevel                String?    @map("year_level")
+  schoolName               String?    @map("student_school_name")
+  profilePhotoKey          String?    @map("profile_photo_key")
+  profilePhotoOriginalName String?    @map("profile_photo_original_name")
+  profilePhotoMimeType     String?    @map("profile_photo_mime_type")
+  profilePhotoSize         Int?       @map("profile_photo_size")
+  profilePhotoUpdatedAt    DateTime?  @map("profile_photo_updated_at")
+  deletedAt                DateTime?  @map("deleted_at")
+  createdAt                DateTime   @default(now()) @map("created_at")
+  updatedAt                DateTime   @updatedAt @map("updated_at")
 
   // Relations
-  children          ParentStudentRelation[] @relation("ParentToStudent")
-  parents           ParentStudentRelation[] @relation("StudentToParent")
-  questions         Question[]              @relation("TutorQuestions")
-  examsCreated      Exam[]                  @relation("AdminExams")
-  examSessions      ExamSession[]
-  practiceSessions  PracticeSession[]
-  assignedPractices PracticeSession[]       @relation("TutorAssigned")
-  recommendations   Recommendation[]
-  performance       StudentPerformance[]
-  leaderboards      Leaderboard[]
-  flashcards        Flashcard[]
-  forumThreads      ForumThread[]           @relation("ForumThreadAuthor")
-  forumPosts        ForumPost[]             @relation("ForumPostAuthor")
-  forumFlagsReported ForumFlag[]            @relation("ForumFlagReporter")
-  forumFlagsReviewed ForumFlag[]            @relation("ForumFlagReviewer")
-  forumWarnings     ForumWarning[]          @relation("ForumWarningUser")
-  forumWarningsGiven ForumWarning[]         @relation("ForumWarningAdmin")
-  subscriptions     Subscription[]
-  billingInvoices   BillingInvoice[]
-  pushSubscriptions PushSubscription[]
+  children             ParentStudentRelation[]   @relation("ParentToStudent")
+  parents              ParentStudentRelation[]   @relation("StudentToParent")
+  questions            Question[]                @relation("TutorQuestions")
+  examsCreated         Exam[]                    @relation("AdminExams")
+  examSessions         ExamSession[]
+  examAttemptSummaries ExamAttemptSummary[]
+  practiceSessions     PracticeSession[]
+  assignedPractices    PracticeSession[]         @relation("TutorAssigned")
+  overriddenAnswers    StudentAnswer[]           @relation("AnswerOverrides")
+  recommendations      Recommendation[]
+  performance          StudentPerformance[]
+  leaderboards         Leaderboard[]
+  flashcards           Flashcard[]
+  forumThreads         ForumThread[]             @relation("ForumThreadAuthor")
+  forumPosts           ForumPost[]               @relation("ForumPostAuthor")
+  forumFlagsReported   ForumFlag[]               @relation("ForumFlagReporter")
+  forumFlagsReviewed   ForumFlag[]               @relation("ForumFlagReviewer")
+  forumWarnings        ForumWarning[]            @relation("ForumWarningUser")
+  forumWarningsGiven   ForumWarning[]            @relation("ForumWarningAdmin")
+  subscriptions        Subscription[]
+  billingInvoices      BillingInvoice[]
+  pushSubscriptions    PushSubscription[]
   notifications        Notification[]
-  announcements        Announcement[]     @relation("AuthorAnnouncements")
+  announcements        Announcement[]            @relation("AuthorAnnouncements")
   calendarReminders    StudentCalendarReminder[]
   refreshTokens        RefreshToken[]
   passwordResetTokens  PasswordResetToken[]
-  studentPathways      StudentPathway[]     @relation("StudentPathways")
-  tutorPathways        StudentPathway[]     @relation("TutorPathways")
+  studentPathways      StudentPathway[]          @relation("StudentPathways")
+  tutorPathways        StudentPathway[]          @relation("TutorPathways")
   pathwayProgress      PathwayNodeProgress[]
-  uploadedResources    Resource[]             @relation("uploadedResources")
+  uploadedResources    Resource[]                @relation("uploadedResources")
 
   @@map("users")
 }
@@ -182,6 +184,7 @@ model Subject {
 
   topics      Topic[]
   questions   Question[]
+  passages    Passage[]
   performance StudentPerformance[]
   pathways    StudentPathway[]
 
@@ -196,8 +199,9 @@ model Topic {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  subject          Subject             @relation(fields: [subjectId], references: [id])
+  subject          Subject              @relation(fields: [subjectId], references: [id])
   questions        Question[]
+  passages         Passage[]
   practiceSessions PracticeSession[]
   recommendations  Recommendation[]
   performance      StudentPerformance[]
@@ -210,41 +214,52 @@ model Topic {
 }
 
 enum PassageType {
-  TEXT
-  IMAGE
-  TEXT_IMAGE
+  comprehension
+  poem
+  visual
+}
+
+enum PassageFormat {
+  text
+  poem
+  article
+  visual_text
+  image_only
 }
 
 enum ImageDisplayPosition {
-  ABOVE
-  MIDDLE
-  BELOW
-  BESIDE
-  MAIN
+  above
+  below
+  inline
 }
 
 model Passage {
-  id                    String                @id @default(uuid())
-  externalId            String?               @unique @map("external_id")
-  title                 String?
-  content               String?
-  passageFormat         String?               @map("passage_format")
-  imageUrl              String?               @map("image_url")
-  imageRef              String?               @map("image_ref")
-  passageType           PassageType?          @map("passage_type")
-  imageDisplayPosition  ImageDisplayPosition? @map("image_display_position")
-  section               String?
-  difficulty            String?
-  topic                 String?
-  latexEnabled          Boolean               @default(false) @map("latex_enabled")
-  notes                 String?
-  createdAt             DateTime              @default(now()) @map("created_at")
-  updatedAt             DateTime              @updatedAt @map("updated_at")
+  id                   String                @id @default(uuid())
+  passageId            String                @unique @map("passage_id")
+  title                String?
+  text                 String?
+  passageFormat        PassageFormat         @map("passage_format")
+  imageRef             String?               @map("image_ref")
+  imageAltText         String?               @map("image_alt_text")
+  imageCaption         String?               @map("image_caption")
+  passageType          PassageType           @map("passage_type")
+  imageDisplayPosition ImageDisplayPosition? @map("image_display_position")
+  subjectId            String                @map("subject_id")
+  topicId              String                @map("topic_id")
+  difficulty           Difficulty
+  latexEnabled         Boolean               @default(false) @map("latex_enabled")
+  notes                String?
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @updatedAt @map("updated_at")
 
+  subject   Subject    @relation(fields: [subjectId], references: [id])
+  topic     Topic      @relation(fields: [topicId], references: [id])
   questions Question[]
   image     Image?     @relation("PassageImage", fields: [imageRef], references: [fileName], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([imageRef])
+  @@index([subjectId])
+  @@index([topicId])
   @@map("passages")
 }
 
@@ -267,13 +282,13 @@ enum QuestionStatus {
 
 enum QuestionMarkingType {
   AUTO
-  AI_RUBRIC
+  AI
+  MANUAL
 }
 
 model AiRubric {
   id            String   @id
   name          String
-  description   String?
   writingType   String?  @map("writing_type")
   isDefault     Boolean  @default(false) @map("is_default")
   isActive      Boolean  @default(true) @map("is_active")
@@ -281,9 +296,12 @@ model AiRubric {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  criteria     AiRubricCriterion[]
-  questions    Question[]
-  answerScores EssayAnswerScore[]
+  criteria            AiRubricCriterion[]
+  bandDescriptors     AiRubricBandDescriptor[]
+  calibrationNotes    AiCalibrationNote[]
+  questions           Question[]
+  answerScores        EssayAnswerScore[]
+  practiceEssayScores PracticeEssayScore[]
 
   @@index([isDefault, isActive])
   @@index([writingType])
@@ -291,75 +309,103 @@ model AiRubric {
 }
 
 model AiRubricCriterion {
-  id                   String   @id @default(uuid())
-  aiRubricId           String   @map("ai_rubric_id")
-  criterionName        String   @map("criterion_name")
-  criterionDescription String   @map("criterion_description")
-  maxScore             Int      @map("max_score")
-  sortOrder            Int      @default(0) @map("sort_order")
-  createdAt            DateTime @default(now()) @map("created_at")
-  updatedAt            DateTime @updatedAt @map("updated_at")
+  id                    String   @id @default(uuid())
+  aiRubricId            String   @map("ai_rubric_id")
+  criterionName         String   @map("criterion_name")
+  criterionDescription  String   @map("criterion_description")
+  maxScore              Int      @map("max_score")
+  sortOrder             Int      @default(0) @map("sort_order")
+  highScoringIndicators String[] @default([]) @map("high_scoring_indicators")
+  lowScoringIndicators  String[] @default([]) @map("low_scoring_indicators")
+  aiCalibrationNotes    String[] @default([]) @map("ai_calibration_notes")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
 
-  aiRubric       AiRubric                 @relation(fields: [aiRubricId], references: [id], onDelete: Cascade)
-  bandDescriptors AiRubricBandDescriptor[]
-  answerScores    EssayAnswerScore[]
+  aiRubric            AiRubric             @relation(fields: [aiRubricId], references: [id], onDelete: Cascade)
+  answerScores        EssayAnswerScore[]
+  practiceEssayScores PracticeEssayScore[]
 
   @@index([aiRubricId, sortOrder])
   @@map("ai_rubric_criteria")
 }
 
 model AiRubricBandDescriptor {
-  id          String   @id @default(uuid())
-  criterionId String   @map("criterion_id")
-  scoreMin    Int      @map("score_min")
-  scoreMax    Int      @map("score_max")
-  descriptor  String
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id         String   @id @default(uuid())
+  aiRubricId String   @map("ai_rubric_id")
+  bandLabel  String   @map("band_label")
+  scoreMin   Int      @map("score_min")
+  scoreMax   Int      @map("score_max")
+  descriptor String
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
 
-  criterion AiRubricCriterion @relation(fields: [criterionId], references: [id], onDelete: Cascade)
+  aiRubric AiRubric @relation(fields: [aiRubricId], references: [id], onDelete: Cascade)
 
-  @@index([criterionId, scoreMin, scoreMax])
+  @@index([aiRubricId, scoreMin, scoreMax])
   @@map("ai_rubric_band_descriptors")
 }
 
+model AiCalibrationNote {
+  id         String   @id @default(uuid())
+  aiRubricId String   @map("ai_rubric_id")
+  category   String?  @map("note_type")
+  instruction String  @map("note")
+  sortOrder  Int      @default(0) @map("sort_order")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  aiRubric AiRubric @relation(fields: [aiRubricId], references: [id], onDelete: Cascade)
+
+  @@index([aiRubricId, sortOrder])
+  @@map("ai_calibration_notes")
+}
+
+model AiRubricWritingType {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("ai_rubric_writing_types")
+}
+
 model Question {
-  id               String         @id @default(uuid())
-  questionId       String?        @map("question_id")
-  questionNumber   Int?           @map("question_number")
-  subjectId        String         @map("subject_id")
-  topicId          String         @map("topic_id")
-  tutorId          String         @map("tutor_id")
-  passageId        String?        @map("passage_id")
-  aiRubricId       String?        @map("ai_rubric_id")
+  id               String              @id @default(uuid())
+  questionId       String?             @map("question_id")
+  questionNumber   Int?                @map("question_number")
+  subjectId        String              @map("subject_id")
+  topicId          String              @map("topic_id")
+  tutorId          String              @map("tutor_id")
+  passageId        String?             @map("passage_id")
+  aiRubricId       String?             @map("ai_rubric_id")
   type             QuestionType
   difficulty       Difficulty
-  questionText     String         @map("question_text")
+  questionText     String              @map("question_text")
+  writingType      String?             @map("writing_type")
+  promptText       String?             @map("prompt_text")
+  markingGuide     String?             @map("marking_guide")
   options          Json?
-  correctAnswer    String         @map("correct_answer")
+  correctAnswer    String?             @map("correct_answer")
   explanation      String?
-  timeLimitSeconds Int?           @map("time_limit_seconds")
-  imageUrl         String?        @map("image_url")
-  imageRef         String?        @map("image_ref")
-  imageUrls        String[]       @default([]) @map("image_urls")
-  subtopics        String[]       @default([])
+  timeLimitSeconds Int?                @map("time_limit_seconds")
+  imageRefs        String[]            @default([]) @map("image_refs")
+  subtopics        String[]            @default([])
   notes            String?
-  latexEnabled     Boolean        @default(false) @map("latex_enabled")
-  adaptiveTags     String[]       @default([]) @map("adaptive_tags")
-  skillTags        String[]       @default([]) @map("skill_tags")
+  latexEnabled     Boolean             @default(false) @map("latex_enabled")
+  adaptiveTags     String[]            @default([]) @map("adaptive_tags")
+  skillTags        String[]            @default([]) @map("skill_tags")
   markingType      QuestionMarkingType @default(AUTO) @map("marking_type")
-  maxMarks         Int            @default(1) @map("max_marks")
-  status           QuestionStatus @default(DRAFT)
-  rejectionNote    String?        @map("rejection_note")
-  createdAt        DateTime       @default(now()) @map("created_at")
-  updatedAt        DateTime       @updatedAt @map("updated_at")
+  maxMarks         Int                 @default(1) @map("max_marks")
+  status           QuestionStatus      @default(DRAFT)
+  rejectionNote    String?             @map("rejection_note")
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
 
-  subject         Subject          @relation(fields: [subjectId], references: [id])
-  topic           Topic            @relation(fields: [topicId], references: [id])
-  tutor           User             @relation("TutorQuestions", fields: [tutorId], references: [id])
-  passage         Passage?         @relation(fields: [passageId], references: [id])
-  image           Image?           @relation("QuestionImage", fields: [imageRef], references: [fileName], onDelete: SetNull, onUpdate: Cascade)
-  aiRubric        AiRubric?        @relation(fields: [aiRubricId], references: [id])
+  subject                  Subject                   @relation(fields: [subjectId], references: [id])
+  topic                    Topic                     @relation(fields: [topicId], references: [id])
+  tutor                    User                      @relation("TutorQuestions", fields: [tutorId], references: [id])
+  passage                  Passage?                  @relation(fields: [passageId], references: [id])
+  aiRubric                 AiRubric?                 @relation(fields: [aiRubricId], references: [id])
   examQuestions            ExamQuestion[]
   answers                  StudentAnswer[]
   practiceAnswers          PracticeAnswer[]
@@ -369,7 +415,6 @@ model Question {
   @@index([subjectId, topicId, status, difficulty])
   @@index([tutorId, status])
   @@index([passageId])
-  @@index([imageRef])
   @@index([aiRubricId])
   @@map("questions")
 }
@@ -410,9 +455,10 @@ model Exam {
   thresholdHighAverage  Int @default(50) @map("threshold_high_average")
   thresholdAverage      Int @default(40) @map("threshold_average")
 
-  creator   User           @relation("AdminExams", fields: [createdBy], references: [id])
-  questions ExamQuestion[]
-  sessions  ExamSession[]
+  creator          User                 @relation("AdminExams", fields: [createdBy], references: [id])
+  questions        ExamQuestion[]
+  sessions         ExamSession[]
+  attemptSummaries ExamAttemptSummary[]
 
   @@map("exams")
 }
@@ -450,31 +496,36 @@ enum RankingLevel {
 }
 
 model ExamSession {
-  id               String        @id @default(uuid())
-  examId           String        @map("exam_id")
-  studentId        String        @map("student_id")
-  status           SessionStatus @default(IN_PROGRESS)
-  startTime        DateTime      @default(now()) @map("start_time")
-  expiresAt        DateTime?     @map("expires_at")
-  endTime          DateTime?     @map("end_time")
-  totalTimeSeconds Int?          @map("total_time_seconds")
-  activeTimeSeconds Int          @default(0) @map("active_time_seconds")
-  idleTimeSeconds   Int          @default(0) @map("idle_time_seconds")
-  lastActivityAt    DateTime?    @map("last_activity_at")
-  lastHeartbeatAt   DateTime?    @map("last_heartbeat_at")
-  activeQuestionId  String?      @map("active_question_id")
-  finalScore       Decimal?      @map("final_score") @db.Decimal(5, 2)
-  rankingLevel     RankingLevel? @map("ranking_level")
-  attemptNumber    Int           @default(1) @map("attempt_number")
-  retakeMode       RetakeMode?   @map("retake_mode")
-  parentSessionId  String?       @map("parent_session_id")
-  retakeQuestionIds String[]     @default([]) @map("retake_question_ids")
+  id                String        @id @default(uuid())
+  examId            String        @map("exam_id")
+  studentId         String        @map("student_id")
+  status            SessionStatus @default(IN_PROGRESS)
+  startTime         DateTime      @default(now()) @map("start_time")
+  expiresAt         DateTime?     @map("expires_at")
+  endTime           DateTime?     @map("end_time")
+  totalTimeSeconds  Int?          @map("total_time_seconds")
+  activeTimeSeconds Int           @default(0) @map("active_time_seconds")
+  idleTimeSeconds   Int           @default(0) @map("idle_time_seconds")
+  lastActivityAt    DateTime?     @map("last_activity_at")
+  lastHeartbeatAt   DateTime?     @map("last_heartbeat_at")
+  activeQuestionId  String?       @map("active_question_id")
+  finalScore        Decimal?      @map("final_score") @db.Decimal(5, 2)
+  mcqScore          Decimal?      @map("mcq_score") @db.Decimal(5, 2)
+  essayScore        Decimal?      @map("essay_score") @db.Decimal(5, 2)
+  rankingLevel      RankingLevel? @map("ranking_level")
+  attemptNumber     Int           @default(1) @map("attempt_number")
+  isFirstAttempt    Boolean       @default(false) @map("is_first_attempt")
+  retakeMode        RetakeMode?   @map("retake_mode")
+  parentSessionId   String?       @map("parent_session_id")
+  retakeQuestionIds String[]      @default([]) @map("retake_question_ids")
 
-  exam    Exam            @relation(fields: [examId], references: [id])
-  student User            @relation(fields: [studentId], references: [id])
-  answers StudentAnswer[]
-  parentSession  ExamSession?  @relation("SessionRetakes", fields: [parentSessionId], references: [id])
-  retakes        ExamSession[] @relation("SessionRetakes")
+  exam                 Exam                 @relation(fields: [examId], references: [id])
+  student              User                 @relation(fields: [studentId], references: [id])
+  answers              StudentAnswer[]
+  attemptSummaryLatest ExamAttemptSummary[] @relation("LatestAttemptSummary")
+  attemptSummaryBest   ExamAttemptSummary[] @relation("BestAttemptSummary")
+  parentSession        ExamSession?         @relation("SessionRetakes", fields: [parentSessionId], references: [id])
+  retakes              ExamSession[]        @relation("SessionRetakes")
 
   @@index([studentId, examId, status])
   @@index([examId, status])
@@ -494,9 +545,17 @@ model StudentAnswer {
   manualScore      Decimal? @map("manual_score") @db.Decimal(5, 2)
   tutorFeedback    String?  @map("tutor_feedback")
   aiFeedback       Json?    @map("ai_feedback")
+  bandLabel        String?  @map("band_label")
+  bandDescriptor   String?  @map("band_descriptor")
+  isOverridden     Boolean  @default(false) @map("is_overridden")
+  overrideScore    Decimal? @map("override_score") @db.Decimal(7, 2)
+  overrideNotes    String?  @map("override_notes")
+  overriddenBy     String?  @map("overridden_by")
+  aiModel          String?  @map("ai_model")
 
   session           ExamSession        @relation(fields: [sessionId], references: [id])
   question          Question           @relation(fields: [questionId], references: [id])
+  overrideUser      User?              @relation("AnswerOverrides", fields: [overriddenBy], references: [id])
   essayAnswerScores EssayAnswerScore[]
 
   @@unique([sessionId, questionId])
@@ -512,12 +571,14 @@ model EssayAnswerScore {
   score           Decimal  @db.Decimal(7, 2)
   maxScore        Decimal  @map("max_score") @db.Decimal(7, 2)
   feedback        String?
+  strengths       String[] @default([])
+  improvements    String[] @default([])
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  studentAnswer StudentAnswer    @relation(fields: [studentAnswerId], references: [id], onDelete: Cascade)
-  aiRubric     AiRubric?         @relation(fields: [aiRubricId], references: [id], onDelete: SetNull)
-  criterion    AiRubricCriterion? @relation(fields: [criterionId], references: [id], onDelete: SetNull)
+  studentAnswer StudentAnswer      @relation(fields: [studentAnswerId], references: [id], onDelete: Cascade)
+  aiRubric      AiRubric?          @relation(fields: [aiRubricId], references: [id], onDelete: SetNull)
+  criterion     AiRubricCriterion? @relation(fields: [criterionId], references: [id], onDelete: SetNull)
 
   @@index([studentAnswerId])
   @@index([aiRubricId])
@@ -542,23 +603,23 @@ enum PracticeSessionStatus {
 }
 
 model PracticeSession {
-  id             String                @id @default(uuid())
-  studentId      String                @map("student_id")
-  topicId        String?               @map("topic_id")
-  sourceType     PracticeSource        @map("source_type")
-  assignedBy     String?               @map("assigned_by")
-  pathwayNodeId  String?               @map("pathway_node_id")
-  startedAt      DateTime              @default(now()) @map("started_at")
-  endedAt        DateTime?             @map("ended_at")
-  totalTimeSeconds Int?                @map("total_time_seconds")
-  status         PracticeSessionStatus @default(IN_PROGRESS) @map("status")
-  difficulty     Difficulty?           @map("difficulty")
-  questionCount  Int                   @default(10) @map("question_count")
+  id               String                @id @default(uuid())
+  studentId        String                @map("student_id")
+  topicId          String?               @map("topic_id")
+  sourceType       PracticeSource        @map("source_type")
+  assignedBy       String?               @map("assigned_by")
+  pathwayNodeId    String?               @map("pathway_node_id")
+  startedAt        DateTime              @default(now()) @map("started_at")
+  endedAt          DateTime?             @map("ended_at")
+  totalTimeSeconds Int?                  @map("total_time_seconds")
+  status           PracticeSessionStatus @default(IN_PROGRESS) @map("status")
+  difficulty       Difficulty?           @map("difficulty")
+  questionCount    Int                   @default(10) @map("question_count")
 
-  student          User                    @relation(fields: [studentId], references: [id])
-  topic            Topic?                  @relation(fields: [topicId], references: [id])
-  tutor            User?                   @relation("TutorAssigned", fields: [assignedBy], references: [id])
-  pathwayNode      PathwayNode?            @relation(fields: [pathwayNodeId], references: [id])
+  student          User                      @relation(fields: [studentId], references: [id])
+  topic            Topic?                    @relation(fields: [topicId], references: [id])
+  tutor            User?                     @relation("TutorAssigned", fields: [assignedBy], references: [id])
+  pathwayNode      PathwayNode?              @relation(fields: [pathwayNodeId], references: [id])
   answers          PracticeAnswer[]
   sessionQuestions PracticeSessionQuestion[]
 
@@ -569,18 +630,49 @@ model PracticeSession {
 }
 
 model PracticeAnswer {
-  id               String  @id @default(uuid())
-  sessionId        String  @map("session_id")
-  questionId       String  @map("question_id")
-  studentAnswer    String  @map("student_answer")
-  isCorrect        Boolean @map("is_correct")
-  timeSpentSeconds Int     @map("time_spent_seconds")
+  id               String   @id @default(uuid())
+  sessionId        String   @map("session_id")
+  questionId       String   @map("question_id")
+  studentAnswer    String   @map("student_answer")
+  isCorrect        Boolean  @map("is_correct")
+  timeSpentSeconds Int      @map("time_spent_seconds")
+  awardedMarks     Decimal? @map("awarded_marks") @db.Decimal(7, 2)
+  aiFeedback       Json?    @map("ai_feedback")
+  bandLabel        String?  @map("band_label")
+  bandDescriptor   String?  @map("band_descriptor")
+  gradingStatus    String   @default("GRADED") @map("grading_status")
+  aiModel          String?  @map("ai_model")
 
-  session  PracticeSession @relation(fields: [sessionId], references: [id])
-  question Question        @relation(fields: [questionId], references: [id])
+  session     PracticeSession      @relation(fields: [sessionId], references: [id])
+  question    Question             @relation(fields: [questionId], references: [id])
+  essayScores PracticeEssayScore[]
 
   @@index([sessionId, questionId])
   @@map("practice_answers")
+}
+
+model PracticeEssayScore {
+  id               String   @id @default(uuid())
+  practiceAnswerId String   @map("practice_answer_id")
+  aiRubricId       String?  @map("ai_rubric_id")
+  criterionId      String?  @map("criterion_id")
+  criterionName    String   @map("criterion_name")
+  score            Decimal  @db.Decimal(7, 2)
+  maxScore         Decimal  @map("max_score") @db.Decimal(7, 2)
+  feedback         String?
+  strengths        String[] @default([])
+  improvements     String[] @default([])
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  practiceAnswer PracticeAnswer     @relation(fields: [practiceAnswerId], references: [id], onDelete: Cascade)
+  aiRubric       AiRubric?          @relation(fields: [aiRubricId], references: [id], onDelete: SetNull)
+  criterion      AiRubricCriterion? @relation(fields: [criterionId], references: [id], onDelete: SetNull)
+
+  @@index([practiceAnswerId])
+  @@index([aiRubricId])
+  @@index([criterionId])
+  @@map("practice_essay_scores")
 }
 
 model PracticeSessionQuestion {
@@ -640,6 +732,33 @@ model StudentPerformance {
 
   @@unique([studentId, topicId])
   @@map("student_performances")
+}
+
+model ExamAttemptSummary {
+  id                   String   @id @default(uuid())
+  examId               String   @map("exam_id")
+  studentId            String   @map("student_id")
+  totalAttempts        Int      @default(0) @map("total_attempts")
+  firstSessionId       String?  @map("first_session_id")
+  latestSessionId      String?  @map("latest_session_id")
+  bestSessionId        String?  @map("best_session_id")
+  firstScore           Decimal? @map("first_score") @db.Decimal(5, 2)
+  latestScore          Decimal? @map("latest_score") @db.Decimal(5, 2)
+  bestScore            Decimal? @map("best_score") @db.Decimal(5, 2)
+  incorrectQuestionIds String[] @default([]) @map("incorrect_question_ids")
+  subjectBreakdown     Json?    @map("subject_breakdown")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  exam          Exam         @relation(fields: [examId], references: [id], onDelete: Cascade)
+  student       User         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  latestSession ExamSession? @relation("LatestAttemptSummary", fields: [latestSessionId], references: [id], onDelete: SetNull)
+  bestSession   ExamSession? @relation("BestAttemptSummary", fields: [bestSessionId], references: [id], onDelete: SetNull)
+
+  @@unique([examId, studentId])
+  @@index([studentId])
+  @@index([examId])
+  @@map("exam_attempt_summaries")
 }
 
 // ==========================================
@@ -794,14 +913,14 @@ enum WarningLevel {
 }
 
 model ForumThread {
-  id          String        @id @default(uuid())
-  authorId    String        @map("author_id")
-  segment     ForumSegment
-  title       String
-  isPinned    Boolean       @default(false) @map("is_pinned")
-  isLocked    Boolean       @default(false) @map("is_locked")
-  createdAt   DateTime      @default(now()) @map("created_at")
-  updatedAt   DateTime      @updatedAt @map("updated_at")
+  id        String       @id @default(uuid())
+  authorId  String       @map("author_id")
+  segment   ForumSegment
+  title     String
+  isPinned  Boolean      @default(false) @map("is_pinned")
+  isLocked  Boolean      @default(false) @map("is_locked")
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
 
   author User        @relation("ForumThreadAuthor", fields: [authorId], references: [id])
   posts  ForumPost[]
@@ -821,9 +940,9 @@ model ForumPost {
   createdAt   DateTime    @default(now()) @map("created_at")
   updatedAt   DateTime    @updatedAt @map("updated_at")
 
-  thread  ForumThread  @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  author  User         @relation("ForumPostAuthor", fields: [authorId], references: [id])
-  flags   ForumFlag[]
+  thread ForumThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  author User        @relation("ForumPostAuthor", fields: [authorId], references: [id])
+  flags  ForumFlag[]
 
   @@index([threadId, status, createdAt])
   @@index([authorId])
@@ -955,7 +1074,6 @@ model Image {
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
   passages  Passage[]  @relation("PassageImage")
-  questions Question[] @relation("QuestionImage")
 
   @@index([expiredDate])
   @@map("images")
@@ -984,24 +1102,24 @@ model Subscription {
 }
 
 model BillingInvoice {
-  id                    String    @id @default(uuid())
-  userId                String    @map("user_id")
-  stripeInvoiceId       String    @map("stripe_invoice_id")
-  stripeCustomerId      String    @map("stripe_customer_id")
-  stripeSubscriptionId  String?   @map("stripe_subscription_id")
-  invoiceNumber         String?   @map("invoice_number")
-  status                String
-  currency              String
-  amountDue             Int       @default(0) @map("amount_due")
-  amountPaid            Int       @default(0) @map("amount_paid")
-  hostedInvoiceUrl      String?   @map("hosted_invoice_url")
-  stripeInvoicePdfUrl   String?   @map("stripe_invoice_pdf_url")
-  minioObjectKey        String?   @map("minio_object_key")
-  periodStart           DateTime? @map("period_start")
-  periodEnd             DateTime? @map("period_end")
-  paidAt                DateTime? @map("paid_at")
-  createdAt             DateTime  @default(now()) @map("created_at")
-  updatedAt             DateTime  @updatedAt @map("updated_at")
+  id                   String    @id @default(uuid())
+  userId               String    @map("user_id")
+  stripeInvoiceId      String    @map("stripe_invoice_id")
+  stripeCustomerId     String    @map("stripe_customer_id")
+  stripeSubscriptionId String?   @map("stripe_subscription_id")
+  invoiceNumber        String?   @map("invoice_number")
+  status               String
+  currency             String
+  amountDue            Int       @default(0) @map("amount_due")
+  amountPaid           Int       @default(0) @map("amount_paid")
+  hostedInvoiceUrl     String?   @map("hosted_invoice_url")
+  stripeInvoicePdfUrl  String?   @map("stripe_invoice_pdf_url")
+  minioObjectKey       String?   @map("minio_object_key")
+  periodStart          DateTime? @map("period_start")
+  periodEnd            DateTime? @map("period_end")
+  paidAt               DateTime? @map("paid_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -1049,19 +1167,19 @@ model PasswordResetToken {
 }
 
 model Resource {
-  id          String       @id @default(uuid())
-  title       String
-  description String       @default("")
-  type        ResourceType
-  fileUrl     String?      @map("file_url")
-  videoUrl    String?      @map("video_url")
-  fileName    String?      @map("file_name")
-  fileSize    Int?         @map("file_size")
-  mimeType    String?      @map("mime_type")
-  allowedTiers Tier[]      @default([BASIC, STANDARD, PREMIUM]) @map("allowed_tiers")
-  uploadedBy  String       @map("uploaded_by")
-  createdAt   DateTime     @default(now()) @map("created_at")
-  updatedAt   DateTime     @updatedAt @map("updated_at")
+  id           String       @id @default(uuid())
+  title        String
+  description  String       @default("")
+  type         ResourceType
+  fileUrl      String?      @map("file_url")
+  videoUrl     String?      @map("video_url")
+  fileName     String?      @map("file_name")
+  fileSize     Int?         @map("file_size")
+  mimeType     String?      @map("mime_type")
+  allowedTiers Tier[]       @default([BASIC, STANDARD, PREMIUM]) @map("allowed_tiers")
+  uploadedBy   String       @map("uploaded_by")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
 
   uploader User @relation("uploadedResources", fields: [uploadedBy], references: [id], onDelete: Cascade)
 

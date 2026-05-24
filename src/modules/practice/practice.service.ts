@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import { createNotification } from "../../lib/notify.js";
 import { createHttpError } from "../../utils/http-error.js";
 import { decryptField } from "../../utils/field-encryption.js";
@@ -9,6 +9,7 @@ import {
 } from "../../utils/membership.js";
 import {
   IMAGE_SUMMARY_SELECT,
+  resolveImagesAsBase64,
   serializeImageSummary,
   type ImageSummaryRecord,
 } from "../images/images.service.js";
@@ -21,17 +22,27 @@ import type {
   CreateAssignmentBody,
   ListAssignmentsQuery,
 } from "./practice.schema.js";
+import { buildEssayAiFeedback, gradeEssayWithAi, type AiRubricInput } from "../../utils/ai-grader.js";
+
+// Strip server-only fields (like `aiModel`) from the persisted aiFeedback JSON
+// before sending it to a student. Per final-design, the AI label must stay
+// hidden from students.
+function scrubAiFeedbackForStudent(aiFeedback: unknown) {
+  if (!aiFeedback || typeof aiFeedback !== "object" || Array.isArray(aiFeedback)) return null;
+  const { aiModel: _aiModel, ...rest } = aiFeedback as Record<string, unknown>;
+  return rest;
+}
 
 // ── SELECT shapes ─────────────────────────────────────────────────────────────
 
 const PASSAGE_SELECT_FOR_SESSION = {
   id: true,
   title: true,
-  content: true,
+  text: true,
   imageRef: true,
   imageDisplayPosition: true,
   image: { select: IMAGE_SUMMARY_SELECT },
-} as const;
+} satisfies Prisma.PassageSelect;
 
 const PRACTICE_QUESTION_SELECT = {
   questionId: true,
@@ -39,20 +50,50 @@ const PRACTICE_QUESTION_SELECT = {
   question: {
     select: {
       id: true,
+      type: true,
       questionText: true,
+      writingType: true,
+      promptText: true,
+      markingGuide: true,
+      markingType: true,
+      maxMarks: true,
       latexEnabled: true,
       difficulty: true,
       options: true,
-      imageRef: true,
-      image: { select: IMAGE_SUMMARY_SELECT },
-      imageUrl: true,
-      imageUrls: true,
+      imageRefs: true,
       correctAnswer: true,
       explanation: true,
+      aiRubric: {
+        select: {
+          id: true,
+          name: true,
+          totalMaxScore: true,
+          bandDescriptors: {
+            orderBy: [{ scoreMin: "asc" }, { scoreMax: "asc" }],
+            select: { bandLabel: true, scoreMin: true, scoreMax: true, descriptor: true },
+          },
+          calibrationNotes: {
+            orderBy: { sortOrder: "asc" },
+            select: { category: true, instruction: true },
+          },
+          criteria: {
+            orderBy: { sortOrder: "asc" },
+            select: {
+              id: true,
+              criterionName: true,
+              criterionDescription: true,
+              maxScore: true,
+              highScoringIndicators: true,
+              lowScoringIndicators: true,
+              aiCalibrationNotes: true,
+            },
+          },
+        },
+      },
       passage: { select: PASSAGE_SELECT_FOR_SESSION },
     },
   },
-} as const;
+} satisfies Prisma.PracticeSessionQuestionSelect;
 
 const PRACTICE_QUESTION_WITH_ANSWER_SELECT = {
   questionId: true,
@@ -60,22 +101,52 @@ const PRACTICE_QUESTION_WITH_ANSWER_SELECT = {
   question: {
     select: {
       id: true,
+      type: true,
       questionText: true,
+      writingType: true,
+      promptText: true,
+      markingGuide: true,
+      markingType: true,
+      maxMarks: true,
       latexEnabled: true,
       difficulty: true,
       options: true,
-      imageRef: true,
-      image: { select: IMAGE_SUMMARY_SELECT },
-      imageUrl: true,
-      imageUrls: true,
+      imageRefs: true,
       correctAnswer: true,
       explanation: true,
+      aiRubric: {
+        select: {
+          id: true,
+          name: true,
+          totalMaxScore: true,
+          bandDescriptors: {
+            orderBy: [{ scoreMin: "asc" }, { scoreMax: "asc" }],
+            select: { bandLabel: true, scoreMin: true, scoreMax: true, descriptor: true },
+          },
+          calibrationNotes: {
+            orderBy: { sortOrder: "asc" },
+            select: { category: true, instruction: true },
+          },
+          criteria: {
+            orderBy: { sortOrder: "asc" },
+            select: {
+              id: true,
+              criterionName: true,
+              criterionDescription: true,
+              maxScore: true,
+              highScoringIndicators: true,
+              lowScoringIndicators: true,
+              aiCalibrationNotes: true,
+            },
+          },
+        },
+      },
       topicId: true,
       subjectId: true,
       passage: { select: PASSAGE_SELECT_FOR_SESSION },
     },
   },
-} as const;
+} satisfies Prisma.PracticeSessionQuestionSelect;
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
@@ -89,43 +160,54 @@ function formatQuestion(sq: {
   order: number;
   question: {
     id: string;
+    type: string;
     questionText: string;
+    writingType: string | null;
+    promptText: string | null;
     latexEnabled: boolean;
     difficulty: string;
     options: unknown;
-    imageRef: string | null;
-    image: ImageSummaryRecord | null;
-    imageUrl: string | null;
-    imageUrls: string[];
+    imageRefs: string[];
+    maxMarks: number;
     passage?: {
       id: string;
       title: string | null;
-      content: string | null;
+      text: string | null;
       imageRef: string | null;
       imageDisplayPosition: string | null;
       image: ImageSummaryRecord | null;
     } | null;
   };
-}) {
+}, imagesByFileName?: Map<string, ImageSummaryRecord>) {
   const passage = sq.question.passage ?? null;
   return {
     questionId: sq.questionId,
     order: sq.order,
+    type: sq.question.type as "MCQ" | "ESSAY",
     questionText: sq.question.questionText,
+    writingType: sq.question.writingType,
+    promptText: sq.question.promptText,
     latexEnabled: sq.question.latexEnabled,
     difficulty: sq.question.difficulty as "EASY" | "MEDIUM" | "HARD",
     options: sq.question.options as Array<{ key: string; text: string }> | null,
-    imageRef: sq.question.imageRef,
-    image: serializeImageSummary(sq.question.image),
-    imageUrl: sq.question.imageUrl,
-    imageUrls: sq.question.imageUrls,
-    correctAnswer: (sq.question as any).correctAnswer as string,
+    imageRefs: sq.question.imageRefs,
+    images: sq.question.imageRefs.map((fileName) => {
+      const found = imagesByFileName?.get(fileName);
+      return {
+        fileName,
+        url: found?.url ?? null,
+        altText: found?.altText ?? null,
+        caption: found?.caption ?? null,
+      };
+    }),
+    correctAnswer: sq.question.type === "MCQ" ? ((sq.question as any).correctAnswer as string) : "",
     explanation: (sq.question as any).explanation as string | null,
+    maxMarks: sq.question.maxMarks,
     passage: passage
       ? {
           id: passage.id,
           title: passage.title,
-          content: passage.content,
+          text: passage.text,
           imageRef: passage.imageRef,
           imageDisplayPosition: passage.imageDisplayPosition,
           image: serializeImageSummary(passage.image),
@@ -133,6 +215,16 @@ function formatQuestion(sq: {
       : null,
   };
 }
+
+function toAiRubricInput(aiRubric: AiRubricInput | null): AiRubricInput | null {
+  if (!aiRubric || aiRubric.criteria.length === 0) return null;
+  return aiRubric;
+}
+
+function normalizeQuestionMaxMarks(maxMarks: number) {
+  return Number.isFinite(maxMarks) && maxMarks > 0 ? maxMarks : 1;
+}
+
 
 // ── Service functions ─────────────────────────────────────────────────────────
 
@@ -194,7 +286,7 @@ export async function startPracticeSession(
         questionCount: existing.questionCount,
         status: existing.status as "IN_PROGRESS",
         startedAt: existing.startedAt.toISOString(),
-        questions: existing.sessionQuestions.map(formatQuestion),
+        questions: existing.sessionQuestions.map((sq) => formatQuestion(sq)),
       };
     }
   } else if (body.subjectId) {
@@ -210,7 +302,6 @@ export async function startPracticeSession(
   const baseWhere: Prisma.QuestionWhereInput = {
     ...(body.topicId ? { topicId: body.topicId } : {}),
     ...(body.subjectId && !body.topicId ? { subjectId: body.subjectId } : {}),
-    type: "MCQ",
     status: "PUBLISHED",
     ...(body.difficulty !== "ALL"
       ? { difficulty: body.difficulty as "EASY" | "MEDIUM" | "HARD" }
@@ -264,7 +355,7 @@ export async function startPracticeSession(
   });
 
   if (allQuestionIds.length === 0) {
-    throw createHttpError(422, "No published MCQ questions available for the selected filters");
+    throw createHttpError(422, "No published questions available for the selected filters");
   }
 
   // 4. Shuffle and slice
@@ -314,7 +405,7 @@ export async function startPracticeSession(
     questionCount: count,
     status: "IN_PROGRESS" as const,
     startedAt: session.startedAt.toISOString(),
-    questions: sessionQuestions.map(formatQuestion),
+    questions: sessionQuestions.map((sq) => formatQuestion(sq)),
   };
 }
 
@@ -414,7 +505,7 @@ export async function startWeakAreaPracticeSession(
     questionCount: count,
     status: "IN_PROGRESS" as const,
     startedAt: session.startedAt.toISOString(),
-    questions: sessionQuestions.map(formatQuestion),
+    questions: sessionQuestions.map((sq) => formatQuestion(sq)),
   };
 }
 
@@ -492,6 +583,11 @@ export async function getPracticeSession(
           studentAnswer: true,
           isCorrect: true,
           timeSpentSeconds: true,
+          awardedMarks: true,
+          aiFeedback: true,
+          bandLabel: true,
+          bandDescriptor: true,
+          gradingStatus: true,
         },
       },
     },
@@ -501,7 +597,7 @@ export async function getPracticeSession(
   if (session.studentId !== studentId) throw createHttpError(403, "Access denied");
   await assertCanUsePracticeSession(prisma, studentId, session);
 
-  const questions = session.sessionQuestions.map(formatQuestion);
+  const questions = session.sessionQuestions.map((sq) => formatQuestion(sq));
   const answerMap = new Map(session.answers.map((a) => [a.questionId, a]));
 
   const resultAnswers =
@@ -516,21 +612,23 @@ export async function getPracticeSession(
           return {
             questionId: sq.questionId,
             order: sq.order,
+            type: q.type as "MCQ" | "ESSAY",
             questionText: q.questionText,
+            writingType: q.writingType,
+            promptText: q.promptText,
             latexEnabled: q.latexEnabled,
             difficulty: q.difficulty as "EASY" | "MEDIUM" | "HARD",
             options: q.options as Array<{ key: string; text: string }> | null,
-            imageRef: q.imageRef,
-            image: serializeImageSummary(q.image),
-            imageUrl: q.imageUrl,
-            imageUrls: q.imageUrls,
-            correctAnswer: q.correctAnswer,
+            imageRefs: q.imageRefs,
+            images: q.imageRefs.map((fileName) => ({ fileName, url: null, altText: null, caption: null })),
+            correctAnswer: q.type === "MCQ" ? q.correctAnswer : "",
             explanation: q.explanation,
+            maxMarks: normalizeQuestionMaxMarks(q.maxMarks),
             passage: passage
               ? {
                   id: passage.id,
                   title: passage.title,
-                  content: passage.content,
+                  text: passage.text,
                   imageRef: passage.imageRef,
                   imageDisplayPosition: passage.imageDisplayPosition,
                   image: serializeImageSummary(passage.image),
@@ -539,6 +637,11 @@ export async function getPracticeSession(
             studentAnswer: ans?.studentAnswer ?? "",
             isCorrect: ans?.isCorrect ?? false,
             timeSpentSeconds: ans?.timeSpentSeconds ?? 0,
+            awardedMarks: ans?.awardedMarks !== null && ans?.awardedMarks !== undefined ? Number(ans.awardedMarks) : null,
+            bandLabel: ans?.bandLabel ?? null,
+            bandDescriptor: ans?.bandDescriptor ?? null,
+            gradingStatus: ans?.gradingStatus ?? "GRADED",
+            aiFeedback: scrubAiFeedbackForStudent(ans?.aiFeedback ?? null),
           };
         })
       : null;
@@ -584,27 +687,7 @@ export async function submitPracticeSession(
       startedAt: true,
       topic: { select: { id: true, name: true, subjectId: true } },
       sessionQuestions: {
-        select: {
-          questionId: true,
-          order: true,
-          question: {
-            select: {
-              id: true,
-              questionText: true,
-              latexEnabled: true,
-              difficulty: true,
-              options: true,
-              imageRef: true,
-              image: { select: IMAGE_SUMMARY_SELECT },
-              imageUrl: true,
-              imageUrls: true,
-              correctAnswer: true,
-              explanation: true,
-              topicId: true,
-              subjectId: true,
-            },
-          },
-        },
+        select: PRACTICE_QUESTION_WITH_ANSWER_SELECT,
       },
     },
   });
@@ -623,73 +706,190 @@ export async function submitPracticeSession(
   }
 
   // 3. Grade answers
-  const correctAnswerMap = new Map(
-    session.sessionQuestions.map((sq) => [sq.questionId, sq.question.correctAnswer])
-  );
   const endedAt = new Date();
   const elapsedSessionSeconds = Math.max(
     0,
     Math.round((endedAt.getTime() - session.startedAt.getTime()) / 1000)
   );
 
-  const gradedAnswers = body.answers.map((a) => ({
-    sessionId,
-    questionId: a.questionId,
-    studentAnswer: a.studentAnswer,
-    isCorrect:
-      a.studentAnswer.trim().toUpperCase() ===
-      (correctAnswerMap.get(a.questionId) ?? "").trim().toUpperCase(),
-    timeSpentSeconds: Math.min(a.timeSpentSeconds, elapsedSessionSeconds),
-  }));
+  const questionById = new Map(session.sessionQuestions.map((sq) => [sq.questionId, sq.question]));
+  const gradedAnswers: Prisma.PracticeAnswerCreateManyInput[] = [];
+  const essayScores: Array<{
+    questionId: string;
+    criterionScores: Array<{
+      criterionId: string;
+      criterionName: string;
+      score: number;
+      maxScore: number;
+      feedback: string;
+      strengths: string[];
+      improvements: string[];
+      aiRubricId: string | null;
+    }>;
+  }> = [];
+
+  for (const answer of body.answers) {
+    const question = questionById.get(answer.questionId);
+    if (!question) continue;
+    const maxMarks = normalizeQuestionMaxMarks(question.maxMarks);
+    const timeSpentSeconds = Math.min(answer.timeSpentSeconds, elapsedSessionSeconds);
+
+    if (question.type === "ESSAY") {
+      // MANUAL essays: save answer without AI grading; awaits tutor manual scoring
+      if (question.markingType === "MANUAL") {
+        gradedAnswers.push({
+          sessionId,
+          questionId: answer.questionId,
+          studentAnswer: answer.studentAnswer,
+          isCorrect: false,
+          timeSpentSeconds,
+          awardedMarks: null,
+          aiFeedback: Prisma.JsonNull,
+          bandLabel: null,
+          bandDescriptor: null,
+          gradingStatus: "PENDING_REVIEW",
+          aiModel: null,
+        });
+        continue;
+      }
+      const aiRubric = toAiRubricInput(question.aiRubric);
+      if (!aiRubric || question.markingType !== "AI") {
+        throw createHttpError(422, `Essay question ${answer.questionId} is not configured for AI grading`);
+      }
+      if (!question.promptText?.trim()) {
+        throw createHttpError(422, `Essay question ${answer.questionId} is missing PromptText`);
+      }
+      const promptImages = question.imageRefs && question.imageRefs.length > 0
+        ? await resolveImagesAsBase64(prisma, question.imageRefs)
+        : [];
+      const aiResult = await gradeEssayWithAi({
+        writingType: question.writingType,
+        questionText: question.questionText,
+        promptText: question.promptText,
+        images: promptImages.map(({ data, mediaType }) => ({ data, mediaType })),
+        markingGuide: question.markingGuide,
+        studentAnswer: answer.studentAnswer,
+        aiRubric,
+      });
+      // Per final-design Step 6: awardedMarks = Σ ai_score_per_criterion (raw sum)
+      const awardedMarks = aiResult.totalAwardedMarks;
+
+      gradedAnswers.push({
+        sessionId,
+        questionId: answer.questionId,
+        studentAnswer: answer.studentAnswer,
+        isCorrect: aiResult.isCorrect,
+        timeSpentSeconds,
+        awardedMarks,
+        aiFeedback: buildEssayAiFeedback(aiResult) as unknown as Prisma.InputJsonValue,
+        bandLabel: aiResult.bandLabel,
+        bandDescriptor: aiResult.bandDescriptor,
+        gradingStatus: "GRADED",
+        aiModel: aiResult.aiModel,
+      });
+      essayScores.push({
+        questionId: answer.questionId,
+        criterionScores: aiResult.criterionScores.map((score) => ({
+          ...score,
+          aiRubricId: aiResult.aiRubric.id,
+        })),
+      });
+      continue;
+    }
+
+    const isCorrect =
+      answer.studentAnswer.trim().toUpperCase() ===
+      (question.correctAnswer ?? "").trim().toUpperCase();
+    gradedAnswers.push({
+      sessionId,
+      questionId: answer.questionId,
+      studentAnswer: answer.studentAnswer,
+      isCorrect,
+      timeSpentSeconds,
+      awardedMarks: isCorrect ? maxMarks : 0,
+      aiFeedback: Prisma.JsonNull,
+      bandLabel: null,
+      bandDescriptor: null,
+      gradingStatus: "GRADED",
+      aiModel: null,
+    });
+  }
   const totalTimeSeconds = elapsedSessionSeconds;
 
   const correctCount = gradedAnswers.filter((a) => a.isCorrect).length;
   const totalQuestions = session.sessionQuestions.length;
-  const scorePercent = totalQuestions > 0 ? (correctCount / totalQuestions) * 100 : 0;
+  const totalAwardedMarks = gradedAnswers.reduce((sum, answer) => sum + Number(answer.awardedMarks ?? 0), 0);
+  const totalPossibleMarks = session.sessionQuestions.reduce((sum, sq) => sum + normalizeQuestionMaxMarks(sq.question.maxMarks), 0);
+  const scorePercent = totalPossibleMarks > 0 ? (totalAwardedMarks / totalPossibleMarks) * 100 : 0;
 
   // 4. Persist answers + complete session
-  await prisma.$transaction(async (tx) => {
-    await tx.practiceAnswer.createMany({ data: gradedAnswers });
-    await tx.practiceSession.update({
-      where: { id: sessionId },
-      data: { status: "COMPLETED", endedAt, totalTimeSeconds },
-    });
-  });
-
-  // 5. Update StudentPerformance
+  // Pre-compute topic performance updates outside the tx (pure computation)
+  type TopicPerfUpdate = { topicId: string; subjectId: string; scorePercent: number };
+  const topicPerfUpdates: TopicPerfUpdate[] = [];
   if (session.topicId && session.topic) {
-    // Single-topic session — update one record
-    await upsertTopicPerformance(
-      prisma,
-      studentId,
-      session.topicId,
-      session.topic.subjectId,
-      scorePercent
-    );
+    topicPerfUpdates.push({
+      topicId: session.topicId,
+      subjectId: session.topic.subjectId,
+      scorePercent,
+    });
   } else {
-    // Multi-topic session (subject-wide or weak-area) — update per question's topic
     const topicGroups = new Map<string, { subjectId: string; correct: number; total: number }>();
-
     for (const sq of session.sessionQuestions) {
       const q = sq.question as typeof sq.question & { topicId: string; subjectId: string };
       const graded = gradedAnswers.find((g) => g.questionId === sq.questionId);
-      const existing = topicGroups.get(q.topicId) ?? {
-        subjectId: q.subjectId,
-        correct: 0,
-        total: 0,
-      };
+      const existing = topicGroups.get(q.topicId) ?? { subjectId: q.subjectId, correct: 0, total: 0 };
       topicGroups.set(q.topicId, {
         subjectId: q.subjectId,
         correct: existing.correct + (graded?.isCorrect ? 1 : 0),
         total: existing.total + 1,
       });
     }
-
     for (const [topicId, { subjectId, correct, total }] of topicGroups.entries()) {
-      const topicScore = total > 0 ? (correct / total) * 100 : 0;
-      await upsertTopicPerformance(prisma, studentId, topicId, subjectId, topicScore);
+      topicPerfUpdates.push({
+        topicId,
+        subjectId,
+        scorePercent: total > 0 ? (correct / total) * 100 : 0,
+      });
     }
   }
+
+  await prisma.$transaction(async (tx) => {
+    const createdAnswers = await Promise.all(
+      gradedAnswers.map((answer) =>
+        tx.practiceAnswer.create({
+          data: answer,
+          select: { id: true, questionId: true },
+        })
+      )
+    );
+    const answerIdByQuestionId = new Map(createdAnswers.map((answer) => [answer.questionId, answer.id]));
+    for (const essay of essayScores) {
+      const practiceAnswerId = answerIdByQuestionId.get(essay.questionId);
+      if (!practiceAnswerId) continue;
+      if (essay.criterionScores.length === 0) continue;
+      await tx.practiceEssayScore.createMany({
+        data: essay.criterionScores.map((score) => ({
+          practiceAnswerId,
+          aiRubricId: score.aiRubricId,
+          criterionId: score.criterionId,
+          criterionName: score.criterionName,
+          score: score.score,
+          maxScore: score.maxScore,
+          feedback: score.feedback || null,
+          strengths: score.strengths,
+          improvements: score.improvements,
+        })),
+      });
+    }
+    await tx.practiceSession.update({
+      where: { id: sessionId },
+      data: { status: "COMPLETED", endedAt, totalTimeSeconds },
+    });
+    // Update StudentPerformance per topic INSIDE the same transaction
+    for (const { topicId, subjectId, scorePercent: tps } of topicPerfUpdates) {
+      await upsertTopicPerformance(tx, studentId, topicId, subjectId, tps);
+    }
+  });
 
   if (session.sourceType === "PATHWAY" && session.pathwayNodeId) {
     await completePathwayNodePractice(
@@ -717,21 +917,23 @@ export async function submitPracticeSession(
       return {
         questionId: sq.questionId,
         order: sq.order,
+        type: q.type as "MCQ" | "ESSAY",
         questionText: q.questionText,
+        writingType: q.writingType,
+        promptText: q.promptText,
         latexEnabled: q.latexEnabled,
         difficulty: q.difficulty as "EASY" | "MEDIUM" | "HARD",
         options: q.options as Array<{ key: string; text: string }> | null,
-        imageRef: q.imageRef,
-        image: serializeImageSummary(q.image),
-        imageUrl: q.imageUrl,
-        imageUrls: q.imageUrls,
-        correctAnswer: q.correctAnswer,
+        imageRefs: q.imageRefs,
+        images: q.imageRefs.map((fileName) => ({ fileName, url: null, altText: null, caption: null })),
+        correctAnswer: q.type === "MCQ" ? q.correctAnswer : "",
         explanation: q.explanation,
+        maxMarks: normalizeQuestionMaxMarks(q.maxMarks),
         passage: passage
           ? {
               id: passage.id,
               title: passage.title,
-              content: passage.content,
+              text: passage.text,
               imageRef: passage.imageRef,
               imageDisplayPosition: passage.imageDisplayPosition,
               image: serializeImageSummary(passage.image),
@@ -740,6 +942,11 @@ export async function submitPracticeSession(
         studentAnswer: submitted?.studentAnswer ?? "",
         isCorrect: graded?.isCorrect ?? false,
         timeSpentSeconds: submitted?.timeSpentSeconds ?? 0,
+        awardedMarks: graded?.awardedMarks !== null && graded?.awardedMarks !== undefined ? Number(graded.awardedMarks) : null,
+        bandLabel: graded?.bandLabel ?? null,
+        bandDescriptor: graded?.bandDescriptor ?? null,
+        gradingStatus: graded?.gradingStatus ?? "GRADED",
+        aiFeedback: scrubAiFeedbackForStudent(graded?.aiFeedback ?? null),
       };
     });
 
@@ -1002,7 +1209,7 @@ export async function retakePracticeSession(
     questionCount: questionIds.length,
     status: "IN_PROGRESS" as const,
     startedAt: session.startedAt.toISOString(),
-    questions: sessionQuestions.map(formatQuestion),
+    questions: sessionQuestions.map((sq) => formatQuestion(sq)),
   };
 }
 
@@ -1155,25 +1362,25 @@ async function completePathwayNodePractice(
 }
 
 async function upsertTopicPerformance(
-  prisma: PrismaClient,
+  client: PrismaClient | Prisma.TransactionClient,
   studentId: string,
   topicId: string,
   subjectId: string,
   scorePercent: number
 ) {
-  const perf = await prisma.studentPerformance.findUnique({
+  const perf = await client.studentPerformance.findUnique({
     where: { studentId_topicId: { studentId, topicId } },
     select: { scoreAvg: true, attemptCount: true },
   });
 
   if (perf) {
     const newAvg = (perf.scoreAvg * perf.attemptCount + scorePercent) / (perf.attemptCount + 1);
-    await prisma.studentPerformance.update({
+    await client.studentPerformance.update({
       where: { studentId_topicId: { studentId, topicId } },
       data: { scoreAvg: newAvg, attemptCount: { increment: 1 } },
     });
   } else {
-    await prisma.studentPerformance.create({
+    await client.studentPerformance.create({
       data: { studentId, subjectId, topicId, scoreAvg: scorePercent, attemptCount: 1 },
     });
   }

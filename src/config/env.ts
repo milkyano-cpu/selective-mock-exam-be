@@ -46,6 +46,7 @@ const envSchema = z.object({
   S3_BANNER_IMAGE_BUCKET: z.string().default("banners"),
   S3_RESOURCE_BUCKET: z.string().default("resources"),
   S3_INVOICE_BUCKET: z.string().default("invoices"),
+  S3_CSV_TEMPLATE_BUCKET: z.string().default("csv-templates"),
   S3_BUCKET_INIT_TIMEOUT_MS: z.coerce.number().int().min(500).default(3000),
   S3_SIGNED_URL_EXPIRES_IN_SECONDS: z.coerce.number().int().min(60).default(3600),
   PROFILE_PHOTO_MAX_SIZE_BYTES: z.coerce.number().int().min(1).default(5 * 1024 * 1024),
@@ -64,8 +65,13 @@ const envSchema = z.object({
   VAPID_PRIVATE_KEY: z.string().optional(),
   VAPID_EMAIL: z.string().optional(),
 
-  // AI (Anthropic) — optional; essay AI grading is disabled if not set
+  // AI (Anthropic) — optional; AI features disabled if API key not set.
+  // All values must be set in .env (no hardcoded fallbacks).
   ANTHROPIC_API_KEY: z.string().optional(),
+  ANTHROPIC_GRADING_MODEL: z.string().optional(),
+  ANTHROPIC_GRADING_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
+  ANTHROPIC_GRADING_MAX_RETRIES: z.coerce.number().int().min(0).max(10).optional(),
+  ANTHROPIC_INSIGHTS_MODEL: z.string().optional(),
 
   // Field-level encryption
   FIELD_ENCRYPTION_KEY: z

@@ -7,6 +7,7 @@ const minioInstance = {
   putObject: jest.fn(),
   presignedGetObject: jest.fn(),
   removeObject: jest.fn(),
+  statObject: jest.fn(),
 };
 
 const Client = jest.fn(() => minioInstance);
@@ -26,10 +27,12 @@ function createStorage(overrides: Record<string, unknown> = {}) {
     signedUrlExpiresInSeconds: 300,
     imageBucket: "images",
     questionImageBucket: "question-images",
+    passageBucket: "passages",
     bannerImageBucket: "banner-images",
     bannerImageMaxSizeBytes: 2048,
     resourceBucket: "resources",
     invoiceBucket: "invoices",
+    csvTemplateBucket: "csv-templates",
     ...overrides,
   });
 }
@@ -43,6 +46,12 @@ describe("object storage", () => {
     minioInstance.putObject.mockResolvedValue(undefined as never);
     minioInstance.presignedGetObject.mockResolvedValue("https://signed.example.com/photo" as never);
     minioInstance.removeObject.mockResolvedValue(undefined as never);
+    minioInstance.statObject.mockResolvedValue({
+      size: 42,
+      lastModified: new Date("2026-05-01T10:00:00.000Z"),
+      etag: "etag-1",
+      metaData: { "content-type": "text/csv" },
+    } as never);
   });
 
   it("creates a MinIO client from endpoint options and exposes configured limits", () => {
@@ -152,6 +161,47 @@ describe("object storage", () => {
     expect(signedUrl).toBe("https://signed.example.com/photo");
   });
 
+  it("stores CSV templates in a private bucket and returns signed download URLs", async () => {
+    const storage = createStorage();
+    const body = Buffer.from("Header\nValue");
+
+    await storage.ensureCsvTemplateBucketExists();
+    await storage.uploadCsvTemplate({
+      key: "question-mcq.csv",
+      body,
+      contentType: "text/csv",
+      contentLength: body.length,
+      downloadFileName: "question-mcq-template.csv",
+    });
+    const info = await storage.getCsvTemplateObjectInfo("question-mcq.csv");
+    const signedUrl = await storage.getCsvTemplateSignedUrl("question-mcq.csv");
+
+    expect(minioInstance.bucketExists).toHaveBeenCalledWith("csv-templates");
+    expect(minioInstance.setBucketPolicy).toHaveBeenCalledWith(
+      "csv-templates",
+      JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [],
+        Id: "csv-templates-private",
+      })
+    );
+    expect(minioInstance.putObject).toHaveBeenCalledWith(
+      "csv-templates",
+      "question-mcq.csv",
+      body,
+      body.length,
+      {
+        "Content-Type": "text/csv",
+        "Content-Disposition": 'attachment; filename="question-mcq-template.csv"',
+      }
+    );
+    expect(minioInstance.statObject).toHaveBeenCalledWith("csv-templates", "question-mcq.csv");
+    expect(minioInstance.presignedGetObject).toHaveBeenCalledWith("csv-templates", "question-mcq.csv", 300);
+    expect(info.size).toBe(42);
+    expect(info.contentType).toBe("text/csv");
+    expect(signedUrl).toBe("https://signed.example.com/photo");
+  });
+
   it("ensures public master, question, and banner image buckets", async () => {
     const storage = createStorage();
 
@@ -186,14 +236,14 @@ describe("object storage", () => {
     );
   });
 
-  it("uploads master, question, and banner images with timestamped public URLs", async () => {
+  it("uploads passage, question, and banner images with public URLs", async () => {
     jest.spyOn(Date, "now").mockReturnValue(1770000000000);
     const storage = createStorage({ endpointUrl: "https://s3.example.com/" });
     const body = Buffer.from("image");
 
-    const imageUrl = await storage.uploadImage({
-      imageId: "image-1",
-      filename: "diagram.png",
+    const passageUrl = await storage.uploadImage({
+      imageType: "PASSAGE",
+      key: "passage-1/diagram.png",
       body,
       contentType: "image/png",
       contentLength: body.length,
@@ -214,8 +264,8 @@ describe("object storage", () => {
     });
 
     expect(minioInstance.putObject).toHaveBeenCalledWith(
-      "images",
-      "image-1/1770000000000-diagram.png",
+      "passages",
+      "passage-1/diagram.png",
       body,
       body.length,
       { "Content-Type": "image/png" }
@@ -234,7 +284,7 @@ describe("object storage", () => {
       body.length,
       { "Content-Type": "image/jpeg" }
     );
-    expect(imageUrl).toBe("https://s3.example.com/images/image-1/1770000000000-diagram.png");
+    expect(passageUrl).toBe("https://s3.example.com/passages/passage-1/diagram.png");
     expect(questionUrl).toBe("https://s3.example.com/question-images/question-1/1770000000000-diagram.png");
     expect(bannerUrl).toBe("https://s3.example.com/banner-images/banner-1/1770000000000-hero.jpg");
   });

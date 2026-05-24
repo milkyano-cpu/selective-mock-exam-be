@@ -65,6 +65,7 @@ async function storagePlugin(fastify: FastifyInstance) {
     bannerImageMaxSizeBytes: env.BANNER_IMAGE_MAX_SIZE_BYTES,
     resourceBucket: env.S3_RESOURCE_BUCKET,
     invoiceBucket: env.S3_INVOICE_BUCKET,
+    csvTemplateBucket: env.S3_CSV_TEMPLATE_BUCKET,
   });
 
   const bucketInitTasks = [
@@ -75,6 +76,7 @@ async function storagePlugin(fastify: FastifyInstance) {
     { name: "banner image", fn: () => storage.ensureBannerImageBucketExists(), bucket: env.S3_BANNER_IMAGE_BUCKET },
     { name: "resource", fn: () => storage.ensureResourceBucketExists(), bucket: env.S3_RESOURCE_BUCKET },
     { name: "invoice", fn: () => storage.ensureInvoiceBucketExists(), bucket: env.S3_INVOICE_BUCKET },
+    { name: "CSV template", fn: () => storage.ensureCsvTemplateBucketExists(), bucket: env.S3_CSV_TEMPLATE_BUCKET },
   ];
 
   await Promise.all(bucketInitTasks.map(async (task) => {

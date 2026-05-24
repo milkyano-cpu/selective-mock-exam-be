@@ -252,7 +252,7 @@ export async function reviewFlashcard(prisma: PrismaClient, studentId: string, i
 }
 
 function buildBackContent(question: {
-  correctAnswer: string;
+  correctAnswer: string | null;
   explanation: string | null;
   options: Prisma.JsonValue | null;
 }) {

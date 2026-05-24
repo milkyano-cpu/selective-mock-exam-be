@@ -2,8 +2,10 @@ import { Worker } from "bullmq";
 import type { FastifyBaseLogger } from "fastify";
 import type { Redis } from "ioredis";
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { gradeEssayWithAi, type AiRubricInput } from "../../utils/ai-grader.js";
+import { buildEssayAiFeedback, gradeEssayWithAi, type AiRubricInput } from "../../utils/ai-grader.js";
+import { resolveImagesAsBase64 } from "../images/images.service.js";
 import { createNotification } from "../../lib/notify.js";
+import { getExamAttemptSummary } from "./exams.service.js";
 
 export interface GradingJobData {
   sessionId: string;
@@ -13,6 +15,22 @@ const AI_RUBRIC_FOR_AI_SELECT = {
   id: true,
   name: true,
   totalMaxScore: true,
+  bandDescriptors: {
+    orderBy: [{ scoreMin: "asc" }, { scoreMax: "asc" }],
+    select: {
+      bandLabel: true,
+      scoreMin: true,
+      scoreMax: true,
+      descriptor: true,
+    },
+  },
+  calibrationNotes: {
+    orderBy: { sortOrder: "asc" },
+    select: {
+      category: true,
+      instruction: true,
+    },
+  },
   criteria: {
     orderBy: { sortOrder: "asc" },
     select: {
@@ -20,14 +38,9 @@ const AI_RUBRIC_FOR_AI_SELECT = {
       criterionName: true,
       criterionDescription: true,
       maxScore: true,
-      bandDescriptors: {
-        orderBy: [{ scoreMin: "asc" }, { scoreMax: "asc" }],
-        select: {
-          scoreMin: true,
-          scoreMax: true,
-          descriptor: true,
-        },
-      },
+      highScoringIndicators: true,
+      lowScoringIndicators: true,
+      aiCalibrationNotes: true,
     },
   },
 } satisfies Prisma.AiRubricSelect;
@@ -36,16 +49,24 @@ function toAiRubricInput(aiRubric: {
   id: string;
   name: string;
   totalMaxScore: number;
+  bandDescriptors: Array<{
+    bandLabel: string;
+    scoreMin: number;
+    scoreMax: number;
+    descriptor: string;
+  }>;
+  calibrationNotes: Array<{
+    category: string | null;
+    instruction: string;
+  }>;
   criteria: Array<{
     id: string;
     criterionName: string;
     criterionDescription: string;
     maxScore: number;
-    bandDescriptors: Array<{
-      scoreMin: number;
-      scoreMax: number;
-      descriptor: string;
-    }>;
+    highScoringIndicators: string[];
+    lowScoringIndicators: string[];
+    aiCalibrationNotes: string[];
   }>;
 } | null): AiRubricInput | null {
   if (!aiRubric || aiRubric.criteria.length === 0) return null;
@@ -81,11 +102,6 @@ function normalizeQuestionMaxMarks(maxMarks: number) {
   return Number.isFinite(maxMarks) && maxMarks > 0 ? maxMarks : 1;
 }
 
-function scorePercentToAwardedMarks(scorePercent: number, maxMarks: number) {
-  const boundedPercent = Math.min(100, Math.max(0, scorePercent));
-  return Number(((boundedPercent / 100) * maxMarks).toFixed(2));
-}
-
 async function gradeSession(prisma: PrismaClient, sessionId: string, logger: FastifyBaseLogger) {
   const session = await prisma.examSession.findUnique({
     where: { id: sessionId },
@@ -112,6 +128,11 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
                   id: true,
                   type: true,
                   questionText: true,
+                  writingType: true,
+                  promptText: true,
+                  markingGuide: true,
+                  imageRefs: true,
+                  markingType: true,
                   correctAnswer: true,
                   maxMarks: true,
                   subjectId: true,
@@ -163,14 +184,6 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
     : session.exam.questions;
   const totalQuestions = examQuestions.length;
   const gradingType = session.exam.gradingType === "MANUAL" ? "MANUAL" : "AUTO";
-  const needsDefaultAiRubric = gradingType === "AUTO"
-    && examQuestions.some((eq) => eq.question.type === "ESSAY" && !eq.question.aiRubric);
-  const defaultAiRubric = needsDefaultAiRubric
-    ? toAiRubricInput(await prisma.aiRubric.findFirst({
-        where: { isDefault: true, isActive: true },
-        select: AI_RUBRIC_FOR_AI_SELECT,
-      }))
-    : null;
 
   if (totalQuestions === 0) {
     logger.warn({ sessionId }, "Exam has no questions, marking as graded with 0 score");
@@ -184,25 +197,27 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
   // ── Grade MCQ answers (exact match) ──────────────────────────────────────
   const mcqUpdates: Array<{ id: string; isCorrect: boolean; awardedMarks: number }> = [];
   let correctCount = 0;
-  let totalAwardedMarks = 0;
-  let totalPossibleMarks = 0;
+  let mcqAwardedMarks = 0;
+  let mcqPossibleMarks = 0;
+  let essayAwardedMarks = 0;
+  let essayPossibleMarks = 0;
 
   for (const eq of examQuestions) {
     const question = eq.question;
     if (question.type !== "MCQ") continue;
 
     const maxMarks = normalizeQuestionMaxMarks(question.maxMarks);
-    totalPossibleMarks += maxMarks;
+    mcqPossibleMarks += maxMarks;
     const answer = answerMap.get(question.id);
     if (!answer) continue;
 
     const isCorrect =
       answer.studentAnswer.trim().toUpperCase() ===
-      question.correctAnswer.trim().toUpperCase();
+      (question.correctAnswer ?? "").trim().toUpperCase();
     const awardedMarks = isCorrect ? maxMarks : 0;
 
     if (isCorrect) correctCount++;
-    totalAwardedMarks += awardedMarks;
+    mcqAwardedMarks += awardedMarks;
     mcqUpdates.push({ id: answer.id, isCorrect, awardedMarks });
   }
 
@@ -215,12 +230,17 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
     scorePercent: number;
     awardedMarks: number;
     maxMarks: number;
+    bandLabel: string | null;
+    bandDescriptor: string | null;
+    aiModel: string | null;
     criterionScores: Array<{
       criterionId: string;
       criterionName: string;
       score: number;
       maxScore: number;
       feedback: string;
+      strengths: string[];
+      improvements: string[];
       aiRubricId: string | null;
     }>;
   }> = [];
@@ -254,48 +274,81 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
             scorePercent: 0,
             awardedMarks: 0,
             maxMarks,
+            bandLabel: null,
+            bandDescriptor: null,
+            aiModel: null,
             criterionScores: [],
           };
         }
 
-        const aiRubric = toAiRubricInput(question.aiRubric) ?? defaultAiRubric;
+        // MANUAL marking: skip AI grading, leave for tutor review
+        if (question.markingType === "MANUAL") {
+          return {
+            id: answer.id,
+            isCorrect: false,
+            pendingReview: true,
+            aiFeedback: null,
+            scorePercent: 0,
+            awardedMarks: 0,
+            maxMarks,
+            bandLabel: null,
+            bandDescriptor: null,
+            aiModel: null,
+            criterionScores: [],
+          };
+        }
+
+        const aiRubric = toAiRubricInput(question.aiRubric);
+        if (!aiRubric || question.markingType !== "AI") {
+          throw new Error(`Essay question ${question.id} requires markingType AI and an active aiRubric`);
+        }
+        if (!question.promptText?.trim()) {
+          throw new Error(`Essay question ${question.id} is missing promptText`);
+        }
+        // Resolve any prompt images to base64 before calling AI
+        const images = question.imageRefs && question.imageRefs.length > 0
+          ? await resolveImagesAsBase64(prisma, question.imageRefs)
+          : [];
         const aiResult = await gradeEssayWithAi({
+          writingType: question.writingType,
           questionText: question.questionText,
-          correctAnswer: question.correctAnswer,
+          promptText: question.promptText,
+          images: images.map(({ data, mediaType }) => ({ data, mediaType })),
+          markingGuide: question.markingGuide,
           studentAnswer: answer.studentAnswer,
           aiRubric,
         });
 
-        if (aiResult) {
+        {
+          // Per final-design Step 6:
+          //   final_score = Σ ai_score_per_criterion  → simpan sebagai awardedMarks (raw sum)
+          //   weighted_total = (Σ / totalMaxScore) × 100  → untuk band lookup
+          const awardedMarks = aiResult.totalAwardedMarks;
           const scorePercent = aiResult.scorePercent ?? (aiResult.isCorrect ? 100 : 0);
-          const awardedMarks = scorePercentToAwardedMarks(scorePercent, maxMarks);
           const criterionScores = aiResult.criterionScores?.map((score) => ({
             ...score,
-            aiRubricId: aiResult.aiRubric?.id ?? null,
+            aiRubricId: aiResult.aiRubric.id,
           })) ?? [];
           logger.info(
             { sessionId, questionId: question.id, isCorrect: aiResult.isCorrect, confidence: aiResult.confidence, aiRubricId: aiRubric?.id, scorePercent, awardedMarks, maxMarks },
             "AI graded essay answer"
           );
-          return { id: answer.id, isCorrect: aiResult.isCorrect, pendingReview: false, aiFeedback: aiResult, scorePercent, awardedMarks, maxMarks, criterionScores };
+          return {
+            id: answer.id,
+            isCorrect: aiResult.isCorrect,
+            pendingReview: false,
+            aiFeedback: buildEssayAiFeedback(aiResult),
+            scorePercent,
+            awardedMarks,
+            maxMarks,
+            bandLabel: aiResult.bandLabel,
+            bandDescriptor: aiResult.bandDescriptor,
+            aiModel: aiResult.aiModel,
+            criterionScores,
+          };
         }
 
         // AI unavailable — mark as pending review, do NOT count in score
-        logger.warn({ sessionId, questionId: question.id }, "AI grading unavailable, marking essay as pending review");
-        return {
-          id: answer.id,
-          isCorrect: false,
-          pendingReview: true,
-          scorePercent: 0,
-          awardedMarks: 0,
-          maxMarks,
-          criterionScores: [],
-          aiFeedback: {
-            pendingReview: true,
-            reason: "AI grading unavailable. Awaiting manual review by tutor.",
-            gradedAt: new Date().toISOString(),
-          },
-        };
       })
     );
 
@@ -306,8 +359,8 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
         correctCount++;
       }
       if (!result.pendingReview) {
-        totalAwardedMarks += result.awardedMarks;
-        totalPossibleMarks += result.maxMarks;
+        essayAwardedMarks += result.awardedMarks;
+        essayPossibleMarks += result.maxMarks;
       }
       if (result.id) {
         essayUpdates.push({
@@ -318,19 +371,36 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
           scorePercent: result.scorePercent,
           awardedMarks: result.awardedMarks,
           maxMarks: result.maxMarks,
+          bandLabel: result.bandLabel,
+          bandDescriptor: result.bandDescriptor,
+          aiModel: result.aiModel,
           criterionScores: result.criterionScores,
         });
       }
     }
   }
 
-  // ── Calculate final score ─────────────────────────────────────────────────
+  // ── Calculate scores: MCQ, Essay, and Combined ───────────────────────────
+  // mcqScore / essayScore tetap dihitung walaupun ada pending review, supaya
+  // student bisa lihat partial breakdown sebelum tutor selesai grade essay.
+  // finalScore (combined) hanya di-set ketika semua selesai (untuk ranking).
+  let mcqScore: number | null = null;
+  let essayScore: number | null = null;
   let finalScore: number | null = null;
   let rankingLevel: ReturnType<typeof calculateRankingLevel> | null = null;
   const sessionStatus: "SUBMITTED" | "GRADED" = pendingReviewCount > 0 ? "SUBMITTED" : "GRADED";
 
+  if (mcqPossibleMarks > 0) {
+    mcqScore = (mcqAwardedMarks / mcqPossibleMarks) * 100;
+  }
+  if (essayPossibleMarks > 0) {
+    essayScore = (essayAwardedMarks / essayPossibleMarks) * 100;
+  }
+
   if (gradingType === "AUTO" && pendingReviewCount === 0) {
-    finalScore = totalPossibleMarks > 0 ? (totalAwardedMarks / totalPossibleMarks) * 100 : 0;
+    const totalAwarded = mcqAwardedMarks + essayAwardedMarks;
+    const totalPossible = mcqPossibleMarks + essayPossibleMarks;
+    finalScore = totalPossible > 0 ? (totalAwarded / totalPossible) * 100 : 0;
     rankingLevel = calculateRankingLevel(finalScore, {
       thresholdSuperior: session.exam.thresholdSuperior,
       thresholdAboveAverage: session.exam.thresholdAboveAverage,
@@ -362,6 +432,9 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
         data: {
           isCorrect: update.isCorrect,
           awardedMarks: update.awardedMarks,
+          bandLabel: update.bandLabel,
+          bandDescriptor: update.bandDescriptor,
+          aiModel: update.aiModel,
           ...(update.aiFeedback && { aiFeedback: update.aiFeedback }),
         },
       });
@@ -376,6 +449,8 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
             score: score.score,
             maxScore: score.maxScore,
             feedback: score.feedback || null,
+            strengths: score.strengths,
+            improvements: score.improvements,
           })),
         });
       }
@@ -388,6 +463,8 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
         status: sessionStatus,
         ...(finalScore !== null && { finalScore }),
         ...(rankingLevel !== null && { rankingLevel }),
+        mcqScore,
+        essayScore,
       },
     });
 
@@ -405,7 +482,7 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
           if (eq.question.type === "MCQ") {
             isCorrect =
               answer.studentAnswer.trim().toUpperCase() ===
-              eq.question.correctAnswer.trim().toUpperCase();
+              (eq.question.correctAnswer ?? "").trim().toUpperCase();
           } else {
             // Use AI-graded result; skip pending-review answers entirely
             const essayResult = essayUpdates.find((u) => u.id === answer.id);
@@ -452,17 +529,25 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
       sessionId,
       studentId: session.studentId,
       finalScore,
+      mcqScore,
+      essayScore,
       rankingLevel,
       correctCount,
       totalQuestions,
-      totalAwardedMarks,
-      totalPossibleMarks,
+      mcqAwardedMarks,
+      mcqPossibleMarks,
+      essayAwardedMarks,
+      essayPossibleMarks,
       essayAiGraded: essayUpdates.length - loggedPendingReviewCount,
       essayPendingReview: loggedPendingReviewCount,
       essayCount,
     },
     "Session graded successfully"
   );
+
+  if (sessionStatus === "GRADED") {
+    await getExamAttemptSummary(prisma, session.exam.id, session.studentId);
+  }
 
   if (pendingReviewCount > 0) {
     void createNotification(prisma, {

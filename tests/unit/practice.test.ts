@@ -8,16 +8,23 @@ const endedAt = new Date("2026-05-08T00:30:00.000Z");
 function question(id = "question-1", overrides: Record<string, unknown> = {}) {
   return {
     id,
+    type: "MCQ",
     questionText: `Question ${id}`,
+    writingType: null,
+    promptText: null,
     latexEnabled: false,
     difficulty: "EASY",
     options: [{ key: "A", text: "Answer A" }],
+    imageRef: null,
+    image: null,
     imageUrl: null,
     imageUrls: [],
     correctAnswer: "A",
     explanation: "Because A",
+    maxMarks: 1,
     topicId: "topic-1",
     subjectId: "subject-vr",
+    passage: null,
     ...overrides,
   };
 }
@@ -82,7 +89,14 @@ function createTx() {
       createMany: jest.fn(async () => ({ count: 2 })),
     },
     practiceAnswer: {
+      create: jest.fn(async (args: { data: { questionId: string } }) => ({
+        id: `answer-${args.data.questionId}`,
+        questionId: args.data.questionId,
+      })),
       createMany: jest.fn(async () => ({ count: 2 })),
+    },
+    practiceEssayScore: {
+      createMany: jest.fn(async () => ({ count: 0 })),
     },
   };
 }
@@ -196,7 +210,6 @@ describe("practice service", () => {
     expect(prisma.question.findMany).toHaveBeenCalledWith({
       where: {
         subjectId: "subject-vr",
-        type: "MCQ",
         status: "PUBLISHED",
         subtopics: { hasSome: ["coding"] },
         id: { in: ["question-1"] },
@@ -246,7 +259,7 @@ describe("practice service", () => {
       })
     ).rejects.toMatchObject({
       statusCode: 422,
-      message: "No published MCQ questions available for the selected filters",
+      message: "No published questions available for the selected filters",
     });
   });
 
@@ -330,23 +343,29 @@ describe("practice service", () => {
       ],
     });
 
-    expect(prisma.tx.practiceAnswer.createMany).toHaveBeenCalledWith({
-      data: [
-        {
+    expect(prisma.tx.practiceAnswer.create).toHaveBeenNthCalledWith(1, {
+      data: expect.objectContaining({
           sessionId: "session-1",
           questionId: "question-1",
           studentAnswer: "a",
           isCorrect: true,
           timeSpentSeconds: 10,
-        },
-        {
+          awardedMarks: 1,
+          gradingStatus: "GRADED",
+        }),
+      select: { id: true, questionId: true },
+    });
+    expect(prisma.tx.practiceAnswer.create).toHaveBeenNthCalledWith(2, {
+      data: expect.objectContaining({
           sessionId: "session-1",
           questionId: "question-2",
           studentAnswer: "B",
           isCorrect: false,
           timeSpentSeconds: 20,
-        },
-      ],
+          awardedMarks: 0,
+          gradingStatus: "GRADED",
+        }),
+      select: { id: true, questionId: true },
     });
     expect(prisma.studentPerformance.update).toHaveBeenCalledWith({
       where: { studentId_topicId: { studentId: "student-1", topicId: "topic-1" } },

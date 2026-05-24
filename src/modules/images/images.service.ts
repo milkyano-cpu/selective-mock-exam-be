@@ -18,7 +18,6 @@ const IMAGE_SELECT = {
   _count: {
     select: {
       passages: true,
-      questions: true,
     },
   },
 } as const;
@@ -43,12 +42,13 @@ export function serializeImageSummary(image: ImageSummaryRecord | null) {
   };
 }
 
-function serializeImage(image: ImageRecord) {
+async function serializeImage(prisma: PrismaClient, image: ImageRecord) {
   const { _count, ...rest } = image;
+  const questionCount = await prisma.question.count({ where: { imageRefs: { has: image.fileName } } });
   return {
     ...rest,
     passageCount: _count.passages,
-    questionCount: _count.questions,
+    questionCount,
   };
 }
 
@@ -65,9 +65,9 @@ function extractBaseName(filePath: string) {
   return filePath.split("/").filter(Boolean).pop() ?? filePath;
 }
 
-function oneMonthFrom(date = new Date()) {
+function oneWeekFrom(date = new Date()) {
   const next = new Date(date);
-  next.setMonth(next.getMonth() + 1);
+  next.setDate(next.getDate() + 7);
   return next;
 }
 
@@ -130,7 +130,7 @@ async function deleteImageObjectByUrl(storage: ObjectStorage, url: string | null
 async function getImageUsageCounts(prisma: PrismaClient, fileName: string) {
   const [passageCount, questionCount] = await Promise.all([
     prisma.passage.count({ where: { imageRef: fileName } }),
-    prisma.question.count({ where: { imageRef: fileName } }),
+    prisma.question.count({ where: { imageRefs: { has: fileName } } }),
   ]);
   return { passageCount, questionCount };
 }
@@ -151,7 +151,7 @@ export async function refreshImageExpiration(prisma: PrismaClient, rawFileName?:
   await prisma.image.update({
     where: { uuid: image.uuid },
     data: {
-      expiredDate: isLinked ? null : image.url ? oneMonthFrom() : null,
+      expiredDate: isLinked ? null : image.url ? oneWeekFrom() : null,
     },
   });
 }
@@ -183,6 +183,69 @@ export async function findMissingImageRefs(prisma: PrismaClient, refs: Array<str
   return uniqueRefs.filter((fileName) => !foundSet.has(fileName));
 }
 
+export async function loadImageSummariesByFileNames(prisma: PrismaClient, refs: Array<string | null | undefined>) {
+  const uniqueRefs = [...new Set(refs.map(normalizeImageFileName).filter(Boolean))];
+  if (uniqueRefs.length === 0) return new Map<string, ImageSummaryRecord>();
+  const images = await prisma.image.findMany({
+    where: { fileName: { in: uniqueRefs } },
+    select: IMAGE_SUMMARY_SELECT,
+  });
+  return new Map(images.map((image) => [image.fileName, image]));
+}
+
+const ALLOWED_AI_IMAGE_MEDIA_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+
+function inferMediaTypeFromFileName(fileName: string): string {
+  const ext = fileName.split(".").pop()?.toLowerCase();
+  switch (ext) {
+    case "png": return "image/png";
+    case "gif": return "image/gif";
+    case "webp": return "image/webp";
+    default: return "image/jpeg";
+  }
+}
+
+/**
+ * Resolve image file names to base64-encoded payloads suitable for Anthropic
+ * vision content blocks. Preserves the input order; skips any image that
+ * cannot be fetched or has an unsupported media type.
+ */
+export async function resolveImagesAsBase64(
+  prisma: PrismaClient,
+  fileNames: Array<string | null | undefined>,
+): Promise<Array<{ fileName: string; data: string; mediaType: string }>> {
+  const uniqueRefs = [...new Set(fileNames.map(normalizeImageFileName).filter(Boolean))];
+  if (uniqueRefs.length === 0) return [];
+
+  const images = await prisma.image.findMany({
+    where: { fileName: { in: uniqueRefs } },
+    select: { fileName: true, url: true },
+  });
+  const urlByFileName = new Map(images.map((image) => [image.fileName, image.url]));
+
+  const results = await Promise.all(
+    uniqueRefs.map(async (fileName) => {
+      const url = urlByFileName.get(fileName);
+      if (!url) return null;
+      try {
+        const response = await fetch(url);
+        if (!response.ok) return null;
+        const buffer = Buffer.from(await response.arrayBuffer());
+        const headerType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+        const mediaType = headerType && ALLOWED_AI_IMAGE_MEDIA_TYPES.has(headerType)
+          ? headerType
+          : inferMediaTypeFromFileName(fileName);
+        if (!ALLOWED_AI_IMAGE_MEDIA_TYPES.has(mediaType)) return null;
+        return { fileName, data: buffer.toString("base64"), mediaType };
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  return results.filter((r): r is { fileName: string; data: string; mediaType: string } => r !== null);
+}
+
 export async function upsertImageMetadata(
   prisma: PrismaClient,
   input: { fileName: string; altText?: string | null; caption?: string | null; linked?: boolean }
@@ -203,7 +266,7 @@ export async function upsertImageMetadata(
         fileName,
         altText,
         caption,
-        expiredDate: input.linked ? null : oneMonthFrom(),
+        expiredDate: input.linked ? null : oneWeekFrom(),
       },
     });
     return fileName;
@@ -247,7 +310,7 @@ export async function listImages(prisma: PrismaClient, query: ListImagesQuery) {
   ]);
 
   return {
-    data: items.map(serializeImage),
+    data: await Promise.all(items.map((image) => serializeImage(prisma, image))),
     meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
   };
 }
@@ -268,7 +331,7 @@ export async function updateImageMetadata(prisma: PrismaClient, uuid: string, bo
     select: IMAGE_SELECT,
   });
 
-  return serializeImage(updated);
+  return serializeImage(prisma, updated);
 }
 
 export async function uploadImage(
@@ -299,7 +362,7 @@ export async function uploadImage(
       refId,
       altText: input.altText?.trim() || null,
       caption: input.caption?.trim() || null,
-      expiredDate: oneMonthFrom(),
+      expiredDate: oneWeekFrom(),
     },
     select: IMAGE_SELECT,
   });
@@ -318,7 +381,7 @@ export async function uploadImage(
     select: IMAGE_SELECT,
   });
 
-  return serializeImage(updated);
+  return serializeImage(prisma, updated);
 }
 
 export async function uploadImageFileByUuid(
@@ -360,7 +423,7 @@ export async function uploadImageFileByUuid(
     where: { uuid: image.uuid },
     data: {
       url,
-      expiredDate: passageCount + questionCount > 0 ? null : oneMonthFrom(),
+      expiredDate: passageCount + questionCount > 0 ? null : oneWeekFrom(),
     },
     select: IMAGE_SELECT,
   });
@@ -369,7 +432,7 @@ export async function uploadImageFileByUuid(
     await deleteImageObjectByUrl(storage, oldUrl).catch(() => undefined);
   }
 
-  return serializeImage(updated);
+  return serializeImage(prisma, updated);
 }
 
 export async function deleteImage(prisma: PrismaClient, storage: ObjectStorage, uuid: string) {
@@ -379,7 +442,8 @@ export async function deleteImage(prisma: PrismaClient, storage: ObjectStorage, 
   });
   if (!image) throw createHttpError(404, "Image not found");
 
-  if (image._count.passages + image._count.questions > 0) {
+  const questionCount = await prisma.question.count({ where: { imageRefs: { has: image.fileName } } });
+  if (image._count.passages + questionCount > 0) {
     throw createHttpError(409, "Cannot delete image while it is linked to passages or questions");
   }
 
@@ -388,20 +452,39 @@ export async function deleteImage(prisma: PrismaClient, storage: ObjectStorage, 
 }
 
 export async function purgeExpiredImages(prisma: PrismaClient, storage: ObjectStorage, now = new Date()) {
-  const expiredImages = await prisma.image.findMany({
+  // Candidates: expired images that are not linked to any passage.
+  // Questions reference images via an array column (imageRefs), so we have to
+  // filter that side manually.
+  const candidates = await prisma.image.findMany({
     where: {
       expiredDate: { lte: now },
       passages: { none: {} },
-      questions: { none: {} },
     },
     select: {
       uuid: true,
       url: true,
+      fileName: true,
     },
   });
 
+  if (candidates.length === 0) return 0;
+
+  // Find which candidate file_names are still referenced by any question.
+  const stillUsedByQuestion = await prisma.question.findMany({
+    where: {
+      imageRefs: { hasSome: candidates.map((c) => c.fileName) },
+    },
+    select: { imageRefs: true },
+  });
+  const usedFileNames = new Set<string>();
+  for (const q of stillUsedByQuestion) {
+    for (const ref of q.imageRefs) usedFileNames.add(ref);
+  }
+
+  const trulyExpired = candidates.filter((c) => !usedFileNames.has(c.fileName));
+
   let deleted = 0;
-  for (const image of expiredImages) {
+  for (const image of trulyExpired) {
     try {
       await deleteImageObjectByUrl(storage, image.url);
       await prisma.image.delete({ where: { uuid: image.uuid } });
