@@ -5,7 +5,7 @@ import { env } from "../config/env.js";
 export interface AiGradeInput {
   writingType: string | null;
   questionText: string;
-  promptText: string;
+  promptText: string | null;
   /**
    * Pre-resolved prompt images (base64-encoded). Caller is responsible for
    * fetching the bytes from object storage and converting to base64 via
@@ -189,8 +189,8 @@ export async function gradeEssayWithAi(input: AiGradeInput): Promise<AiGradeResu
   // hierarchically:
   //   1. system prompt   → cached (stable across all grading)
   //   2. RUBRIC block    → cached per rubric_id (sections 1-3)
-  //   3. QUESTION block  → cached per question_id (sections 4-6, incl. images)
-  //   4. STUDENT block   → NEVER cached (section 7)
+  //   3. QUESTION block  → cached per question_id (sections 4-7, incl. images)
+  //   4. STUDENT block   → NEVER cached (section 8)
   //
   // Hierarchy means: same rubric different question → rubric portion still HIT.
   const systemPrompt = `You are an examiner grading a selective entry Writing essay. Use the rubric data exactly and return JSON only.
@@ -227,14 +227,14 @@ Respond with a JSON object only:
     `WRITING_TYPE:\n${input.writingType ?? "UNSPECIFIED"}`,
   ].join("\n\n");
 
-  // Block B — QUESTION (sections 4-6): cacheable per question_id
+  // Block B — QUESTION (sections 4-7): cacheable per question_id
   const questionTextBlock = [
     `QUESTION_TEXT:\n${input.questionText}`,
-    `PROMPT_TEXT:\n${input.promptText}`,
+    input.promptText?.trim() ? `PROMPT_TEXT:\n${input.promptText}` : null,
     input.markingGuide ? `MARKING_GUIDE:\n${input.markingGuide}` : null,
   ].filter(Boolean).join("\n\n");
 
-  // Block C — STUDENT (section 7): never cached
+  // Block C — STUDENT (section 8): never cached
   const studentSection = `STUDENT_RESPONSE:\n${input.studentAnswer}`;
 
   // Assemble user content blocks. Cache marker goes on the LAST block of each
@@ -276,7 +276,7 @@ Respond with a JSON object only:
     });
   }
 
-  // 4. Student response — NO cache_control (section 7 must never be cached)
+  // 4. Student response — NO cache_control (section 8 must never be cached)
   userContent.push({
     type: "text",
     text: studentSection,

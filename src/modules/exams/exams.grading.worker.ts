@@ -302,9 +302,6 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
         if (!aiRubric || question.markingType !== "AI") {
           throw new Error(`Essay question ${question.id} requires markingType AI and an active aiRubric`);
         }
-        if (!question.promptText?.trim()) {
-          throw new Error(`Essay question ${question.id} is missing promptText`);
-        }
         // Resolve any prompt images to base64 before calling AI
         const images = question.imageRefs && question.imageRefs.length > 0
           ? await resolveImagesAsBase64(prisma, question.imageRefs)

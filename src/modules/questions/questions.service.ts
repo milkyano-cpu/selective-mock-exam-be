@@ -402,7 +402,6 @@ export async function createQuestion(
   if (body.type === "ESSAY") {
     if (!writingType) throw createHttpError(400, "WritingType is required for ESSAY questions");
     await assertWritingTypeAllowed(prisma, writingType);
-    if (!body.promptText?.trim()) throw createHttpError(400, "PromptText is required for ESSAY questions");
     if (markingType !== "AI" && markingType !== "MANUAL") {
       throw createHttpError(400, "ESSAY questions must use AI or MANUAL marking");
     }
@@ -441,7 +440,7 @@ export async function createQuestion(
       difficulty: body.difficulty,
       questionText: body.questionText,
       writingType: body.type === "ESSAY" ? writingType : null,
-      promptText: body.type === "ESSAY" ? (body.promptText?.trim() ?? null) : null,
+      promptText: body.type === "ESSAY" ? (body.promptText?.trim() || null) : null,
       markingGuide: body.type === "ESSAY" ? (body.markingGuide?.trim() || null) : null,
       latexEnabled,
       markingType,
@@ -535,7 +534,6 @@ export async function updateQuestion(
   const effectiveWritingType = body.writingType !== undefined
     ? normalizeWritingType(body.writingType)
     : normalizeWritingType(existing.writingType);
-  const effectivePromptText = body.promptText !== undefined ? body.promptText : existing.promptText;
 
   await assertPassageAllowedForQuestion(prisma, {
     type: effectiveType,
@@ -550,7 +548,6 @@ export async function updateQuestion(
   if (effectiveType === "ESSAY") {
     if (!effectiveWritingType) throw createHttpError(400, "WritingType is required for ESSAY questions");
     await assertWritingTypeAllowed(prisma, effectiveWritingType);
-    if (!effectivePromptText?.trim()) throw createHttpError(400, "PromptText is required for ESSAY questions");
     if (effectiveMarkingType === "AI" && !effectiveAiRubricId) {
       throw createHttpError(400, "AIRubricID is required for ESSAY questions graded by AI");
     }
@@ -700,8 +697,8 @@ export async function submitQuestion(prisma: PrismaClient, id: string) {
   }
 
   if (existingQuestion.type === "ESSAY") {
-    if (!existingQuestion.writingType || !existingQuestion.promptText || !existingQuestion.aiRubricId) {
-      throw createHttpError(400, "Essay questions require WritingType, PromptText, and AIRubricID before submitting");
+    if (!existingQuestion.writingType || !existingQuestion.aiRubricId) {
+      throw createHttpError(400, "Essay questions require WritingType and AIRubricID before submitting");
     }
   }
 
@@ -737,8 +734,8 @@ export async function bulkSubmitQuestions(prisma: PrismaClient, ids: string[]) {
       failures.push({ id, reason: "Only draft questions can be submitted for review" });
       continue;
     }
-    if (question.type === "ESSAY" && (!question.writingType || !question.promptText || !question.aiRubricId)) {
-      failures.push({ id, reason: "Essay questions require WritingType, PromptText, and AIRubricID before submitting" });
+    if (question.type === "ESSAY" && (!question.writingType || !question.aiRubricId)) {
+      failures.push({ id, reason: "Essay questions require WritingType and AIRubricID before submitting" });
       continue;
     }
     eligibleIds.push(id);
@@ -964,8 +961,8 @@ export async function bulkImportQuestions(
     const rawDifficulty = raw.Difficulty?.trim() ?? "";
     const difficulty = DIFFICULTY_MAP[rawDifficulty.toLowerCase()] ?? "";
 
-    const questionText = raw.QuestionText?.trim() || raw.PromptText?.trim() || "";
-    const promptText = raw.PromptText?.trim() || (questionType === "ESSAY" ? questionText : "");
+    const questionText = raw.QuestionText?.trim() || "";
+    const promptText = questionType === "ESSAY" ? (raw.PromptText?.trim() || null) : null;
     const correctAnswer = raw.CorrectAnswer?.trim().toUpperCase() ?? "";
 
     if (!subjectName) rowErrors.push("Section (subject) is required");
@@ -980,7 +977,6 @@ export async function bulkImportQuestions(
     } else if (writingType && !allowedWritingTypes.has(writingType)) {
       rowErrors.push(`WritingType "${writingType}" is not registered. Allowed values: ${[...allowedWritingTypes].join(", ") || "(none — create writing types first)"}`);
     }
-    if (questionType === "ESSAY" && !promptText) rowErrors.push("PromptText is required for Essay");
     if (questionType === "ESSAY" && markingType === "AI" && !aiRubricId) rowErrors.push("AIRubricID is required for Essay graded by AI");
     if (!Number.isFinite(maxMarks) || maxMarks < 1) rowErrors.push(`MaxMarks "${maxMarksRaw ?? ""}" must be a positive integer`);
     if (!difficulty) rowErrors.push(`Difficulty "${rawDifficulty}" must be Easy, Medium, or Hard`);
@@ -1381,11 +1377,6 @@ export async function resolveAndSavePendingRows(
       continue;
     }
 
-    if (rowType === "ESSAY" && !row.promptText?.trim()) {
-      aiRubricIssues.push(`row ${row.rowNumber}: PromptText is required for Essay`);
-      continue;
-    }
-
     if (rowType === "ESSAY" && row.passageExternalId) {
       aiRubricIssues.push(`row ${row.rowNumber}: PassageID must not be provided for Essay questions`);
       continue;
@@ -1459,4 +1450,3 @@ export async function resolveAndSavePendingRows(
 
   return { saved: insertableRows.length, stillUnresolved, createdQuestions: createdQuestionsWithRowNumbers };
 }
-

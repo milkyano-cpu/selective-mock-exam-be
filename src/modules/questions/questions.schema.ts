@@ -45,7 +45,7 @@ const createQuestionBodySchema = z
     difficulty: z.enum(["EASY", "MEDIUM", "HARD"]),
     questionText: z.string().min(1).max(5000),
     writingType: essayWritingTypeSchema.optional(),
-    promptText: z.string().min(1).max(10000).optional(),
+    promptText: z.string().max(10000).nullable().optional(),
     markingGuide: z.string().max(10000).nullable().optional(),
     latexEnabled: z.boolean().optional().default(false),
     adaptiveTags: z.array(z.string().min(1)).default([]),
@@ -85,7 +85,6 @@ const createQuestionBodySchema = z
     }
     if (data.type === "ESSAY") {
       if (!data.writingType) ctx.addIssue({ code: "custom", path: ["writingType"], message: "writingType is required for ESSAY questions" });
-      if (!data.promptText?.trim()) ctx.addIssue({ code: "custom", path: ["promptText"], message: "promptText is required for ESSAY questions" });
       if (data.markingType !== "MANUAL" && !data.aiRubricId) {
         ctx.addIssue({ code: "custom", path: ["aiRubricId"], message: "aiRubricId is required for ESSAY questions graded by AI" });
       }
@@ -112,7 +111,7 @@ const updateQuestionBodySchema = z
     difficulty: z.enum(["EASY", "MEDIUM", "HARD"]).optional(),
     questionText: z.string().min(1).max(5000).optional(),
     writingType: essayWritingTypeSchema.nullable().optional(),
-    promptText: z.string().min(1).max(10000).nullable().optional(),
+    promptText: z.string().max(10000).nullable().optional(),
     markingGuide: z.string().max(10000).nullable().optional(),
     latexEnabled: z.boolean().optional(),
     adaptiveTags: z.array(z.string().min(1)).optional(),

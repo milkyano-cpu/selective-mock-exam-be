@@ -194,6 +194,7 @@ function mockPrisma(overrides: AnyRecord = {}) {
   const existingExamQuestions = overrides.existingExamQuestions ?? [];
   const existingStandaloneQuestions = overrides.existingStandaloneQuestions ?? [];
   const aiRubrics = overrides.aiRubrics ?? [];
+  const writingTypes = overrides.writingTypes ?? [{ name: "CREATIVE" }];
   const images = overrides.images ?? [];
   const questionById = overrides.questionById ?? mockQuestionRecord();
 
@@ -216,6 +217,9 @@ function mockPrisma(overrides: AnyRecord = {}) {
     aiRubric: {
       findMany: jest.fn(async () => aiRubrics),
       findFirst: jest.fn(async () => aiRubrics[0] ?? null),
+    },
+    aiRubricWritingType: {
+      findMany: jest.fn(async () => writingTypes),
     },
     image: {
       findMany: jest.fn(async (args: AnyRecord = {}) => {
@@ -272,7 +276,7 @@ function mockPrisma(overrides: AnyRecord = {}) {
     },
   };
 
-  for (const key of ["subject", "topic", "passage", "aiRubric", "image", "question", "exam", "examQuestion"]) {
+  for (const key of ["subject", "topic", "passage", "aiRubric", "aiRubricWritingType", "image", "question", "exam", "examQuestion"]) {
     if (overrides[key]) {
       prisma[key as keyof typeof prisma] = {
         ...prisma[key as keyof typeof prisma],
@@ -476,6 +480,39 @@ describe("questions.service import and image upload", () => {
         }),
       ]);
       expect(prisma.question.createMany).not.toHaveBeenCalled();
+    });
+
+    it("creates an image-only essay with null PromptText", async () => {
+      const prisma = mockPrisma({
+        aiRubrics: [{ id: "rubric-creative", totalMaxScore: 20 }],
+        images: [{ fileName: "beach.jpg" }],
+      });
+
+      const result = await bulkImportQuestions(
+        prisma as never,
+        csvBuffer([{
+          QuestionType: "Essay",
+          WritingType: "Creative",
+          MarkingType: "AI",
+          AIRubricID: "rubric-creative",
+          MaxMarks: "20",
+          QuestionText: "Write a creative story inspired by the image.",
+          PromptText: "",
+          ImageRef: "beach.jpg",
+          CorrectAnswer: "",
+        }]),
+        CREATOR_ID,
+      );
+
+      expect(result).toMatchObject({ total: 1, created: 1, failed: 0 });
+      expect(prisma.question.createMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: [expect.objectContaining({
+          type: "ESSAY",
+          questionText: "Write a creative story inspired by the image.",
+          promptText: null,
+          imageRefs: ["beach.jpg"],
+        })],
+      }));
     });
 
     it("parses pipe-delimited AdaptiveTags into a string array", async () => {

@@ -756,9 +756,6 @@ export async function submitPracticeSession(
       if (!aiRubric || question.markingType !== "AI") {
         throw createHttpError(422, `Essay question ${answer.questionId} is not configured for AI grading`);
       }
-      if (!question.promptText?.trim()) {
-        throw createHttpError(422, `Essay question ${answer.questionId} is missing PromptText`);
-      }
       const promptImages = question.imageRefs && question.imageRefs.length > 0
         ? await resolveImagesAsBase64(prisma, question.imageRefs)
         : [];
