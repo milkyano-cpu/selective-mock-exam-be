@@ -331,6 +331,8 @@ const sessionResultAnswerSchema = z.object({
   questionId: z.string(),
   order: z.number(),
   questionText: z.string(),
+  writingType: z.string().nullable(),
+  topicName: z.string(),
   promptText: z.string().nullable(),
   latexEnabled: z.boolean(),
   type: z.enum(["MCQ", "ESSAY"]),
