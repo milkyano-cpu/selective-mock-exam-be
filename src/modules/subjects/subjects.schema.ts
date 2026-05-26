@@ -89,6 +89,7 @@ const listSubjectsQuerySchema = z.object({
   sortBy: z.enum(["name", "createdAt"]).default("name"),
   order: z.enum(["asc", "desc"]).default("asc"),
   publishedOnly: z.coerce.boolean().optional(),
+  practiceOnly: z.coerce.boolean().optional(),
 });
 
 const listSubjectsResponseSchema = z.object({
@@ -180,6 +181,7 @@ const listTopicsQuerySchema = z.object({
   sortBy: z.enum(["name", "createdAt"]).default("name"),
   order: z.enum(["asc", "desc"]).default("asc"),
   publishedOnly: z.coerce.boolean().optional(),
+  practiceOnly: z.coerce.boolean().optional(),
 });
 
 const listTopicsResponseSchema = z.object({

@@ -343,7 +343,7 @@ Respond with a JSON object only:
   const band = findBand(scorePercent, input.aiRubric.bandDescriptors);
 
   return {
-    isCorrect: scorePercent >= 50,
+    isCorrect: false,
     confidence: parsed.confidence,
     overallFeedback: parsed.overall_feedback,
     strengths: parsed.strengths,

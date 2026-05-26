@@ -16,6 +16,7 @@ function question(id = "question-1", overrides: Record<string, unknown> = {}) {
     difficulty: "EASY",
     options: [{ key: "A", text: "Answer A" }],
     imageRef: null,
+    imageRefs: [],
     image: null,
     imageUrl: null,
     imageUrls: [],
@@ -98,6 +99,11 @@ function createTx() {
     practiceEssayScore: {
       createMany: jest.fn(async () => ({ count: 0 })),
     },
+    studentPerformance: {
+      findUnique: jest.fn(async () => ({ scoreAvg: 50, attemptCount: 2 })),
+      update: jest.fn(async () => performance()),
+      create: jest.fn(async () => performance()),
+    },
   };
 }
 
@@ -133,7 +139,18 @@ function mockPrisma(overrides: Record<string, unknown> = {}) {
         practiceSession({
           status: "COMPLETED",
           endedAt,
-          answers: [{ isCorrect: true }, { isCorrect: false }],
+          questionCount: 4,
+          sessionQuestions: [
+            sessionQuestion("question-1", 1),
+            sessionQuestion("question-2", 2),
+            sessionQuestion("essay-1", 3, { question: question("essay-1", { type: "ESSAY", maxMarks: 20 }) }),
+            sessionQuestion("question-unanswered", 4, { question: question("question-unanswered", { maxMarks: 2 }) }),
+          ],
+          answers: [
+            { isCorrect: true, awardedMarks: 1, question: { type: "MCQ", maxMarks: 1 } },
+            { isCorrect: false, awardedMarks: 0, question: { type: "MCQ", maxMarks: 1 } },
+            { isCorrect: false, awardedMarks: 11, question: { type: "ESSAY", maxMarks: 20 } },
+          ],
         }),
       ]),
     },
@@ -211,6 +228,7 @@ describe("practice service", () => {
       where: {
         subjectId: "subject-vr",
         status: "PUBLISHED",
+        isPracticeAllowed: true,
         subtopics: { hasSome: ["coding"] },
         id: { in: ["question-1"] },
       },
@@ -272,10 +290,22 @@ describe("practice service", () => {
     });
 
     expect(prisma.studentPerformance.findMany).toHaveBeenCalledWith({
-      where: { studentId: "student-1", scoreAvg: { lt: 60 } },
+      where: {
+        studentId: "student-1",
+        scoreAvg: { lt: 60 },
+        topic: {
+          questions: {
+            some: { type: "MCQ", status: "PUBLISHED", isPracticeAllowed: true },
+          },
+        },
+      },
       orderBy: { scoreAvg: "asc" },
       take: 5,
       select: expect.any(Object),
+    });
+    expect(prisma.question.findMany).toHaveBeenCalledWith({
+      where: { topicId: { in: ["topic-1"] }, type: "MCQ", status: "PUBLISHED", isPracticeAllowed: true },
+      select: { id: true },
     });
     expect(result).toMatchObject({
       sourceType: "RECOMMENDATION",
@@ -287,6 +317,21 @@ describe("practice service", () => {
       threshold: 70,
       limit: 3,
       subjectId: "subject-vr",
+    });
+    expect(prisma.studentPerformance.findMany).toHaveBeenLastCalledWith({
+      where: {
+        studentId: "student-1",
+        scoreAvg: { lt: 70 },
+        subjectId: "subject-vr",
+        topic: {
+          questions: {
+            some: { type: "MCQ", status: "PUBLISHED", isPracticeAllowed: true },
+          },
+        },
+      },
+      orderBy: { scoreAvg: "asc" },
+      take: 3,
+      select: expect.any(Object),
     });
     expect(recommendations).toEqual([
       {
@@ -333,6 +378,47 @@ describe("practice service", () => {
     });
   });
 
+  it("never exposes an essay answer as correct even when a stored legacy flag is true", async () => {
+    const essay = sessionQuestion("essay-1", 1, {
+      question: question("essay-1", {
+        type: "ESSAY",
+        correctAnswer: null,
+        options: null,
+        maxMarks: 20,
+      }),
+    });
+    const prisma = mockPrisma({
+      practiceSession: {
+        ...mockPrisma().practiceSession,
+        findUnique: jest.fn(async () =>
+          practiceSession({
+            status: "COMPLETED",
+            endedAt,
+            questionCount: 1,
+            sessionQuestions: [essay],
+            answers: [
+              {
+                questionId: "essay-1",
+                studentAnswer: "Essay response",
+                isCorrect: true,
+                timeSpentSeconds: 30,
+                aiFeedback: { isCorrect: true, overallFeedback: "Stored legacy feedback" },
+              },
+            ],
+          })
+        ),
+      },
+    });
+
+    const result = await practice.getPracticeSession(prisma as never, "session-1", "student-1");
+    expect(result.answers?.[0]).toMatchObject({
+      type: "ESSAY",
+      correctAnswer: "",
+      isCorrect: false,
+      aiFeedback: { isCorrect: false, overallFeedback: "Stored legacy feedback" },
+    });
+  });
+
   it("submits practice sessions, grades answers, and updates topic performance", async () => {
     const prisma = mockPrisma();
 
@@ -367,7 +453,7 @@ describe("practice service", () => {
         }),
       select: { id: true, questionId: true },
     });
-    expect(prisma.studentPerformance.update).toHaveBeenCalledWith({
+    expect(prisma.tx.studentPerformance.update).toHaveBeenCalledWith({
       where: { studentId_topicId: { studentId: "student-1", topicId: "topic-1" } },
       data: { scoreAvg: 50, attemptCount: { increment: 1 } },
     });
@@ -406,6 +492,101 @@ describe("practice service", () => {
     });
   });
 
+  it("retakes a session with new questions from the same topic before repeating old ones", async () => {
+    const prisma = mockPrisma({
+      question: {
+        findMany: jest.fn(async () => [{ id: "question-3" }, { id: "question-4" }, { id: "question-1" }]),
+      },
+      practiceSession: {
+        ...mockPrisma().practiceSession,
+        findUnique: jest.fn(async () => practiceSession({ status: "COMPLETED" })),
+      },
+    });
+
+    const result = await practice.retakePracticeSession(prisma as never, "session-1", "student-1");
+
+    expect(prisma.question.findMany).toHaveBeenCalledWith({
+      where: { topicId: "topic-1", status: "PUBLISHED", isPracticeAllowed: true, difficulty: "EASY" },
+      select: { id: true },
+    });
+    expect(prisma.tx.practiceSessionQuestion.createMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        { sessionId: "session-1", questionId: "question-3", order: expect.any(Number) },
+        { sessionId: "session-1", questionId: "question-4", order: expect.any(Number) },
+      ]),
+    });
+    expect(result).toMatchObject({ questionCount: 2, status: "IN_PROGRESS" });
+  });
+
+  it("uses old questions to fill a retake only when there are not enough new eligible questions", async () => {
+    const prisma = mockPrisma({
+      question: {
+        findMany: jest.fn(async () => [{ id: "question-3" }, { id: "question-1" }]),
+      },
+      practiceSession: {
+        ...mockPrisma().practiceSession,
+        findUnique: jest.fn(async () => practiceSession({ status: "COMPLETED" })),
+      },
+    });
+
+    await practice.retakePracticeSession(prisma as never, "session-1", "student-1");
+
+    expect(prisma.tx.practiceSessionQuestion.createMany).toHaveBeenCalledWith({
+      data: [
+        { sessionId: "session-1", questionId: "question-3", order: 1 },
+        { sessionId: "session-1", questionId: "question-1", order: 2 },
+      ],
+    });
+  });
+
+  it("rejects a retake when no eligible questions match the original filters", async () => {
+    const prisma = mockPrisma({
+      question: {
+        findMany: jest.fn(async () => []),
+      },
+      practiceSession: {
+        ...mockPrisma().practiceSession,
+        findUnique: jest.fn(async () => practiceSession({ status: "COMPLETED" })),
+      },
+    });
+
+    await expect(practice.retakePracticeSession(prisma as never, "session-1", "student-1")).rejects.toMatchObject({
+      statusCode: 422,
+      message: "No practice questions are available for the original session filters",
+    });
+    expect(prisma.tx.practiceSession.create).not.toHaveBeenCalled();
+  });
+
+  it("retakes a session without one stored topic from the original question topics", async () => {
+    const prisma = mockPrisma({
+      question: {
+        findMany: jest.fn(async () => [{ id: "question-3" }]),
+      },
+      practiceSession: {
+        ...mockPrisma().practiceSession,
+        findUnique: jest.fn(async () =>
+          practiceSession({
+            status: "COMPLETED",
+            topicId: null,
+            difficulty: null,
+            sessionQuestions: [
+              sessionQuestion("question-1", 1),
+              sessionQuestion("question-2", 2, { question: question("question-2", { topicId: "topic-2" }) }),
+            ],
+          })
+        ),
+      },
+    });
+
+    const result = await practice.retakePracticeSession(prisma as never, "session-1", "student-1");
+
+    expect(prisma.question.findMany).toHaveBeenCalledWith({
+      where: { topicId: { in: ["topic-1", "topic-2"] }, status: "PUBLISHED", isPracticeAllowed: true },
+      select: { id: true },
+    });
+    expect(result.questionCount).toBe(1);
+  });
+
   it("lists sessions, creates tutor assignments, and lists tutor assignments", async () => {
     const prisma = mockPrisma({
       question: {
@@ -433,6 +614,10 @@ describe("practice service", () => {
     const assignment = await practice.createTutorAssignment(prisma as never, "tutor-1", {
       studentId: "student-1",
       questionIds: ["question-1", "question-2"],
+    });
+    expect(prisma.question.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ["question-1", "question-2"] }, status: "PUBLISHED", isPracticeAllowed: true },
+      select: { id: true, topicId: true },
     });
     expect(assignment).toMatchObject({
       sessionId: "session-1",

@@ -41,6 +41,7 @@ const QUESTION_SELECT = {
   skillTags: true,
   markingType: true,
   maxMarks: true,
+  isPracticeAllowed: true,
   status: true,
   rejectionNote: true,
   createdAt: true,
@@ -445,10 +446,11 @@ export async function createQuestion(
       latexEnabled,
       markingType,
       maxMarks,
+      isPracticeAllowed: body.type === "ESSAY" ? (body.isPracticeAllowed ?? false) : true,
       options: body.options ?? Prisma.DbNull,
       correctAnswer: body.type === "MCQ" ? (body.correctAnswer ?? "") : "",
       explanation: body.explanation ?? null,
-      timeLimitSeconds: body.timeLimitSeconds ?? null,
+      timeLimitSeconds: body.timeLimitSeconds && body.timeLimitSeconds > 0 ? body.timeLimitSeconds : null,
       imageRefs,
       subtopics: body.subtopics ?? [],
       notes: body.notes ?? null,
@@ -469,7 +471,7 @@ export async function createQuestion(
 }
 
 export async function listQuestions(prisma: PrismaClient, query: ListQuestionsQuery) {
-  const { page, limit, search, subjectId, topicId, passageId, type, difficulty, status, hasImage } = query;
+  const { page, limit, search, subjectId, topicId, passageId, type, difficulty, status, hasImage, isPracticeAllowed } = query;
   const skip = (page - 1) * limit;
 
   const where: Prisma.QuestionWhereInput = {};
@@ -485,6 +487,7 @@ export async function listQuestions(prisma: PrismaClient, query: ListQuestionsQu
   if (type) where.type = type;
   if (difficulty) where.difficulty = difficulty;
   if (status) where.status = status;
+  if (isPracticeAllowed !== undefined) where.isPracticeAllowed = isPracticeAllowed;
   if (hasImage !== undefined) {
     where.imageRefs = hasImage ? { isEmpty: false } : { isEmpty: true };
   }
@@ -592,7 +595,9 @@ export async function updateQuestion(
   }
   if (body.correctAnswer !== undefined) updateData.correctAnswer = effectiveType === "MCQ" ? body.correctAnswer : "";
   if (body.explanation !== undefined) updateData.explanation = body.explanation;
-  if (body.timeLimitSeconds !== undefined) updateData.timeLimitSeconds = body.timeLimitSeconds;
+  if (body.timeLimitSeconds !== undefined) {
+    updateData.timeLimitSeconds = body.timeLimitSeconds && body.timeLimitSeconds > 0 ? body.timeLimitSeconds : null;
+  }
   let nextImageRefs: string[] | undefined;
   if (body.imageRefs !== undefined) {
     nextImageRefs = body.imageRefs.map(normalizeImageFileName).filter(Boolean);
@@ -617,11 +622,18 @@ export async function updateQuestion(
     }
     updateData.maxMarks = body.maxMarks;
   }
+  if (effectiveType === "ESSAY" && body.isPracticeAllowed !== undefined) {
+    updateData.isPracticeAllowed = body.isPracticeAllowed;
+  }
+  if (body.type === "ESSAY" && existing.type !== "ESSAY" && body.isPracticeAllowed === undefined) {
+    updateData.isPracticeAllowed = false;
+  }
   if (body.type !== undefined && body.markingType === undefined) updateData.markingType = body.type === "ESSAY" ? "AI" : "AUTO";
   if (body.type !== undefined && body.maxMarks === undefined) updateData.maxMarks = body.type === "ESSAY" ? 20 : 1;
   // If type changed to MCQ, force maxMarks = 1
   if (body.type === "MCQ") updateData.maxMarks = 1;
   if (effectiveType === "MCQ") {
+    updateData.isPracticeAllowed = true;
     updateData.aiRubricId = null;
     updateData.writingType = null;
     updateData.promptText = null;
@@ -864,6 +876,7 @@ function buildQuestionInsertData(
     latexEnabled:    isLatex,
     markingType:      normalizeQuestionMarkingType(row.markingType, row.type as "MCQ" | "ESSAY"),
     maxMarks:         row.maxMarks,
+    isPracticeAllowed: isMcq,
     options,
     correctAnswer:    row.type === "MCQ" ? (row.correctAnswer || "") : "",
     explanation:      row.explanation,

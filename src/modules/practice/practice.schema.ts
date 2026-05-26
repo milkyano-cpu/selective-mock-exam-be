@@ -20,6 +20,15 @@ const imageSummarySchema = z.object({
   caption: z.string().nullable(),
 });
 
+const passageSummarySchema = z.object({
+  id: z.string(),
+  title: z.string().nullable(),
+  text: z.string().nullable(),
+  imageRef: z.string().nullable(),
+  imageDisplayPosition: z.enum(["above", "below", "inline"]).nullable(),
+  image: imageSummarySchema.nullable(),
+});
+
 // ── Shared question schemas ───────────────────────────────────────────────────
 
 // Practice mode gives instant feedback after each local submission, so active questions include answer metadata.
@@ -38,6 +47,7 @@ const practiceQuestionSchema = z.object({
   correctAnswer: z.string(),
   explanation: z.string().nullable(),
   maxMarks: z.number(),
+  passage: passageSummarySchema.nullable(),
 });
 
 // Questions with correct answers and student responses (shown after COMPLETED)
@@ -55,6 +65,8 @@ const practiceResultAnswerSchema = z.object({
   images: z.array(imageSummarySchema),
   correctAnswer: z.string(),
   explanation: z.string().nullable(),
+  maxMarks: z.number(),
+  passage: passageSummarySchema.nullable(),
   studentAnswer: z.string(),
   isCorrect: z.boolean(),
   timeSpentSeconds: z.number(),

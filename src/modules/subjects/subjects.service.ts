@@ -39,7 +39,7 @@ export async function listSubjects(
   prisma: PrismaClient,
   query: ListSubjectsQuery
 ) {
-  const { page, limit, search, sortBy, order, publishedOnly } = query;
+  const { page, limit, search, sortBy, order, publishedOnly, practiceOnly } = query;
   const skip = (page - 1) * limit;
 
   const where: Record<string, unknown> = {};
@@ -56,7 +56,14 @@ export async function listSubjects(
       where,
       select: {
         ...SUBJECT_SELECT,
-        _count: { select: { topics: true, questions: publishedOnly ? { where: { status: "PUBLISHED" } } : true } },
+        _count: {
+          select: {
+            topics: true,
+            questions: publishedOnly || practiceOnly
+              ? { where: { ...(publishedOnly ? { status: "PUBLISHED" as const } : {}), ...(practiceOnly ? { isPracticeAllowed: true } : {}) } }
+              : true,
+          },
+        },
       },
       orderBy: { [sortBy]: order },
       skip,
@@ -276,7 +283,7 @@ export async function listTopics(
 ) {
   await assertSubjectExists(prisma, subjectId);
 
-  const { page, limit, search, sortBy, order, publishedOnly } = query;
+  const { page, limit, search, sortBy, order, publishedOnly, practiceOnly } = query;
   const skip = (page - 1) * limit;
 
   const where: Record<string, unknown> = { subjectId };
@@ -293,7 +300,13 @@ export async function listTopics(
       where,
       select: {
         ...TOPIC_SELECT,
-        _count: { select: { questions: publishedOnly ? { where: { status: "PUBLISHED" } } : true } },
+        _count: {
+          select: {
+            questions: publishedOnly || practiceOnly
+              ? { where: { ...(publishedOnly ? { status: "PUBLISHED" as const } : {}), ...(practiceOnly ? { isPracticeAllowed: true } : {}) } }
+              : true,
+          },
+        },
       },
       orderBy: { [sortBy]: order },
       skip,

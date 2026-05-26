@@ -88,7 +88,18 @@ describe("membership entitlement helpers", () => {
   });
 
   it("returns only the free published topic per subject for Basic practice access", async () => {
-    const result = await getPracticeAccess(mockPrisma("BASIC") as never, "student-1");
+    const prisma = mockPrisma("BASIC");
+    const result = await getPracticeAccess(prisma as never, "student-1");
+
+    expect(prisma.topic.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({
+        _count: {
+          select: {
+            questions: { where: { type: "MCQ", status: "PUBLISHED", isPracticeAllowed: true } },
+          },
+        },
+      }),
+    }));
 
     expect(result).toEqual({
       tier: "BASIC",

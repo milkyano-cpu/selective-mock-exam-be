@@ -48,13 +48,13 @@ describe("exam response schemas", () => {
             studentAnswer: "An answer.",
             timeSpentSeconds: 120,
             maxMarks: 4,
-            isCorrect: true,
+            isCorrect: false,
             awardedMarks: 3,
             manualScore: null,
             tutorFeedback: null,
             reviewStatus: "AI_GRADED",
             aiFeedback: {
-              isCorrect: true,
+              isCorrect: false,
               confidence: "high",
               feedback: null,
               overallFeedback: "Strong response.",
@@ -92,7 +92,9 @@ describe("exam response schemas", () => {
     await app.close();
 
     expect(response.statusCode).toBe(200);
+    expect(response.json().data.answers[0].isCorrect).toBe(false);
     expect(response.json().data.answers[0].aiFeedback).toMatchObject({
+      isCorrect: false,
       overallFeedback: "Strong response.",
       strengths: ["Clear reasoning"],
       improvements: ["Add more evidence"],

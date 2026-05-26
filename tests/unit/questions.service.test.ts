@@ -129,6 +129,7 @@ function mockQuestionRecord(overrides: AnyRecord = {}) {
     skillTags: [],
     markingType: "AUTO",
     maxMarks: 1,
+    isPracticeAllowed: true,
     status: "DRAFT",
     rejectionNote: null,
     createdAt: now,
@@ -511,6 +512,7 @@ describe("questions.service import and image upload", () => {
           questionText: "Write a creative story inspired by the image.",
           promptText: null,
           imageRefs: ["beach.jpg"],
+          isPracticeAllowed: false,
         })],
       }));
     });

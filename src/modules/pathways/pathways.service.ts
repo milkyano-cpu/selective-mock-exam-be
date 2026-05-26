@@ -413,7 +413,7 @@ export async function startNodePractice(
   }
 
   const questions = await prisma.question.findMany({
-    where: { topicId: node.topicId, type: "MCQ", status: "PUBLISHED" },
+    where: { topicId: node.topicId, type: "MCQ", status: "PUBLISHED", isPracticeAllowed: true },
     select: { id: true },
     take: 10,
   });

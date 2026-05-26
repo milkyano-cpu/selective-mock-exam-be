@@ -25,7 +25,6 @@ import type {
 
 type SessionAnswerReviewStatus = "NOT_APPLICABLE" | "AI_GRADED" | "PENDING_REVIEW" | "MANUAL_GRADED";
 type ExamGradingType = "AUTO" | "MANUAL";
-const MANUAL_SCORE_CORRECT_THRESHOLD = 50;
 
 interface RankingThresholds {
   thresholdSuperior: number;
@@ -55,10 +54,6 @@ function calculateRankingLevel(
 
 function normalizeQuestionMaxMarks(maxMarks: number) {
   return Number.isFinite(maxMarks) && maxMarks > 0 ? maxMarks : 1;
-}
-
-function isAwardedMarksCorrect(awardedMarks: number, maxMarks: number) {
-  return maxMarks > 0 && (awardedMarks / maxMarks) * 100 >= MANUAL_SCORE_CORRECT_THRESHOLD;
 }
 
 function normalizeTutorFeedback(feedback: string | null | undefined) {
@@ -154,7 +149,7 @@ function toStringArray(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
-function serializeAiFeedback(aiFeedback: unknown) {
+function serializeAiFeedback(aiFeedback: unknown, forceEssayIncorrect = false) {
   if (!aiFeedback || typeof aiFeedback !== "object" || Array.isArray(aiFeedback)) return null;
 
   const value = aiFeedback as Record<string, unknown>;
@@ -181,7 +176,7 @@ function serializeAiFeedback(aiFeedback: unknown) {
   // NOTE: `aiModel` is intentionally NOT passed through. Per final-design,
   // the AI label must stay hidden from students.
   return {
-    isCorrect: typeof value.isCorrect === "boolean" ? value.isCorrect : null,
+    isCorrect: forceEssayIncorrect ? false : typeof value.isCorrect === "boolean" ? value.isCorrect : null,
     confidence:
       confidence === "high" || confidence === "medium" || confidence === "low"
         ? confidence
@@ -282,13 +277,11 @@ function evaluateSessionOutcome(params: {
 
       const awardedMarks = manualScore ?? 0;
       essayAwardedMarks += Math.min(maxMarks, Math.max(0, awardedMarks));
-      if (isAwardedMarksCorrect(awardedMarks, maxMarks)) correctCount++;
       continue;
     }
 
     if (manualScore !== null) {
       essayAwardedMarks += Math.min(maxMarks, Math.max(0, manualScore));
-      if (isAwardedMarksCorrect(manualScore, maxMarks)) correctCount++;
       continue;
     }
 
@@ -306,7 +299,6 @@ function evaluateSessionOutcome(params: {
       // Re-use the stored value instead of re-deriving from scorePercent.
       const awarded = answer?.awardedMarks ?? 0;
       essayAwardedMarks += Math.min(maxMarks, Math.max(0, Number(awarded)));
-      if (aiFeedback.isCorrect) correctCount++;
       continue;
     }
 
@@ -1009,8 +1001,11 @@ export async function startRetakeSession(
       throw createHttpError(400, "Source session has not been submitted yet");
     }
 
+    const mcqQuestionIds = new Set(
+      exam.questions.filter((eq) => eq.question.type === "MCQ").map((eq) => eq.questionId)
+    );
     retakeQuestionIds = sourceSession.answers
-      .filter((a) => !a.isCorrect)
+      .filter((a) => !a.isCorrect && mcqQuestionIds.has(a.questionId))
       .map((a) => a.questionId);
 
     if (retakeQuestionIds.length === 0) {
@@ -1222,7 +1217,7 @@ export async function getExamAttemptSummary(
       .filter((a) => a.studentAnswer.trim() !== "")
       .map((a) => {
         const q = questionMap.get(a.questionId);
-        if (!q) return null;
+        if (!q || q.type !== "MCQ") return null;
         return {
           questionId: a.questionId,
           questionText: q.questionText,
@@ -1255,7 +1250,7 @@ export async function getExamAttemptSummary(
 
     for (const a of allAnswers) {
       const q = questionMap.get(a.questionId);
-      if (!q) continue;
+      if (!q || q.type !== "MCQ") continue;
       const existing = subjectMap.get(q.subjectId) ?? { name: q.subject.name, total: 0, correct: 0 };
       subjectMap.set(q.subjectId, {
         name: existing.name,
@@ -1674,12 +1669,13 @@ export async function getSessionInsights(
   
   const questionMap = new Map(questions.exam.questions.map(q => [q.questionId, q.question]));
 
+  const mcqAnswers = result.answers.filter((answer) => answer.type === "MCQ");
   const aiInput = {
     examTitle: result.examTitle,
-    totalQuestions: result.totalQuestions,
-    correctCount: result.correctCount,
+    totalQuestions: mcqAnswers.length,
+    correctCount: mcqAnswers.filter((answer) => answer.isCorrect).length,
     totalTimeSeconds: result.totalTimeSeconds ?? 0,
-    answers: result.answers.map(a => {
+    answers: mcqAnswers.map(a => {
       const qMeta = questionMap.get(a.questionId);
       return {
         questionId: a.questionId,
@@ -1935,7 +1931,7 @@ export async function getReviewSession(
       const answer = answerMap.get(eq.questionId);
       const manualScore = answer?.manualScore !== null && answer?.manualScore !== undefined ? Number(answer.manualScore) : null;
       const studentAnswer = answer?.studentAnswer ?? "";
-      const aiFeedback = serializeAiFeedback(answer?.aiFeedback ?? null);
+      const aiFeedback = serializeAiFeedback(answer?.aiFeedback ?? null, eq.question.type === "ESSAY");
 
       const passage = eq.question.passage ?? null;
 
@@ -1965,7 +1961,7 @@ export async function getReviewSession(
           : null,
         studentAnswer,
         timeSpentSeconds: answer?.timeSpentSeconds ?? 0,
-        isCorrect: answer?.isCorrect ?? false,
+        isCorrect: eq.question.type === "MCQ" && (answer?.isCorrect ?? false),
         awardedMarks: answer?.awardedMarks !== null && answer?.awardedMarks !== undefined ? Number(answer.awardedMarks) : null,
         manualScore,
         tutorFeedback: answer?.tutorFeedback ?? null,
@@ -2091,7 +2087,7 @@ export async function submitManualGrades(
       const manualScore = grade.manualScore;
       const maxMarks = questionMaxMarksById.get(grade.questionId) ?? 1;
       const awardedMarks = Math.min(maxMarks, Math.max(0, manualScore));
-      const isCorrect = isAwardedMarksCorrect(awardedMarks, maxMarks);
+      const isCorrect = false;
       const tutorFeedback = normalizeTutorFeedback(grade.tutorFeedback);
 
       if (existingAnswer) {
@@ -2200,24 +2196,28 @@ export async function submitManualGrades(
   });
 
   if (outcome.status === "GRADED" && outcome.finalScore !== null) {
-    const topicScores = new Map<string, { subjectId: string; correct: number; total: number }>();
+    const topicScores = new Map<string, { subjectId: string; awardedMarks: number; possibleMarks: number }>();
 
     for (const eq of session.exam.questions) {
       const topicId = eq.question.topicId;
       const subjectId = eq.question.subjectId;
       const sa = sessionAnswerMap.get(eq.questionId);
       if (!sa) continue;
+      const maxMarks = normalizeQuestionMaxMarks(eq.question.maxMarks);
+      const awardedMarks = eq.question.type === "MCQ"
+        ? (sa.isCorrect ? maxMarks : 0)
+        : Math.min(maxMarks, Math.max(0, sa.manualScore ?? sa.awardedMarks ?? 0));
 
-      const existing = topicScores.get(topicId) ?? { subjectId, correct: 0, total: 0 };
+      const existing = topicScores.get(topicId) ?? { subjectId, awardedMarks: 0, possibleMarks: 0 };
       topicScores.set(topicId, {
         subjectId,
-        correct: existing.correct + (sa.isCorrect ? 1 : 0),
-        total: existing.total + 1,
+        awardedMarks: existing.awardedMarks + awardedMarks,
+        possibleMarks: existing.possibleMarks + maxMarks,
       });
     }
 
-    for (const [topicId, { subjectId, correct, total }] of topicScores.entries()) {
-      const topicScore = total > 0 ? (correct / total) * 100 : 0;
+    for (const [topicId, { subjectId, awardedMarks, possibleMarks }] of topicScores.entries()) {
+      const topicScore = possibleMarks > 0 ? (awardedMarks / possibleMarks) * 100 : 0;
 
       const perf = await prisma.studentPerformance.findUnique({
         where: { studentId_topicId: { studentId: session.studentId, topicId } },
@@ -2404,7 +2404,7 @@ export async function getSessionResult(
     const answer = answerMap.get(eq.questionId);
     const studentAnswer = answer?.studentAnswer ?? "";
     const manualScore = answer?.manualScore !== null && answer?.manualScore !== undefined ? Number(answer.manualScore) : null;
-    const aiFeedback = serializeAiFeedback(answer?.aiFeedback ?? null);
+    const aiFeedback = serializeAiFeedback(answer?.aiFeedback ?? null, eq.question.type === "ESSAY");
     const reviewStatus = getAnswerReviewStatus({
       type: eq.question.type as "MCQ" | "ESSAY",
       gradingType: normalizeExamGradingType(session.exam.gradingType),
@@ -2427,7 +2427,7 @@ export async function getSessionResult(
       correctAnswer: isPending ? "" : eq.question.correctAnswer,
       explanation: isPending ? null : (eq.question.explanation ?? null),
       maxMarks: normalizeQuestionMaxMarks(eq.question.maxMarks),
-      isCorrect: isPending ? false : (answer?.isCorrect ?? false),
+      isCorrect: eq.question.type === "MCQ" && !isPending && (answer?.isCorrect ?? false),
       timeSpentSeconds: answer?.timeSpentSeconds ?? 0,
       awardedMarks: answer?.awardedMarks !== null && answer?.awardedMarks !== undefined ? Number(answer.awardedMarks) : null,
       manualScore,
@@ -2459,7 +2459,7 @@ export async function getSessionResult(
     activeTimeSeconds: session.activeTimeSeconds,
     idleTimeSeconds: session.idleTimeSeconds,
     totalQuestions: session.exam.questions.length,
-    correctCount: answers.filter(a => a.isCorrect).length,
+    correctCount: answers.filter((answer) => answer.type === "MCQ" && answer.isCorrect).length,
     gradingType: normalizeExamGradingType(session.exam.gradingType),
     startTime: session.startTime.toISOString(),
     endTime: session.endTime?.toISOString() ?? null,

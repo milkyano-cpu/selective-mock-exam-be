@@ -321,18 +321,18 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
           //   final_score = Σ ai_score_per_criterion  → simpan sebagai awardedMarks (raw sum)
           //   weighted_total = (Σ / totalMaxScore) × 100  → untuk band lookup
           const awardedMarks = aiResult.totalAwardedMarks;
-          const scorePercent = aiResult.scorePercent ?? (aiResult.isCorrect ? 100 : 0);
+          const scorePercent = aiResult.scorePercent;
           const criterionScores = aiResult.criterionScores?.map((score) => ({
             ...score,
             aiRubricId: aiResult.aiRubric.id,
           })) ?? [];
           logger.info(
-            { sessionId, questionId: question.id, isCorrect: aiResult.isCorrect, confidence: aiResult.confidence, aiRubricId: aiRubric?.id, scorePercent, awardedMarks, maxMarks },
+            { sessionId, questionId: question.id, confidence: aiResult.confidence, aiRubricId: aiRubric?.id, scorePercent, awardedMarks, maxMarks },
             "AI graded essay answer"
           );
           return {
             id: answer.id,
-            isCorrect: aiResult.isCorrect,
+            isCorrect: false,
             pendingReview: false,
             aiFeedback: buildEssayAiFeedback(aiResult),
             scorePercent,
@@ -352,8 +352,6 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
     for (const result of essayResults) {
       if (result.pendingReview) {
         pendingReviewCount++;
-      } else if (result.isCorrect) {
-        correctCount++;
       }
       if (!result.pendingReview) {
         essayAwardedMarks += result.awardedMarks;
@@ -406,12 +404,7 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
     });
   }
 
-  // ── Build topic correctness map (includes AI-graded essays) ──────────────
-  // Merge all graded results into a single map for StudentPerformance update
-  const gradedCorrectMap = new Map<string, boolean>();
-  for (const u of mcqUpdates) gradedCorrectMap.set(u.id, u.isCorrect);
-  for (const u of essayUpdates) gradedCorrectMap.set(u.id, u.isCorrect);
-
+  // Topic performance uses awarded marks, while correct/incorrect counts remain MCQ-only.
   // ── Persist in transaction ────────────────────────────────────────────────
   await prisma.$transaction(async (tx) => {
     // MCQ updates
@@ -467,37 +460,36 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
 
     // Update StudentPerformance per topic
     if (finalScore !== null) {
-      const topicScores = new Map<string, { subjectId: string; correct: number; total: number }>();
+      const topicScores = new Map<string, { subjectId: string; awardedMarks: number; possibleMarks: number }>();
 
       for (const eq of examQuestions) {
         const topicId = eq.question.topicId;
         const subjectId = eq.question.subjectId;
         const answer = answerMap.get(eq.question.id);
+        const maxMarks = normalizeQuestionMaxMarks(eq.question.maxMarks);
 
-        let isCorrect = false;
-        if (answer) {
-          if (eq.question.type === "MCQ") {
-            isCorrect =
-              answer.studentAnswer.trim().toUpperCase() ===
-              (eq.question.correctAnswer ?? "").trim().toUpperCase();
-          } else {
-            // Use AI-graded result; skip pending-review answers entirely
-            const essayResult = essayUpdates.find((u) => u.id === answer.id);
-            if (essayResult?.pendingReview) continue; // exclude from topic performance
-            isCorrect = essayResult?.isCorrect ?? false;
-          }
+        let awardedMarks = 0;
+        if (eq.question.type === "MCQ") {
+          const isCorrect = Boolean(answer) &&
+            answer?.studentAnswer.trim().toUpperCase() ===
+            (eq.question.correctAnswer ?? "").trim().toUpperCase();
+          awardedMarks = isCorrect ? maxMarks : 0;
+        } else {
+          const essayResult = answer ? essayUpdates.find((update) => update.id === answer.id) : undefined;
+          if (essayResult?.pendingReview) continue;
+          awardedMarks = essayResult?.awardedMarks ?? 0;
         }
 
-        const existing = topicScores.get(topicId) ?? { subjectId, correct: 0, total: 0 };
+        const existing = topicScores.get(topicId) ?? { subjectId, awardedMarks: 0, possibleMarks: 0 };
         topicScores.set(topicId, {
           subjectId,
-          correct: existing.correct + (isCorrect ? 1 : 0),
-          total: existing.total + 1,
+          awardedMarks: existing.awardedMarks + awardedMarks,
+          possibleMarks: existing.possibleMarks + maxMarks,
         });
       }
 
-      for (const [topicId, { subjectId, correct, total }] of topicScores.entries()) {
-        const topicScore = total > 0 ? (correct / total) * 100 : 0;
+      for (const [topicId, { subjectId, awardedMarks, possibleMarks }] of topicScores.entries()) {
+        const topicScore = possibleMarks > 0 ? (awardedMarks / possibleMarks) * 100 : 0;
 
         const perf = await tx.studentPerformance.findUnique({
           where: { studentId_topicId: { studentId: session.studentId, topicId } },

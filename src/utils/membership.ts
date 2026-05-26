@@ -96,7 +96,7 @@ export async function getFreePracticeTopics(prisma: PrismaClient): Promise<FreeP
       subject: { select: { id: true, name: true } },
       _count: {
         select: {
-          questions: { where: { type: "MCQ", status: "PUBLISHED" } },
+          questions: { where: { type: "MCQ", status: "PUBLISHED", isPracticeAllowed: true } },
         },
       },
     },
@@ -141,7 +141,7 @@ export async function getFreePracticeTopicForSubject(
       subject: { select: { id: true, name: true } },
       _count: {
         select: {
-          questions: { where: { type: "MCQ", status: "PUBLISHED" } },
+          questions: { where: { type: "MCQ", status: "PUBLISHED", isPracticeAllowed: true } },
         },
       },
     },

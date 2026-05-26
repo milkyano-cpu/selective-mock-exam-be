@@ -117,7 +117,7 @@ function mockRequest(overrides: Record<string, unknown> = {}) {
 }
 
 describe("subjects module", () => {
-  it("lists subjects with search, pagination, sorting, and published question count", async () => {
+  it("lists subjects with search, pagination, sorting, and practice-eligible published question count", async () => {
     const prisma = mockPrisma();
 
     const result = await listSubjects(prisma as never, {
@@ -127,6 +127,7 @@ describe("subjects module", () => {
       sortBy: "name",
       order: "desc",
       publishedOnly: true,
+      practiceOnly: true,
     });
 
     expect(prisma.subject.findMany).toHaveBeenCalledWith({
@@ -137,7 +138,7 @@ describe("subjects module", () => {
         ],
       },
       select: expect.objectContaining({
-        _count: { select: { topics: true, questions: { where: { status: "PUBLISHED" } } } },
+        _count: { select: { topics: true, questions: { where: { status: "PUBLISHED", isPracticeAllowed: true } } } },
       }),
       orderBy: { name: "desc" },
       skip: 5,
@@ -292,6 +293,7 @@ describe("subjects module", () => {
       sortBy: "name",
       order: "asc",
       publishedOnly: true,
+      practiceOnly: true,
     });
 
     expect(prisma.topic.findMany).toHaveBeenCalledWith({
@@ -303,7 +305,7 @@ describe("subjects module", () => {
         ],
       },
       select: expect.objectContaining({
-        _count: { select: { questions: { where: { status: "PUBLISHED" } } } },
+        _count: { select: { questions: { where: { status: "PUBLISHED", isPracticeAllowed: true } } } },
       }),
       orderBy: { name: "asc" },
       skip: 0,

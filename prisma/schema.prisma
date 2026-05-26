@@ -396,6 +396,7 @@ model Question {
   skillTags        String[]            @default([]) @map("skill_tags")
   markingType      QuestionMarkingType @default(AUTO) @map("marking_type")
   maxMarks         Int                 @default(1) @map("max_marks")
+  isPracticeAllowed Boolean             @default(true) @map("is_practice_allowed")
   status           QuestionStatus      @default(DRAFT)
   rejectionNote    String?             @map("rejection_note")
   createdAt        DateTime            @default(now()) @map("created_at")

@@ -457,7 +457,7 @@ describe("pathways module", () => {
     const result = await pathwaysService.startNodePractice(prisma as never, "pathway-1", "node-1", "student-1");
 
     expect(prisma.question.findMany).toHaveBeenCalledWith({
-      where: { topicId: "topic-1", type: "MCQ", status: "PUBLISHED" },
+      where: { topicId: "topic-1", type: "MCQ", status: "PUBLISHED", isPracticeAllowed: true },
       select: { id: true },
       take: 10,
     });

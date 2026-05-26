@@ -27,10 +27,10 @@ import { buildEssayAiFeedback, gradeEssayWithAi, type AiRubricInput } from "../.
 // Strip server-only fields (like `aiModel`) from the persisted aiFeedback JSON
 // before sending it to a student. Per final-design, the AI label must stay
 // hidden from students.
-function scrubAiFeedbackForStudent(aiFeedback: unknown) {
+function scrubAiFeedbackForStudent(aiFeedback: unknown, forceEssayIncorrect = false) {
   if (!aiFeedback || typeof aiFeedback !== "object" || Array.isArray(aiFeedback)) return null;
   const { aiModel: _aiModel, ...rest } = aiFeedback as Record<string, unknown>;
-  return rest;
+  return forceEssayIncorrect ? { ...rest, isCorrect: false } : rest;
 }
 
 // ── SELECT shapes ─────────────────────────────────────────────────────────────
@@ -303,6 +303,7 @@ export async function startPracticeSession(
     ...(body.topicId ? { topicId: body.topicId } : {}),
     ...(body.subjectId && !body.topicId ? { subjectId: body.subjectId } : {}),
     status: "PUBLISHED",
+    isPracticeAllowed: true,
     ...(body.difficulty !== "ALL"
       ? { difficulty: body.difficulty as "EASY" | "MEDIUM" | "HARD" }
       : {}),
@@ -317,7 +318,7 @@ export async function startPracticeSession(
 
   if (body.excludeCompleted) {
     const correct = await prisma.practiceAnswer.findMany({
-      where: { session: { studentId }, isCorrect: true },
+      where: { session: { studentId }, question: { type: "MCQ" }, isCorrect: true },
       select: { questionId: true },
       distinct: ["questionId"],
     });
@@ -326,7 +327,7 @@ export async function startPracticeSession(
 
   if (body.incorrectOnly) {
     const incorrect = await prisma.practiceAnswer.findMany({
-      where: { session: { studentId }, isCorrect: false },
+      where: { session: { studentId }, question: { type: "MCQ" }, isCorrect: false },
       select: { questionId: true },
       distinct: ["questionId"],
     });
@@ -422,6 +423,11 @@ export async function startWeakAreaPracticeSession(
       studentId,
       scoreAvg: { lt: body.weaknessThreshold },
       ...(body.subjectId ? { subjectId: body.subjectId } : {}),
+      topic: {
+        questions: {
+          some: { type: "MCQ", status: "PUBLISHED", isPracticeAllowed: true },
+        },
+      },
     },
     orderBy: { scoreAvg: "asc" },
     take: 5,
@@ -449,7 +455,7 @@ export async function startWeakAreaPracticeSession(
 
   // 2. Get questions from weak topics
   const allQuestionIds = await prisma.question.findMany({
-    where: { topicId: { in: weakTopicIds }, type: "MCQ", status: "PUBLISHED" },
+    where: { topicId: { in: weakTopicIds }, type: "MCQ", status: "PUBLISHED", isPracticeAllowed: true },
     select: { id: true },
   });
 
@@ -521,6 +527,11 @@ export async function getWeakAreaRecommendations(
       studentId,
       scoreAvg: { lt: query.threshold },
       ...(query.subjectId ? { subjectId: query.subjectId } : {}),
+      topic: {
+        questions: {
+          some: { type: "MCQ", status: "PUBLISHED", isPracticeAllowed: true },
+        },
+      },
     },
     orderBy: { scoreAvg: "asc" },
     take: query.limit,
@@ -535,7 +546,7 @@ export async function getWeakAreaRecommendations(
           subject: { select: { id: true, name: true } },
           _count: {
             select: {
-              questions: { where: { type: "MCQ", status: "PUBLISHED" } },
+              questions: { where: { type: "MCQ", status: "PUBLISHED", isPracticeAllowed: true } },
             },
           },
         },
@@ -635,13 +646,13 @@ export async function getPracticeSession(
                 }
               : null,
             studentAnswer: ans?.studentAnswer ?? "",
-            isCorrect: ans?.isCorrect ?? false,
+            isCorrect: q.type === "MCQ" && (ans?.isCorrect ?? false),
             timeSpentSeconds: ans?.timeSpentSeconds ?? 0,
             awardedMarks: ans?.awardedMarks !== null && ans?.awardedMarks !== undefined ? Number(ans.awardedMarks) : null,
             bandLabel: ans?.bandLabel ?? null,
             bandDescriptor: ans?.bandDescriptor ?? null,
             gradingStatus: ans?.gradingStatus ?? "GRADED",
-            aiFeedback: scrubAiFeedbackForStudent(ans?.aiFeedback ?? null),
+            aiFeedback: scrubAiFeedbackForStudent(ans?.aiFeedback ?? null, q.type === "ESSAY"),
           };
         })
       : null;
@@ -713,6 +724,11 @@ export async function submitPracticeSession(
   );
 
   const questionById = new Map(session.sessionQuestions.map((sq) => [sq.questionId, sq.question]));
+  const mcqQuestionIds = new Set(
+    session.sessionQuestions
+      .filter((sq) => sq.question.type === "MCQ")
+      .map((sq) => sq.questionId)
+  );
   const gradedAnswers: Prisma.PracticeAnswerCreateManyInput[] = [];
   const essayScores: Array<{
     questionId: string;
@@ -775,7 +791,7 @@ export async function submitPracticeSession(
         sessionId,
         questionId: answer.questionId,
         studentAnswer: answer.studentAnswer,
-        isCorrect: aiResult.isCorrect,
+        isCorrect: false,
         timeSpentSeconds,
         awardedMarks,
         aiFeedback: buildEssayAiFeedback(aiResult) as unknown as Prisma.InputJsonValue,
@@ -813,7 +829,7 @@ export async function submitPracticeSession(
   }
   const totalTimeSeconds = elapsedSessionSeconds;
 
-  const correctCount = gradedAnswers.filter((a) => a.isCorrect).length;
+  const correctCount = gradedAnswers.filter((a) => mcqQuestionIds.has(a.questionId) && a.isCorrect).length;
   const totalQuestions = session.sessionQuestions.length;
   const totalAwardedMarks = gradedAnswers.reduce((sum, answer) => sum + Number(answer.awardedMarks ?? 0), 0);
   const totalPossibleMarks = session.sessionQuestions.reduce((sum, sq) => sum + normalizeQuestionMaxMarks(sq.question.maxMarks), 0);
@@ -830,22 +846,24 @@ export async function submitPracticeSession(
       scorePercent,
     });
   } else {
-    const topicGroups = new Map<string, { subjectId: string; correct: number; total: number }>();
+    const topicGroups = new Map<string, { subjectId: string; awardedMarks: number; possibleMarks: number }>();
     for (const sq of session.sessionQuestions) {
       const q = sq.question as typeof sq.question & { topicId: string; subjectId: string };
       const graded = gradedAnswers.find((g) => g.questionId === sq.questionId);
-      const existing = topicGroups.get(q.topicId) ?? { subjectId: q.subjectId, correct: 0, total: 0 };
+      if (graded?.gradingStatus === "PENDING_REVIEW") continue;
+      const maxMarks = normalizeQuestionMaxMarks(q.maxMarks);
+      const existing = topicGroups.get(q.topicId) ?? { subjectId: q.subjectId, awardedMarks: 0, possibleMarks: 0 };
       topicGroups.set(q.topicId, {
         subjectId: q.subjectId,
-        correct: existing.correct + (graded?.isCorrect ? 1 : 0),
-        total: existing.total + 1,
+        awardedMarks: existing.awardedMarks + Number(graded?.awardedMarks ?? 0),
+        possibleMarks: existing.possibleMarks + maxMarks,
       });
     }
-    for (const [topicId, { subjectId, correct, total }] of topicGroups.entries()) {
+    for (const [topicId, { subjectId, awardedMarks, possibleMarks }] of topicGroups.entries()) {
       topicPerfUpdates.push({
         topicId,
         subjectId,
-        scorePercent: total > 0 ? (correct / total) * 100 : 0,
+        scorePercent: possibleMarks > 0 ? (awardedMarks / possibleMarks) * 100 : 0,
       });
     }
   }
@@ -894,7 +912,7 @@ export async function submitPracticeSession(
       studentId,
       session.pathwayNodeId,
       correctCount,
-      totalQuestions
+      mcqQuestionIds.size
     );
   }
 
@@ -937,13 +955,13 @@ export async function submitPracticeSession(
             }
           : null,
         studentAnswer: submitted?.studentAnswer ?? "",
-        isCorrect: graded?.isCorrect ?? false,
+        isCorrect: q.type === "MCQ" && (graded?.isCorrect ?? false),
         timeSpentSeconds: submitted?.timeSpentSeconds ?? 0,
         awardedMarks: graded?.awardedMarks !== null && graded?.awardedMarks !== undefined ? Number(graded.awardedMarks) : null,
         bandLabel: graded?.bandLabel ?? null,
         bandDescriptor: graded?.bandDescriptor ?? null,
         gradingStatus: graded?.gradingStatus ?? "GRADED",
-        aiFeedback: scrubAiFeedbackForStudent(graded?.aiFeedback ?? null),
+        aiFeedback: scrubAiFeedbackForStudent(graded?.aiFeedback ?? null, q.type === "ESSAY"),
       };
     });
 
@@ -994,17 +1012,24 @@ export async function listPracticeSessions(
         startedAt: true,
         endedAt: true,
         topic: { select: { id: true, name: true, subject: { select: { id: true, name: true } } } },
-        answers: { select: { isCorrect: true } },
+        answers: { select: { isCorrect: true, awardedMarks: true, question: { select: { type: true, maxMarks: true } } } },
+        sessionQuestions: { select: { question: { select: { maxMarks: true } } } },
       },
     }),
   ]);
 
   const data = sessions.map((s) => {
+    const mcqAnswers = s.answers.filter((answer) => answer.question.type === "MCQ");
     const correctCount =
-      s.status === "COMPLETED" ? s.answers.filter((a) => a.isCorrect).length : null;
+      s.status === "COMPLETED" ? mcqAnswers.filter((a) => a.isCorrect).length : null;
+    const totalAwardedMarks = s.answers.reduce((sum, answer) => sum + Number(answer.awardedMarks ?? 0), 0);
+    const totalPossibleMarks = s.sessionQuestions.reduce(
+      (sum, sessionQuestion) => sum + normalizeQuestionMaxMarks(sessionQuestion.question.maxMarks),
+      0
+    );
     const scorePercent =
-      s.status === "COMPLETED" && s.questionCount > 0
-        ? (correctCount! / s.questionCount) * 100
+      s.status === "COMPLETED" && totalPossibleMarks > 0
+        ? (totalAwardedMarks / totalPossibleMarks) * 100
         : null;
 
     return {
@@ -1050,12 +1075,12 @@ export async function createTutorAssignment(
 
   // 2. Verify all questions are published
   const questions = await prisma.question.findMany({
-    where: { id: { in: body.questionIds }, status: "PUBLISHED" },
+    where: { id: { in: body.questionIds }, status: "PUBLISHED", isPracticeAllowed: true },
     select: { id: true, topicId: true },
   });
 
   if (questions.length !== body.questionIds.length) {
-    throw createHttpError(422, "Some questions were not found or are not published");
+    throw createHttpError(422, "Some questions were not found, are not published, or are not allowed in practice");
   }
 
   // Determine topicId: use explicit override, else infer from questions if all share one topic
@@ -1141,9 +1166,10 @@ export async function retakePracticeSession(
       sourceType: true,
       difficulty: true,
       status: true,
+      questionCount: true,
       sessionQuestions: {
         orderBy: { order: "asc" },
-        select: { questionId: true, order: true },
+        select: { questionId: true, order: true, question: { select: { topicId: true } } },
       },
     },
   });
@@ -1163,7 +1189,38 @@ export async function retakePracticeSession(
     });
   }
 
-  const questionIds = original.sessionQuestions.map((sq) => sq.questionId);
+  const originalQuestionIds = original.sessionQuestions.map((sq) => sq.questionId);
+  const originalQuestionIdSet = new Set(originalQuestionIds);
+  const topicIds = original.topicId
+    ? [original.topicId]
+    : [...new Set(original.sessionQuestions.map((sq) => sq.question.topicId))];
+
+  if (topicIds.length === 0) {
+    throw createHttpError(422, "This session cannot be retaken because it has no question topics");
+  }
+
+  const eligibleQuestions = await prisma.question.findMany({
+    where: {
+      topicId: topicIds.length === 1 ? topicIds[0]! : { in: topicIds },
+      status: "PUBLISHED",
+      isPracticeAllowed: true,
+      ...(original.difficulty ? { difficulty: original.difficulty } : {}),
+    },
+    select: { id: true },
+  });
+
+  if (eligibleQuestions.length === 0) {
+    throw createHttpError(422, "No practice questions are available for the original session filters");
+  }
+
+  const newQuestions = eligibleQuestions.filter((question) => !originalQuestionIdSet.has(question.id));
+  const repeatedQuestions = eligibleQuestions.filter((question) => originalQuestionIdSet.has(question.id));
+  const questionIds = [
+    ...newQuestions.sort(() => Math.random() - 0.5),
+    ...repeatedQuestions.sort(() => Math.random() - 0.5),
+  ]
+    .slice(0, Math.min(original.questionCount, eligibleQuestions.length))
+    .map((question) => question.id);
 
   const session = await prisma.$transaction(async (tx) => {
     const created = await tx.practiceSession.create({
@@ -1243,17 +1300,24 @@ export async function listTutorAssignments(
         endedAt: true,
         student: { select: { id: true, fullName: true } },
         topic: { select: { id: true, name: true, subject: { select: { id: true, name: true } } } },
-        answers: { select: { isCorrect: true } },
+        answers: { select: { isCorrect: true, awardedMarks: true, question: { select: { type: true, maxMarks: true } } } },
+        sessionQuestions: { select: { question: { select: { maxMarks: true } } } },
       },
     }),
   ]);
 
   const data = sessions.map((s) => {
+    const mcqAnswers = s.answers.filter((answer) => answer.question.type === "MCQ");
     const correctCount =
-      s.status === "COMPLETED" ? s.answers.filter((a) => a.isCorrect).length : null;
+      s.status === "COMPLETED" ? mcqAnswers.filter((a) => a.isCorrect).length : null;
+    const totalAwardedMarks = s.answers.reduce((sum, answer) => sum + Number(answer.awardedMarks ?? 0), 0);
+    const totalPossibleMarks = s.sessionQuestions.reduce(
+      (sum, sessionQuestion) => sum + normalizeQuestionMaxMarks(sessionQuestion.question.maxMarks),
+      0
+    );
     const scorePercent =
-      s.status === "COMPLETED" && s.questionCount > 0
-        ? (correctCount! / s.questionCount) * 100
+      s.status === "COMPLETED" && totalPossibleMarks > 0
+        ? (totalAwardedMarks / totalPossibleMarks) * 100
         : null;
 
     return {

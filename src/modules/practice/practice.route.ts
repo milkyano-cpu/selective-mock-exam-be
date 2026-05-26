@@ -117,11 +117,11 @@ export async function practiceRoutes(fastify: FastifyInstance) {
     handler: submitPracticeHandler,
   });
 
-  // POST /practice/sessions/:sessionId/retake — retake a completed session (same questions)
+  // POST /practice/sessions/:sessionId/retake — retake with a fresh set from the original topic filters
   fastify.post("/sessions/:sessionId/retake", {
     schema: {
       tags: ["Practice"],
-      summary: "Retake a completed practice session with the same questions",
+      summary: "Retake a completed practice session with fresh questions from the original topic filters",
       params: practiceRef("practiceSessionParamSchema"),
       response: {
         201: practiceRef("startPracticeResponseSchema"),
