@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import type {
   CreateSubjectInput,
   EnsureSubjectTopicsInput,
@@ -10,6 +10,27 @@ import type {
 } from "./subjects.schema.js";
 import { createHttpError } from "../../utils/http-error.js";
 import { isUniqueConstraintError } from "../../utils/prisma-errors.js";
+
+function collectBlockers(items: Array<{ label: string; count: number }>): string | null {
+  const blocking = items.filter((item) => item.count > 0);
+  if (blocking.length === 0) return null;
+  return blocking
+    .map(({ count, label }) => `${count} ${label}${count === 1 ? "" : "s"}`)
+    .join(", ");
+}
+
+function mapDeleteForeignKeyError(error: unknown, entity: string): unknown {
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2003"
+  ) {
+    return createHttpError(
+      409,
+      `Cannot delete ${entity}: it is still referenced by other records. Remove the related items first.`
+    );
+  }
+  return error;
+}
 
 // ── Subject SELECT shapes ───────────────────────────────────
 
@@ -256,7 +277,15 @@ export async function deleteSubject(prisma: PrismaClient, id: string) {
     where: { id },
     select: {
       id: true,
-      _count: { select: { topics: true, questions: true } },
+      _count: {
+        select: {
+          topics: true,
+          questions: true,
+          passages: true,
+          performance: true,
+          pathways: true,
+        },
+      },
     },
   });
 
@@ -264,14 +293,26 @@ export async function deleteSubject(prisma: PrismaClient, id: string) {
     throw createHttpError(404, "Subject not found");
   }
 
-  if (subject._count.topics > 0 || subject._count.questions > 0) {
+  const blockers = collectBlockers([
+    { label: "topic", count: subject._count.topics },
+    { label: "question", count: subject._count.questions },
+    { label: "passage", count: subject._count.passages },
+    { label: "student performance record", count: subject._count.performance },
+    { label: "student pathway", count: subject._count.pathways },
+  ]);
+
+  if (blockers) {
     throw createHttpError(
       409,
-      `Cannot delete subject: it has ${subject._count.topics} topic(s) and ${subject._count.questions} question(s). Remove them first.`
+      `Cannot delete subject: it is still referenced by ${blockers}. Remove them first.`
     );
   }
 
-  await prisma.subject.delete({ where: { id } });
+  try {
+    await prisma.subject.delete({ where: { id } });
+  } catch (error) {
+    throw mapDeleteForeignKeyError(error, "subject");
+  }
 }
 
 // ── Topic CRUD ──────────────────────────────────────────────
@@ -414,7 +455,17 @@ export async function deleteTopic(
     where: { id: topicId, subjectId },
     select: {
       id: true,
-      _count: { select: { questions: true } },
+      _count: {
+        select: {
+          questions: true,
+          passages: true,
+          pathwayNodes: true,
+          recommendations: true,
+          performance: true,
+          practiceSessions: true,
+          resources: true,
+        },
+      },
     },
   });
 
@@ -422,14 +473,28 @@ export async function deleteTopic(
     throw createHttpError(404, "Topic not found");
   }
 
-  if (topic._count.questions > 0) {
+  const blockers = collectBlockers([
+    { label: "question", count: topic._count.questions },
+    { label: "passage", count: topic._count.passages },
+    { label: "pathway node", count: topic._count.pathwayNodes },
+    { label: "recommendation", count: topic._count.recommendations },
+    { label: "student performance record", count: topic._count.performance },
+    { label: "practice session", count: topic._count.practiceSessions },
+    { label: "study resource", count: topic._count.resources },
+  ]);
+
+  if (blockers) {
     throw createHttpError(
       409,
-      `Cannot delete topic: it has ${topic._count.questions} question(s). Remove them first.`
+      `Cannot delete topic: it is still referenced by ${blockers}. Remove them first.`
     );
   }
 
-  await prisma.topic.delete({ where: { id: topicId } });
+  try {
+    await prisma.topic.delete({ where: { id: topicId } });
+  } catch (error) {
+    throw mapDeleteForeignKeyError(error, "topic");
+  }
 }
 
 // ── Helpers ─────────────────────────────────────────────────

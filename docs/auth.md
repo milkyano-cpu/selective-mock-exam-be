@@ -69,7 +69,7 @@ The frontend (Next.js) and backend (Fastify) run on different domains. Browsers 
 
 The backend cookies are read by `authProxy.ts`, which extracts their values from `Set-Cookie` headers and re-issues them as `aspire_*` cookies via `setAuthCookies()`. The browser only ever sees and stores the `aspire_*` cookies.
 
-> Note: `aspire_refresh_token` is set on path `/` (not restricted to `/api/auth/refresh`) so the Next.js middleware can read it on dashboard route checks. Forwarding protection is handled in code: `serverBackend.ts` only includes the refresh token in the `Cookie` header when the backend path is exactly `/auth/refresh`.
+> Note: `aspire_refresh_token` is set on path `/` (not restricted to `/api/auth/refresh`) so the Next.js proxy can gate dashboard route checks. Forwarding protection is handled in code: `serverBackend.ts` only includes the refresh token in the `Cookie` header when the backend path is exactly `/auth/refresh`.
 
 ---
 
@@ -111,7 +111,7 @@ Browser
 | `src/lib/serverBackend.ts` | Used by Next.js API route handlers (server-side). Reads `aspire_access_token` from the incoming cookie header and forwards it as an `Authorization: Bearer` header to the backend. |
 | `src/lib/authProxy.ts` | Used by auth API routes (`/api/auth/login`, `/api/auth/refresh`, `/api/auth/logout`). Calls the backend, extracts `access_token`/`refresh_token` from `Set-Cookie`, and re-issues them as `aspire_*` cookies. |
 | `src/lib/authCookies.ts` | Defines cookie names (`aspire_access_token`, `aspire_refresh_token`) and the shared cookie options (`httpOnly`, `secure`, `sameSite=lax`). |
-| `src/middleware.ts` | Next.js Edge middleware. Runs before every `/dashboard/*` page render to enforce authentication. |
+| `src/proxy.ts` | Next.js request proxy. Gates `/dashboard/*` navigation based on auth cookie presence; it does not rotate tokens. |
 
 ---
 
@@ -123,11 +123,13 @@ When any API call returns `401`, the response interceptor in `mdwClient.ts` auto
 
 1. Calls `doRefresh()` — POST to `/api/auth/refresh`.
 2. If the refresh succeeds, retries the original request with the new cookies.
-3. If the refresh fails, calls `clearAuth()` and redirects to `/login`.
+3. If the refresh token is rejected and a confirming retry is still unauthorized, calls `clearAuth()` and navigates through `/api/auth/logout` to clear stale cookies before returning to `/login`.
+4. If refresh is temporarily unavailable (for example, a network failure or timeout), preserves the cookies so a later request can recover the session.
 
 ```
 Request → 401 ──► doRefresh() ──► success → retry original request
-                             └──► failure → clearAuth() → redirect /login
+                             ├──► rejected → confirm 401 → /api/auth/logout → /login
+                             └──► unavailable → preserve session for retry
 ```
 
 The auth endpoints (`/auth/login`, `/auth/refresh`, `/auth/register`) are explicitly excluded from the retry loop.
@@ -140,21 +142,23 @@ To handle this gracefully, `mdwClient` uses a `BroadcastChannel('aspire_refresh'
 
 - A `refreshPromise` mutex prevents two concurrent refresh calls within the same tab.
 - When the winning tab's refresh completes, it broadcasts `{ type: 'done' }`.
-- The losing tab receives `{ type: 'done' }`, resets its mutex (`refreshPromise = null`), and retries its original request — using the fresh cookies that are now in the shared browser cookie store.
-- If no `'done'` signal arrives within 3 seconds, the losing tab gives up and redirects to login.
+- The losing tab receives `{ type: 'done' }` (or recognizes a recently received success signal) and retries its original request using the fresh cookies in the shared browser cookie store.
+- If no `'done'` signal arrives within 3 seconds, the losing tab confirms authentication with the original request before deciding whether to log out.
+- A `401` from `/api/auth/refresh` does not clear cookies immediately, because it may be the losing request after another tab has already rotated the same one-time refresh token.
+- When `BroadcastChannel` is unavailable, the losing tab retries the original authenticated request before clearing anything; a successful retry proves that another tab refreshed the shared cookies.
 
-### Server-side: Next.js middleware refresh
+### Navigation gate: Next.js proxy
 
-The `middleware.ts` file runs on every `/dashboard/*` request at the Edge, before the page renders:
+The `src/proxy.ts` file runs on `/dashboard/*` navigation and auth pages:
 
 | State | Action |
 |-------|--------|
 | `aspire_access_token` present | Allow request through |
-| `aspire_access_token` missing, `aspire_refresh_token` present | Server-side POST to `/api/auth/refresh`, redirect back to same URL with new cookies |
+| `aspire_access_token` missing, `aspire_refresh_token` present | Allow dashboard shell through; its initial `mdwClient` request performs coordinated refresh if required |
 | Both cookies missing | Redirect to `/login?next=<current-path>` |
-| On an auth page with valid tokens | Redirect to `/dashboard` |
+| On an auth page with either session cookie | Redirect to `/dashboard`, where API validation accepts or clears the session |
 
-This ensures the first SSR render always has valid tokens, avoiding hydration mismatches and unnecessary flickers.
+Dashboard pages are client-rendered and the layout fetches `GET /users/me` through `mdwClient`. Keeping refresh-token rotation in that single coordinated path prevents the request proxy and browser client from racing the same one-time refresh token when the 15-minute access cookie expires.
 
 ---
 

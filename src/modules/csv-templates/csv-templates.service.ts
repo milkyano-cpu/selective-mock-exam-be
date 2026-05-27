@@ -1,4 +1,4 @@
-import type { ObjectStorage, StoredObjectInfo } from "../../lib/object-storage.js";
+import { STORAGE_PREFIXES, type ObjectStorage, type StoredObjectInfo } from "../../lib/object-storage.js";
 import { createHttpError } from "../../utils/http-error.js";
 import {
   CSV_TEMPLATE_DEFINITIONS,
@@ -29,7 +29,7 @@ export interface CsvTemplateUploadInput {
 }
 
 function templateObjectKey(type: CsvTemplateType) {
-  return `${type}.csv`;
+  return `${STORAGE_PREFIXES.CSV_TEMPLATE}/${type}.csv`;
 }
 
 function isStorageNotFoundError(error: unknown) {

@@ -35,7 +35,7 @@ export async function createBannerHandler(request: FastifyRequest, reply: Fastif
 export async function updateBannerHandler(request: FastifyRequest, reply: FastifyReply) {
   const { id } = request.params as { id: string };
   const body = request.body as UpdateBannerInput;
-  const banner = await updateBannerRecord(request.server.prisma, id, body);
+  const banner = await updateBannerRecord(request.server.prisma, id, body, request.server.storage, request.log);
   return reply.send({
     success: true,
     message: "Banner updated successfully",
@@ -45,7 +45,7 @@ export async function updateBannerHandler(request: FastifyRequest, reply: Fastif
 
 export async function deleteBannerHandler(request: FastifyRequest, reply: FastifyReply) {
   const { id } = request.params as { id: string };
-  await deleteBannerRecord(request.server.prisma, id);
+  await deleteBannerRecord(request.server.prisma, request.server.storage, id, request.log);
   return reply.send({
     success: true,
     message: "Banner deleted successfully",
@@ -75,7 +75,13 @@ export async function uploadBannerImageHandler(request: FastifyRequest, reply: F
     contentLength: buffer.length,
   });
 
-  const banner = await updateBannerRecord(request.server.prisma, id, { imageUrl });
+  const banner = await updateBannerRecord(
+    request.server.prisma,
+    id,
+    { imageUrl },
+    request.server.storage,
+    request.log
+  );
 
   request.log.info({ bannerId: id, uploadedBy: request.user.sub, imageUrl }, "Banner image uploaded");
 

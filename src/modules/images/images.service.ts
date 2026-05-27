@@ -1,6 +1,5 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { env } from "../../config/env.js";
-import type { ObjectStorage } from "../../lib/object-storage.js";
+import { STORAGE_PREFIXES, type ObjectStorage } from "../../lib/object-storage.js";
 import { createHttpError } from "../../utils/http-error.js";
 import type { ListImagesQuery, UpdateImageBody } from "./images.schema.js";
 
@@ -53,8 +52,8 @@ async function serializeImage(prisma: PrismaClient, image: ImageRecord) {
 }
 
 const IMAGE_TYPE_FOLDER: Record<string, string> = {
-  QUESTION: "questions",
-  PASSAGE: "passages",
+  QUESTION: STORAGE_PREFIXES.QUESTION_IMAGE,
+  PASSAGE: STORAGE_PREFIXES.PASSAGE,
 };
 
 function generateRefId() {
@@ -88,43 +87,45 @@ function storageSafeFileName(fileName: string) {
   return fileName.replace(/[^A-Za-z0-9._-]/g, "_");
 }
 
-const KNOWN_IMAGE_BUCKETS = () => [
-  env.S3_IMAGE_BUCKET,
-  env.S3_QUESTION_IMAGE_BUCKET,
-  env.S3_PASSAGE_BUCKET,
+const IMAGE_KEY_PREFIXES: readonly string[] = [
+  STORAGE_PREFIXES.IMAGE,
+  STORAGE_PREFIXES.QUESTION_IMAGE,
+  STORAGE_PREFIXES.PASSAGE,
 ];
 
-function parseBucketAndKey(url: string | null): { bucket: string; key: string } | null {
+function extractObjectKeyFromUrl(url: string | null, bucket: string): string | null {
   if (!url) return null;
 
-  const buckets = KNOWN_IMAGE_BUCKETS();
+  const findKeyStart = (parts: string[]) => {
+    const bucketIdx = parts.findIndex((part) => part === bucket);
+    if (bucketIdx >= 0) {
+      const remainder = parts.slice(bucketIdx + 1);
+      if (remainder.length > 0 && IMAGE_KEY_PREFIXES.includes(remainder[0]!)) {
+        return remainder.map(decodeURIComponent).join("/");
+      }
+    }
+    const prefixIdx = parts.findIndex((part) => IMAGE_KEY_PREFIXES.includes(part));
+    if (prefixIdx >= 0) {
+      return parts.slice(prefixIdx).map(decodeURIComponent).join("/");
+    }
+    return null;
+  };
 
   try {
     const parsed = new URL(url);
     const parts = parsed.pathname.split("/").filter(Boolean);
-    for (const bucket of buckets) {
-      const idx = parts.findIndex((part) => part === bucket);
-      if (idx >= 0) {
-        return { bucket, key: parts.slice(idx + 1).map(decodeURIComponent).join("/") };
-      }
-    }
+    return findKeyStart(parts);
   } catch {
     const normalized = url.replace(/^\/+/, "");
-    for (const bucket of buckets) {
-      const prefix = `${bucket}/`;
-      if (normalized.startsWith(prefix)) {
-        return { bucket, key: normalized.slice(prefix.length) };
-      }
-    }
+    const parts = normalized.split("/").filter(Boolean);
+    return findKeyStart(parts);
   }
-
-  return null;
 }
 
 async function deleteImageObjectByUrl(storage: ObjectStorage, url: string | null) {
-  const parsed = parseBucketAndKey(url);
-  if (!parsed) return;
-  await storage.deleteObject(parsed.bucket, parsed.key);
+  const key = extractObjectKeyFromUrl(url, storage.bucket);
+  if (!key) return;
+  await storage.deleteObject(key);
 }
 
 async function getImageUsageCounts(prisma: PrismaClient, fileName: string) {

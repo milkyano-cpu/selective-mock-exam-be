@@ -14,7 +14,7 @@ const Client = jest.fn(() => minioInstance);
 
 jest.unstable_mockModule("minio", () => ({ Client }));
 
-const { createObjectStorage } = await import("../../src/lib/object-storage.js");
+const { createObjectStorage, STORAGE_PREFIXES } = await import("../../src/lib/object-storage.js");
 
 function createStorage(overrides: Record<string, unknown> = {}) {
   return createObjectStorage({
@@ -22,17 +22,9 @@ function createStorage(overrides: Record<string, unknown> = {}) {
     accessKey: "access",
     secretKey: "secret",
     region: "ap-southeast-2",
-    profilePhotoBucket: "profile-photos",
+    bucket: "aspire-test",
     profilePhotoMaxSizeBytes: 1024,
     signedUrlExpiresInSeconds: 300,
-    imageBucket: "images",
-    questionImageBucket: "question-images",
-    passageBucket: "passages",
-    bannerImageBucket: "banner-images",
-    bannerImageMaxSizeBytes: 2048,
-    resourceBucket: "resources",
-    invoiceBucket: "invoices",
-    csvTemplateBucket: "csv-templates",
     ...overrides,
   });
 }
@@ -67,6 +59,7 @@ describe("object storage", () => {
     });
     expect(storage.profilePhotoMaxSizeBytes).toBe(1024);
     expect(storage.signedUrlExpiresInSeconds).toBe(300);
+    expect(storage.bucket).toBe("aspire-test");
   });
 
   it("uses default endpoint ports for https and http URLs", () => {
@@ -83,55 +76,67 @@ describe("object storage", () => {
     );
   });
 
-  it("ensures the private profile photo bucket and skips creation when present", async () => {
+  it("creates the single bucket and applies a mixed-access policy that only grants public read to public prefixes", async () => {
     const storage = createStorage();
 
-    await storage.ensureProfilePhotoBucketExists();
+    await storage.ensureBucketExists();
 
-    expect(minioInstance.bucketExists).toHaveBeenCalledWith("profile-photos");
-    expect(minioInstance.makeBucket).toHaveBeenCalledWith("profile-photos", "ap-southeast-2");
-    expect(minioInstance.setBucketPolicy).toHaveBeenCalledWith(
-      "profile-photos",
-      JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [],
-        Id: "profile-photos-private",
-      })
+    expect(minioInstance.bucketExists).toHaveBeenCalledWith("aspire-test");
+    expect(minioInstance.makeBucket).toHaveBeenCalledWith("aspire-test", "ap-southeast-2");
+
+    const policyArg = minioInstance.setBucketPolicy.mock.calls[0]?.[1];
+    expect(typeof policyArg).toBe("string");
+    const policy = JSON.parse(policyArg as string);
+    expect(policy.Statement[0].Action).toEqual(["s3:GetObject"]);
+    const resources = policy.Statement[0].Resource as string[];
+    expect(resources).toEqual(
+      expect.arrayContaining([
+        `arn:aws:s3:::aspire-test/${STORAGE_PREFIXES.IMAGE}/*`,
+        `arn:aws:s3:::aspire-test/${STORAGE_PREFIXES.QUESTION_IMAGE}/*`,
+        `arn:aws:s3:::aspire-test/${STORAGE_PREFIXES.PASSAGE}/*`,
+        `arn:aws:s3:::aspire-test/${STORAGE_PREFIXES.BANNER_IMAGE}/*`,
+        `arn:aws:s3:::aspire-test/${STORAGE_PREFIXES.RESOURCE}/*`,
+      ])
     );
+    // Private prefixes must NOT appear in the public-read policy
+    expect(resources).not.toEqual(expect.arrayContaining([
+      `arn:aws:s3:::aspire-test/${STORAGE_PREFIXES.PROFILE_PHOTO}/*`,
+      `arn:aws:s3:::aspire-test/${STORAGE_PREFIXES.INVOICE}/*`,
+      `arn:aws:s3:::aspire-test/${STORAGE_PREFIXES.CSV_TEMPLATE}/*`,
+    ]));
+  });
 
-    jest.clearAllMocks();
+  it("skips bucket creation when it already exists but still applies the policy", async () => {
     minioInstance.bucketExists.mockResolvedValue(true as never);
-    await storage.ensureProfilePhotoBucketExists();
+    const storage = createStorage();
+
+    await storage.ensureBucketExists();
+
     expect(minioInstance.makeBucket).not.toHaveBeenCalled();
     expect(minioInstance.setBucketPolicy).toHaveBeenCalled();
   });
 
-  it("uploads, signs, and deletes profile photos", async () => {
+  it("uploads, signs, and deletes profile photos using the single bucket with the caller-built key", async () => {
     const storage = createStorage();
     const body = Buffer.from("photo");
+    const key = "profile-photos/student/user-1/avatar.png";
 
-    await storage.uploadProfilePhoto({
-      key: "users/user-1/avatar.png",
-      body,
-      contentType: "image/png",
-      contentLength: body.length,
-    });
-    const signedUrl = await storage.getProfilePhotoSignedUrl("users/user-1/avatar.png");
-    await storage.deleteProfilePhoto("users/user-1/avatar.png");
+    await storage.uploadProfilePhoto({ key, body, contentType: "image/png", contentLength: body.length });
+    const signedUrl = await storage.getProfilePhotoSignedUrl(key);
+    await storage.deleteProfilePhoto(key);
 
-    expect(minioInstance.putObject).toHaveBeenCalledWith("profile-photos", "users/user-1/avatar.png", body, body.length, {
+    expect(minioInstance.putObject).toHaveBeenCalledWith("aspire-test", key, body, body.length, {
       "Content-Type": "image/png",
     });
-    expect(minioInstance.presignedGetObject).toHaveBeenCalledWith("profile-photos", "users/user-1/avatar.png", 300);
-    expect(minioInstance.removeObject).toHaveBeenCalledWith("profile-photos", "users/user-1/avatar.png");
+    expect(minioInstance.presignedGetObject).toHaveBeenCalledWith("aspire-test", key, 300);
+    expect(minioInstance.removeObject).toHaveBeenCalledWith("aspire-test", key);
     expect(signedUrl).toBe("https://signed.example.com/photo");
   });
 
-  it("stores invoice PDFs in a private bucket and returns signed download URLs", async () => {
+  it("uploads invoice PDFs under the invoices/ prefix and returns the stored key", async () => {
     const storage = createStorage();
     const body = Buffer.from("%PDF");
 
-    await storage.ensureInvoiceBucketExists();
     const key = await storage.uploadInvoicePdf({
       userId: "student-1",
       invoiceId: "in_123",
@@ -140,54 +145,36 @@ describe("object storage", () => {
     });
     const signedUrl = await storage.getInvoicePdfSignedUrl(key);
 
-    expect(minioInstance.bucketExists).toHaveBeenCalledWith("invoices");
-    expect(minioInstance.setBucketPolicy).toHaveBeenCalledWith(
-      "invoices",
-      JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [],
-        Id: "invoices-private",
-      })
-    );
+    expect(key).toBe("invoices/student-1/in_123.pdf");
     expect(minioInstance.putObject).toHaveBeenCalledWith(
-      "invoices",
-      "student-1/in_123.pdf",
+      "aspire-test",
+      "invoices/student-1/in_123.pdf",
       body,
       body.length,
       { "Content-Type": "application/pdf" }
     );
-    expect(minioInstance.presignedGetObject).toHaveBeenCalledWith("invoices", "student-1/in_123.pdf", 300);
-    expect(key).toBe("student-1/in_123.pdf");
+    expect(minioInstance.presignedGetObject).toHaveBeenCalledWith("aspire-test", "invoices/student-1/in_123.pdf", 300);
     expect(signedUrl).toBe("https://signed.example.com/photo");
   });
 
-  it("stores CSV templates in a private bucket and returns signed download URLs", async () => {
+  it("uploads CSV templates with caller-provided prefixed key and supports signed download URLs", async () => {
     const storage = createStorage();
     const body = Buffer.from("Header\nValue");
+    const key = "csv-templates/question-mcq.csv";
 
-    await storage.ensureCsvTemplateBucketExists();
     await storage.uploadCsvTemplate({
-      key: "question-mcq.csv",
+      key,
       body,
       contentType: "text/csv",
       contentLength: body.length,
       downloadFileName: "question-mcq-template.csv",
     });
-    const info = await storage.getCsvTemplateObjectInfo("question-mcq.csv");
-    const signedUrl = await storage.getCsvTemplateSignedUrl("question-mcq.csv");
+    const info = await storage.getCsvTemplateObjectInfo(key);
+    const signedUrl = await storage.getCsvTemplateSignedUrl(key);
 
-    expect(minioInstance.bucketExists).toHaveBeenCalledWith("csv-templates");
-    expect(minioInstance.setBucketPolicy).toHaveBeenCalledWith(
-      "csv-templates",
-      JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [],
-        Id: "csv-templates-private",
-      })
-    );
     expect(minioInstance.putObject).toHaveBeenCalledWith(
-      "csv-templates",
-      "question-mcq.csv",
+      "aspire-test",
+      key,
       body,
       body.length,
       {
@@ -195,48 +182,14 @@ describe("object storage", () => {
         "Content-Disposition": 'attachment; filename="question-mcq-template.csv"',
       }
     );
-    expect(minioInstance.statObject).toHaveBeenCalledWith("csv-templates", "question-mcq.csv");
-    expect(minioInstance.presignedGetObject).toHaveBeenCalledWith("csv-templates", "question-mcq.csv", 300);
+    expect(minioInstance.statObject).toHaveBeenCalledWith("aspire-test", key);
+    expect(minioInstance.presignedGetObject).toHaveBeenCalledWith("aspire-test", key, 300);
     expect(info.size).toBe(42);
     expect(info.contentType).toBe("text/csv");
     expect(signedUrl).toBe("https://signed.example.com/photo");
   });
 
-  it("ensures public master, question, and banner image buckets", async () => {
-    const storage = createStorage();
-
-    await storage.ensureImageBucketExists();
-    await storage.ensureQuestionImageBucketExists();
-    await storage.ensureBannerImageBucketExists();
-
-    expect(minioInstance.makeBucket).toHaveBeenCalledWith("images", "ap-southeast-2");
-    expect(minioInstance.makeBucket).toHaveBeenCalledWith("question-images", "ap-southeast-2");
-    expect(minioInstance.makeBucket).toHaveBeenCalledWith("banner-images", "ap-southeast-2");
-    expect(minioInstance.setBucketPolicy).toHaveBeenCalledWith(
-      "images",
-      expect.stringContaining("arn:aws:s3:::images/*")
-    );
-    expect(minioInstance.setBucketPolicy).toHaveBeenCalledWith(
-      "question-images",
-      JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [
-          {
-            Effect: "Allow",
-            Principal: { AWS: ["*"] },
-            Action: ["s3:GetObject"],
-            Resource: ["arn:aws:s3:::question-images/*"],
-          },
-        ],
-      })
-    );
-    expect(minioInstance.setBucketPolicy).toHaveBeenCalledWith(
-      "banner-images",
-      expect.stringContaining("arn:aws:s3:::banner-images/*")
-    );
-  });
-
-  it("uploads passage, question, and banner images with public URLs", async () => {
+  it("uploads passage, question, and banner images with prefixed keys and public URLs", async () => {
     jest.spyOn(Date, "now").mockReturnValue(1770000000000);
     const storage = createStorage({ endpointUrl: "https://s3.example.com/" });
     const body = Buffer.from("image");
@@ -264,32 +217,32 @@ describe("object storage", () => {
     });
 
     expect(minioInstance.putObject).toHaveBeenCalledWith(
-      "passages",
-      "passage-1/diagram.png",
+      "aspire-test",
+      "passages/passage-1/diagram.png",
       body,
       body.length,
       { "Content-Type": "image/png" }
     );
     expect(minioInstance.putObject).toHaveBeenCalledWith(
-      "question-images",
-      "question-1/1770000000000-diagram.png",
+      "aspire-test",
+      "questions/question-1/1770000000000-diagram.png",
       body,
       body.length,
       { "Content-Type": "image/png" }
     );
     expect(minioInstance.putObject).toHaveBeenCalledWith(
-      "banner-images",
-      "banner-1/1770000000000-hero.jpg",
+      "aspire-test",
+      "banners/banner-1/1770000000000-hero.jpg",
       body,
       body.length,
       { "Content-Type": "image/jpeg" }
     );
-    expect(passageUrl).toBe("https://s3.example.com/passages/passage-1/diagram.png");
-    expect(questionUrl).toBe("https://s3.example.com/question-images/question-1/1770000000000-diagram.png");
-    expect(bannerUrl).toBe("https://s3.example.com/banner-images/banner-1/1770000000000-hero.jpg");
+    expect(passageUrl).toBe("https://s3.example.com/aspire-test/passages/passage-1/diagram.png");
+    expect(questionUrl).toBe("https://s3.example.com/aspire-test/questions/question-1/1770000000000-diagram.png");
+    expect(bannerUrl).toBe("https://s3.example.com/aspire-test/banners/banner-1/1770000000000-hero.jpg");
   });
 
-  it("can publish object URLs from a browser-facing endpoint", async () => {
+  it("publishes object URLs from the public endpoint when configured", async () => {
     jest.spyOn(Date, "now").mockReturnValue(1770000000001);
     const storage = createStorage({
       endpointUrl: "http://minio:9000",
@@ -305,6 +258,36 @@ describe("object storage", () => {
       contentLength: body.length,
     });
 
-    expect(bannerUrl).toBe("https://assets.example.com/banner-images/banner-1/1770000000001-hero.jpg");
+    expect(bannerUrl).toBe("https://assets.example.com/aspire-test/banners/banner-1/1770000000001-hero.jpg");
+  });
+
+  it("uploads resource files under the resources/ prefix and returns a public URL", async () => {
+    const storage = createStorage();
+    const body = Buffer.from("PDF");
+
+    const url = await storage.uploadResourceFile({
+      resourceId: "res-1",
+      filename: "guide.pdf",
+      body,
+      contentType: "application/pdf",
+      contentLength: body.length,
+    });
+
+    expect(minioInstance.putObject).toHaveBeenCalledWith(
+      "aspire-test",
+      "resources/res-1/guide.pdf",
+      body,
+      body.length,
+      { "Content-Type": "application/pdf" }
+    );
+    expect(url).toBe("https://s3.example.com/aspire-test/resources/res-1/guide.pdf");
+  });
+
+  it("deletes a generic object using only the key (single bucket)", async () => {
+    const storage = createStorage();
+
+    await storage.deleteObject("passages/refId/file.png");
+
+    expect(minioInstance.removeObject).toHaveBeenCalledWith("aspire-test", "passages/refId/file.png");
   });
 });

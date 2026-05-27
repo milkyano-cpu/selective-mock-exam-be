@@ -11,8 +11,9 @@ type AnyRecord = Record<string, any>;
 
 function mockStorage(overrides: AnyRecord = {}) {
   return {
-    deleteImageObject: jest.fn(async () => undefined),
-    uploadImage: jest.fn(async () => "https://assets.example.com/images/image-1/123-diagram.png"),
+    bucket: "aspire-test",
+    deleteObject: jest.fn(async () => undefined),
+    uploadImage: jest.fn(async () => "https://assets.example.com/aspire-test/passages/image-1/123-diagram.png"),
     ...overrides,
   };
 }
@@ -21,7 +22,9 @@ function imageRecord(overrides: AnyRecord = {}) {
   const now = new Date("2026-05-14T00:00:00.000Z");
   return {
     uuid: "image-1",
-    fileName: "diagram.png",
+    fileName: "passages/image-1/diagram.png",
+    imageType: "PASSAGE",
+    refId: "image-1",
     altText: "Diagram alt",
     caption: "Diagram caption",
     url: null,
@@ -44,9 +47,9 @@ function mockReply() {
 }
 
 describe("images service", () => {
-  it("normalizes image file names to basename only", () => {
-    expect(normalizeImageFileName("images/foo.png")).toBe("foo.png");
-    expect(normalizeImageFileName("images\\nested\\foo.png?version=1")).toBe("foo.png");
+  it("normalizes image paths while retaining their storage prefix", () => {
+    expect(normalizeImageFileName("images/foo.png")).toBe("images/foo.png");
+    expect(normalizeImageFileName("images\\nested\\foo.png?version=1")).toBe("images/nested/foo.png");
     expect(normalizeImageFileName("  ")).toBe("");
   });
 
@@ -73,7 +76,7 @@ describe("images service", () => {
       linked: false,
     });
     await upsertImageMetadata(prisma as never, {
-      fileName: "diagram.png",
+      fileName: "images/diagram.png",
       altText: "Filled alt",
       caption: "Replacement caption",
       linked: true,
@@ -81,7 +84,7 @@ describe("images service", () => {
 
     expect(prisma.image.create).toHaveBeenCalledWith({
       data: {
-        fileName: "diagram.png",
+        fileName: "images/diagram.png",
         altText: "A diagram",
         caption: "Diagram caption",
         expiredDate: expect.any(Date),
@@ -101,11 +104,13 @@ describe("images service", () => {
       image: {
         findUnique: jest.fn(async () => ({
           uuid: "image-1",
-          url: "https://assets.example.com/images/image-1/123-diagram.png",
+          fileName: "passages/image-1/diagram.png",
+          url: "https://assets.example.com/aspire-test/passages/image-1/123-diagram.png",
           _count: { passages: 1, questions: 0 },
         })),
         delete: jest.fn(),
       },
+      question: { count: jest.fn(async () => 0) },
     };
     const storage = mockStorage();
 
@@ -113,7 +118,7 @@ describe("images service", () => {
       statusCode: 409,
       message: "Cannot delete image while it is linked to passages or questions",
     });
-    expect(storage.deleteImageObject).not.toHaveBeenCalled();
+    expect(storage.deleteObject).not.toHaveBeenCalled();
     expect(prisma.image.delete).not.toHaveBeenCalled();
   });
 
@@ -122,17 +127,19 @@ describe("images service", () => {
       image: {
         findUnique: jest.fn(async () => ({
           uuid: "image-1",
-          url: "https://assets.example.com/images/image-1/123-diagram.png",
+          fileName: "passages/image-1/diagram.png",
+          url: "https://assets.example.com/aspire-test/passages/image-1/123-diagram.png",
           _count: { passages: 0, questions: 0 },
         })),
         delete: jest.fn(async () => ({})),
       },
+      question: { count: jest.fn(async () => 0) },
     };
     const storage = mockStorage();
 
     await deleteImage(prisma as never, storage as never, "image-1");
 
-    expect(storage.deleteImageObject).toHaveBeenCalledWith("image-1/123-diagram.png");
+    expect(storage.deleteObject).toHaveBeenCalledWith("passages/image-1/123-diagram.png");
     expect(prisma.image.delete).toHaveBeenCalledWith({ where: { uuid: "image-1" } });
   });
 
@@ -141,11 +148,12 @@ describe("images service", () => {
     const prisma = {
       image: {
         findMany: jest.fn(async () => [
-          { uuid: "image-1", url: "https://assets.example.com/images/image-1/123-diagram.png" },
-          { uuid: "image-2", url: null },
+          { uuid: "image-1", url: "https://assets.example.com/aspire-test/passages/image-1/123-diagram.png", fileName: "passages/image-1/diagram.png" },
+          { uuid: "image-2", url: null, fileName: "passages/image-2/missing.png" },
         ]),
         delete: jest.fn(async () => ({})),
       },
+      question: { findMany: jest.fn(async () => []) },
     };
     const storage = mockStorage();
 
@@ -155,11 +163,10 @@ describe("images service", () => {
       where: {
         expiredDate: { lte: now },
         passages: { none: {} },
-        questions: { none: {} },
       },
-      select: { uuid: true, url: true },
+      select: { uuid: true, url: true, fileName: true },
     });
-    expect(storage.deleteImageObject).toHaveBeenCalledWith("image-1/123-diagram.png");
+    expect(storage.deleteObject).toHaveBeenCalledWith("passages/image-1/123-diagram.png");
     expect(prisma.image.delete).toHaveBeenCalledTimes(2);
     expect(deleted).toBe(2);
   });
@@ -169,16 +176,18 @@ describe("images controller", () => {
   it("stores multipart metadata even when fields are parsed after the file stream", async () => {
     const fields: AnyRecord = {};
     const uploaded = imageRecord({
-      fileName: "custom.png",
+      fileName: "questions/image-1/diagram.png",
+      imageType: "QUESTION",
       altText: "Custom alt",
       caption: "Custom caption",
-      url: "https://assets.example.com/images/image-1/123-custom.png",
+      url: "https://assets.example.com/aspire-test/questions/image-1/diagram.png",
     });
     const prisma = {
       image: {
         findUnique: jest.fn(async () => null),
         create: jest.fn(async () => imageRecord({
-          fileName: "custom.png",
+          fileName: "questions/image-1/diagram.png",
+          imageType: "QUESTION",
           altText: "Custom alt",
           caption: "Custom caption",
         })),
@@ -196,7 +205,7 @@ describe("images controller", () => {
         mimetype: "image/png",
         fields,
         toBuffer: jest.fn(async () => {
-          fields.fileName = { value: "custom.png" };
+          fields.imageType = { value: "QUESTION" };
           fields.altText = { value: "Custom alt" };
           fields.caption = { value: "Custom caption" };
           return Buffer.from("image");
@@ -212,19 +221,21 @@ describe("images controller", () => {
 
     expect(prisma.image.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        fileName: "custom.png",
+        fileName: expect.stringMatching(/^questions\/.+\/diagram\.png$/),
+        imageType: "QUESTION",
         altText: "Custom alt",
         caption: "Custom caption",
       }),
       select: expect.any(Object),
     });
     expect(storage.uploadImage).toHaveBeenCalledWith(expect.objectContaining({
-      filename: "custom.png",
+      imageType: "QUESTION",
+      key: expect.stringMatching(/^[^/]+\/diagram\.png$/),
     }));
     expect(response).toMatchObject({
       success: true,
       data: {
-        fileName: "custom.png",
+        fileName: "questions/image-1/diagram.png",
         altText: "Custom alt",
         caption: "Custom caption",
       },

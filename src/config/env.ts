@@ -37,16 +37,9 @@ const envSchema = z.object({
   S3_ACCESS_KEY: z.string({ error: "S3_ACCESS_KEY is required" }).min(1),
   S3_SECRET_KEY: z.string({ error: "S3_SECRET_KEY is required" }).min(1),
   S3_REGION: z.string().default("us-east-1"),
-  S3_PROFILE_PHOTO_BUCKET: z
-    .string({ error: "S3_PROFILE_PHOTO_BUCKET is required" })
-    .min(1),
-  S3_IMAGE_BUCKET: z.string().default("images"),
-  S3_QUESTION_IMAGE_BUCKET: z.string().default("questions"),
-  S3_PASSAGE_BUCKET: z.string().default("passages"),
-  S3_BANNER_IMAGE_BUCKET: z.string().default("banners"),
-  S3_RESOURCE_BUCKET: z.string().default("resources"),
-  S3_INVOICE_BUCKET: z.string().default("invoices"),
-  S3_CSV_TEMPLATE_BUCKET: z.string().default("csv-templates"),
+  S3_BUCKET: z
+    .string({ error: "S3_BUCKET is required" })
+    .min(1, "S3_BUCKET cannot be empty"),
   S3_BUCKET_INIT_TIMEOUT_MS: z.coerce.number().int().min(500).default(3000),
   S3_SIGNED_URL_EXPIRES_IN_SECONDS: z.coerce.number().int().min(60).default(3600),
   PROFILE_PHOTO_MAX_SIZE_BYTES: z.coerce.number().int().min(1).default(5 * 1024 * 1024),
@@ -100,7 +93,7 @@ const TEST_ENV_DEFAULTS = {
   S3_ENDPOINT: "http://localhost:9000",
   S3_ACCESS_KEY: "test-access-key",
   S3_SECRET_KEY: "test-secret-key",
-  S3_PROFILE_PHOTO_BUCKET: "test-profile-photos",
+  S3_BUCKET: "aspire-test",
   FIELD_ENCRYPTION_KEY: "0".repeat(64),
   BLIND_INDEX_KEY: "1".repeat(64),
 } as const;

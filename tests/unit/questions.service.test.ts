@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import {
   bulkImportQuestions,
   resolveAndSavePendingRows,
-  uploadQuestionImage,
 } from "../../src/modules/questions/questions.service.js";
 import type { ResolveImportBody, UnresolvedRowData } from "../../src/modules/questions/questions.schema.js";
 
@@ -118,10 +117,7 @@ function mockQuestionRecord(overrides: AnyRecord = {}) {
     correctAnswer: "A",
     explanation: "Because A is correct.",
     timeLimitSeconds: null,
-    imageUrl: null,
-    imageRef: null,
-    image: null,
-    imageUrls: [],
+    imageRefs: [],
     subtopics: [],
     notes: null,
     latexEnabled: false,
@@ -162,9 +158,7 @@ function mockPendingRow(overrides: Partial<UnresolvedRowData> = {}): ResolveImpo
     correctAnswer: "A",
     explanation: null,
     timeLimitSeconds: null,
-    imageUrl: null,
-    imageRef: null,
-    imageUrls: [],
+    imageRefs: [],
     passageExternalId: null,
     passageText: null,
     aiRubricId: null,
@@ -289,77 +283,9 @@ function mockPrisma(overrides: AnyRecord = {}) {
   return prisma;
 }
 
-describe("questions.service import and image upload", () => {
+describe("questions.service import", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-  });
-
-  describe("uploadQuestionImage", () => {
-    it("replaces the first pending placeholder and preserves image order", async () => {
-      const prisma = mockPrisma({
-        questionById: mockQuestionRecord({
-          imageUrl: "01.png",
-          imageUrls: ["https://cdn.example.com/existing.png", "01.png", "02.png"],
-        }),
-      });
-
-      const result = await uploadQuestionImage(prisma as never, "question-1", "https://cdn.example.com/01.png");
-
-      expect(prisma.question.update).toHaveBeenCalledWith(expect.objectContaining({
-        where: { id: "question-1" },
-        data: {
-          imageUrl: "https://cdn.example.com/existing.png",
-          imageUrls: ["https://cdn.example.com/existing.png", "https://cdn.example.com/01.png", "02.png"],
-        },
-      }));
-      expect(result.imageUrl).toBe("https://cdn.example.com/existing.png");
-      expect(result.imageUrls).toEqual(["https://cdn.example.com/existing.png", "https://cdn.example.com/01.png", "02.png"]);
-    });
-
-    it("updates imageUrl to the first item when the first placeholder is replaced", async () => {
-      const prisma = mockPrisma({
-        questionById: mockQuestionRecord({
-          imageUrl: "01.png",
-          imageUrls: ["01.png", "02.png"],
-        }),
-      });
-
-      const result = await uploadQuestionImage(prisma as never, "question-1", "https://cdn.example.com/01.png");
-
-      expect(prisma.question.update).toHaveBeenCalledWith(expect.objectContaining({
-        data: {
-          imageUrl: "https://cdn.example.com/01.png",
-          imageUrls: ["https://cdn.example.com/01.png", "02.png"],
-        },
-      }));
-      expect(result.imageUrl).toBe("https://cdn.example.com/01.png");
-    });
-
-    it("rejects published questions", async () => {
-      const prisma = mockPrisma({
-        questionById: mockQuestionRecord({ status: "PUBLISHED", imageUrls: ["01.png"] }),
-      });
-
-      await expect(uploadQuestionImage(prisma as never, "question-1", "https://cdn.example.com/01.png"))
-        .rejects.toMatchObject({ statusCode: 400 });
-      expect(prisma.question.update).not.toHaveBeenCalled();
-    });
-
-    it("rejects upload when no pending placeholder remains", async () => {
-      const prisma = mockPrisma({
-        questionById: mockQuestionRecord({
-          imageUrl: "https://cdn.example.com/01.png",
-          imageUrls: ["https://cdn.example.com/01.png"],
-        }),
-      });
-
-      await expect(uploadQuestionImage(prisma as never, "question-1", "https://cdn.example.com/02.png"))
-        .rejects.toMatchObject({
-          statusCode: 400,
-          message: "This question does not need any more images",
-        });
-      expect(prisma.question.update).not.toHaveBeenCalled();
-    });
   });
 
   describe("bulkImportQuestions", () => {
@@ -382,9 +308,9 @@ describe("questions.service import and image upload", () => {
       expect(prisma.examQuestion.createMany).not.toHaveBeenCalled();
     });
 
-    it("resolves ImageRef from master images and clears legacy image fields", async () => {
+    it("resolves prefixed ImageRef values from master images", async () => {
       const prisma = mockPrisma({
-        images: [{ fileName: "diagram.png" }],
+        images: [{ fileName: "images/diagram.png" }],
       });
 
       const result = await bulkImportQuestions(
@@ -395,18 +321,16 @@ describe("questions.service import and image upload", () => {
 
       expect(result).toMatchObject({ total: 1, created: 1, failed: 0 });
       expect(prisma.image.findMany).toHaveBeenCalledWith({
-        where: { fileName: { in: ["diagram.png"] } },
+        where: { fileName: { in: ["images/diagram.png"] } },
         select: { fileName: true },
       });
       expect(prisma.question.createMany).toHaveBeenCalledWith(expect.objectContaining({
         data: [expect.objectContaining({
-          imageRef: "diagram.png",
-          imageUrl: null,
-          imageUrls: [],
+          imageRefs: ["images/diagram.png"],
         })],
       }));
       expect(prisma.image.updateMany).toHaveBeenCalledWith({
-        where: { fileName: { in: ["diagram.png"] } },
+        where: { fileName: { in: ["images/diagram.png"] } },
         data: { expiredDate: null },
       });
     });
@@ -422,7 +346,7 @@ describe("questions.service import and image upload", () => {
 
       expect(result).toMatchObject({ total: 1, created: 0, failed: 1 });
       expect(result.errors).toEqual([
-        { row: 2, reason: 'ImageRef "missing.png" was not found in master images' },
+        { row: 2, reason: "ImageRef(s) not found in master images: missing.png" },
       ]);
       expect(prisma.question.createMany).not.toHaveBeenCalled();
     });

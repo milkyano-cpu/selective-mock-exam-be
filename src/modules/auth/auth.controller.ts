@@ -117,16 +117,21 @@ export async function login(request: FastifyRequest, reply: FastifyReply) {
 
   request.log.info({ userId: user.id, role: user.role }, "Login successful");
 
+  const accessTokenLifetimeSeconds = parseExpiryToSeconds(env.JWT_EXPIRES_IN);
+  const refreshTokenLifetimeSeconds = parseExpiryToSeconds(env.REFRESH_TOKEN_EXPIRES_IN);
+  const accessTokenExpiresAt = new Date(Date.now() + accessTokenLifetimeSeconds * 1000).toISOString();
+  const sessionExpiresAt = new Date(Date.now() + refreshTokenLifetimeSeconds * 1000).toISOString();
+
   reply.setCookie(
     "access_token",
     accessToken,
-    buildCookieOptions(parseExpiryToSeconds(env.JWT_EXPIRES_IN), "/")
+    buildCookieOptions(accessTokenLifetimeSeconds, "/")
   );
   reply.setCookie(
     "refresh_token",
     refreshToken,
     buildCookieOptions(
-      parseExpiryToSeconds(env.REFRESH_TOKEN_EXPIRES_IN),
+      refreshTokenLifetimeSeconds,
       `${env.API_PREFIX}/auth/refresh`
     )
   );
@@ -137,6 +142,8 @@ export async function login(request: FastifyRequest, reply: FastifyReply) {
     data: {
       user,
       expiresIn: env.JWT_EXPIRES_IN,
+      accessTokenExpiresAt,
+      sessionExpiresAt,
     },
   });
 }
@@ -164,16 +171,21 @@ export async function refresh(request: FastifyRequest, reply: FastifyReply) {
 
   request.log.info({ userId }, "Token refreshed");
 
+  const accessTokenLifetimeSeconds = parseExpiryToSeconds(env.JWT_EXPIRES_IN);
+  const refreshTokenLifetimeSeconds = parseExpiryToSeconds(env.REFRESH_TOKEN_EXPIRES_IN);
+  const accessTokenExpiresAt = new Date(Date.now() + accessTokenLifetimeSeconds * 1000).toISOString();
+  const sessionExpiresAt = new Date(Date.now() + refreshTokenLifetimeSeconds * 1000).toISOString();
+
   reply.setCookie(
     "access_token",
     accessToken,
-    buildCookieOptions(parseExpiryToSeconds(env.JWT_EXPIRES_IN), "/")
+    buildCookieOptions(accessTokenLifetimeSeconds, "/")
   );
   reply.setCookie(
     "refresh_token",
     newRefreshToken,
     buildCookieOptions(
-      parseExpiryToSeconds(env.REFRESH_TOKEN_EXPIRES_IN),
+      refreshTokenLifetimeSeconds,
       `${env.API_PREFIX}/auth/refresh`
     )
   );
@@ -181,6 +193,10 @@ export async function refresh(request: FastifyRequest, reply: FastifyReply) {
   return reply.status(200).send({
     success: true,
     message: "Token refreshed successfully",
+    data: {
+      accessTokenExpiresAt,
+      sessionExpiresAt,
+    },
   });
 }
 

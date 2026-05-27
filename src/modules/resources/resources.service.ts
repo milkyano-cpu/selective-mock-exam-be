@@ -1,6 +1,6 @@
 import type { PrismaClient, ResourceType, Role, Tier } from "@prisma/client";
 import { env } from "../../config/env.js";
-import type { ObjectStorage } from "../../lib/object-storage.js";
+import { STORAGE_PREFIXES, type ObjectStorage } from "../../lib/object-storage.js";
 import { createHttpError } from "../../utils/http-error.js";
 import type { CreateResourceInput, UpdateResourceInput, ListResourcesQuery } from "./resources.schema.js";
 
@@ -83,20 +83,24 @@ function mapResource(resource: Record<string, unknown>) {
 }
 
 function getResourceObjectKey(fileUrl: string) {
+  const resourcePrefix = STORAGE_PREFIXES.RESOURCE;
+
+  const findKeyStart = (parts: string[]) => {
+    const prefixIdx = parts.findIndex((part) => part === resourcePrefix);
+    if (prefixIdx >= 0) {
+      return parts.slice(prefixIdx).map(decodeURIComponent).join("/");
+    }
+    return parts.map(decodeURIComponent).join("/");
+  };
+
   try {
     const parsed = new URL(fileUrl);
     const parts = parsed.pathname.split("/").filter(Boolean);
-    const bucketIndex = parts.findIndex((part) => part === env.S3_RESOURCE_BUCKET);
-
-    if (bucketIndex >= 0) {
-      return parts.slice(bucketIndex + 1).map(decodeURIComponent).join("/");
-    }
-
-    return parts.map(decodeURIComponent).join("/");
+    return findKeyStart(parts);
   } catch {
     const normalized = fileUrl.replace(/^\/+/, "");
-    const bucketPrefix = `${env.S3_RESOURCE_BUCKET}/`;
-    return normalized.startsWith(bucketPrefix) ? normalized.slice(bucketPrefix.length) : normalized;
+    const parts = normalized.split("/").filter(Boolean);
+    return findKeyStart(parts);
   }
 }
 
@@ -290,9 +294,27 @@ export async function assertResourceCanReceiveUpload(prisma: PrismaClient, id: s
   }
 }
 
-export async function deleteResourceRecord(prisma: PrismaClient, id: string) {
+export async function deleteResourceRecord(
+  prisma: PrismaClient,
+  storage: ObjectStorage,
+  id: string,
+  logger?: { warn: (obj: unknown, msg?: string) => void }
+) {
   const resource = await prisma.resource.findUnique({ where: { id } });
   if (!resource) throw createHttpError(404, "Resource not found");
 
-  return prisma.resource.delete({ where: { id } });
+  const deleted = await prisma.resource.delete({ where: { id } });
+
+  if (resource.fileUrl) {
+    const key = getResourceObjectKey(resource.fileUrl);
+    if (key) {
+      try {
+        await storage.deleteObject(key);
+      } catch (error) {
+        logger?.warn({ resourceId: id, key, error }, "Failed to delete resource file from object storage; orphaned object will remain");
+      }
+    }
+  }
+
+  return deleted;
 }

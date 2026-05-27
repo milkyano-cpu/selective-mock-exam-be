@@ -255,7 +255,7 @@ describe("routes and schemas", () => {
     await adminRoutes(fastify as never);
 
     expect(fastify.post).toHaveBeenCalledTimes(2);
-    expect(fastify.get).toHaveBeenCalledTimes(3);
+    expect(fastify.get).toHaveBeenCalledTimes(4);
     expect(fastify.put).toHaveBeenCalledTimes(1);
     expect(fastify.patch).toHaveBeenCalledTimes(1);
     expect(fastify.delete).toHaveBeenCalledTimes(2);
@@ -275,6 +275,14 @@ describe("routes and schemas", () => {
     );
     expect(fastify.get).toHaveBeenNthCalledWith(
       1,
+      "/stats",
+      expect.objectContaining({
+        preHandler: [fastify.authenticate, expect.any(Function)],
+        handler: expect.any(Function),
+      })
+    );
+    expect(fastify.get).toHaveBeenNthCalledWith(
+      2,
       "/users",
       expect.objectContaining({
         schema: expect.objectContaining({
@@ -310,7 +318,7 @@ describe("routes and schemas", () => {
       })
     );
     expect(fastify.get).toHaveBeenNthCalledWith(
-      2,
+      3,
       "/tutors",
       expect.objectContaining({
         schema: expect.objectContaining({
@@ -325,7 +333,7 @@ describe("routes and schemas", () => {
       })
     );
     expect(fastify.get).toHaveBeenNthCalledWith(
-      3,
+      4,
       "/tutors/:id",
       expect.objectContaining({
         schema: expect.objectContaining({

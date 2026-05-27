@@ -39,7 +39,7 @@ describe("Fastify plugins", () => {
           delete: jest.fn(),
         },
       },
-      storage: { deleteImageObject: jest.fn() },
+      storage: { deleteObject: jest.fn(), bucket: "aspire-test" },
       log: { info: jest.fn(), error: jest.fn() },
       addHook: jest.fn((_name: string, hook: () => void) => onCloseHooks.push(hook)),
     };

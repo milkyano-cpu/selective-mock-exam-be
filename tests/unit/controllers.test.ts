@@ -224,6 +224,8 @@ describe("controllers", () => {
           status: "ACTIVE",
         },
         expiresIn: expect.any(String),
+        accessTokenExpiresAt: expect.any(String),
+        sessionExpiresAt: expect.any(String),
       },
     });
   });
@@ -268,6 +270,10 @@ describe("controllers", () => {
     expect(reply.send).toHaveBeenCalledWith({
       success: true,
       message: "Token refreshed successfully",
+      data: {
+        accessTokenExpiresAt: expect.any(String),
+        sessionExpiresAt: expect.any(String),
+      },
     });
   });
 

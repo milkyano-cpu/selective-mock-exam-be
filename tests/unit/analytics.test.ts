@@ -168,7 +168,7 @@ describe("analytics module", () => {
       overallAvg: 80,
       totalExams: 2,
       totalTimeSeconds: 1800,
-      rankingLevel: "ABOVE_AVERAGE",
+      rankingLevel: "SUPERIOR",
       examHistory: [
         {
           sessionId: "session-1",
@@ -288,7 +288,7 @@ describe("analytics module", () => {
           studentName: "Ryan Lee",
           avatarUrl: null,
           score: 85,
-          rankingLevel: "ABOVE_AVERAGE",
+          rankingLevel: "SUPERIOR",
           totalExams: 2,
         },
         {
@@ -297,11 +297,19 @@ describe("analytics module", () => {
           studentName: "Zoe White",
           avatarUrl: "https://cdn.example.com/zoe.webp",
           score: 60,
-          rankingLevel: "HIGH_AVERAGE",
+          rankingLevel: "ABOVE_AVERAGE",
           totalExams: 1,
         },
       ],
-      myRank: { rank: 2, score: 60 },
+      myRank: {
+        rank: 2,
+        studentId: "student-2",
+        studentName: "Zoe White",
+        avatarUrl: "https://cdn.example.com/zoe.webp",
+        score: 60,
+        rankingLevel: "ABOVE_AVERAGE",
+        totalExams: 1,
+      },
     });
   });
 
@@ -327,7 +335,15 @@ describe("analytics module", () => {
         }),
       })
     );
-    expect(monthly.myRank).toEqual({ rank: null, score: null });
+    expect(monthly.myRank).toEqual({
+      rank: null,
+      studentId: "unknown",
+      studentName: null,
+      avatarUrl: null,
+      score: null,
+      rankingLevel: null,
+      totalExams: null,
+    });
   });
 
   it("maps leaderboard ranking levels across score bands", async () => {
@@ -347,10 +363,10 @@ describe("analytics module", () => {
 
     expect(result.entries.map((entry) => entry.rankingLevel)).toEqual([
       "SUPERIOR",
+      "SUPERIOR",
       "ABOVE_AVERAGE",
-      "HIGH_AVERAGE",
       "AVERAGE",
-      "LOW_AVERAGE",
+      "AVERAGE",
     ]);
   });
 

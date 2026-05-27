@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { env } from "../../config/env.js";
 import { createHttpError } from "../../utils/http-error.js";
+import { STORAGE_PREFIXES, type ObjectStorage } from "../../lib/object-storage.js";
 import type { CreateBannerInput, UpdateBannerInput, ListBannersQuery } from "./banners.schema.js";
 
 const BANNER_SELECT = {
@@ -36,6 +37,45 @@ function withPublicBannerImageUrl<T extends { imageUrl: string }>(banner: T): T 
     ...banner,
     imageUrl: toPublicBannerImageUrl(banner.imageUrl),
   };
+}
+
+function extractBannerObjectKey(imageUrl: string | null): string | null {
+  if (!imageUrl) return null;
+  const prefix = STORAGE_PREFIXES.BANNER_IMAGE;
+
+  const findKey = (parts: string[]) => {
+    const prefixIdx = parts.findIndex((part) => part === prefix);
+    if (prefixIdx >= 0) {
+      return parts.slice(prefixIdx).map(decodeURIComponent).join("/");
+    }
+    return null;
+  };
+
+  try {
+    const parsed = new URL(imageUrl);
+    return findKey(parsed.pathname.split("/").filter(Boolean));
+  } catch {
+    return findKey(imageUrl.replace(/^\/+/, "").split("/").filter(Boolean));
+  }
+}
+
+type WarnLogger = { warn: (obj: unknown, msg?: string) => void } | undefined;
+
+async function deleteBannerImageFromStorage(
+  storage: ObjectStorage,
+  imageUrl: string | null,
+  context: { bannerId: string; logger: WarnLogger }
+) {
+  const key = extractBannerObjectKey(imageUrl);
+  if (!key) return;
+  try {
+    await storage.deleteObject(key);
+  } catch (error) {
+    context.logger?.warn(
+      { bannerId: context.bannerId, key, error },
+      "Failed to delete banner image from object storage; orphaned object will remain"
+    );
+  }
 }
 
 export async function findActiveBanners(prisma: PrismaClient) {
@@ -86,7 +126,13 @@ export async function createBannerRecord(prisma: PrismaClient, input: CreateBann
   return withPublicBannerImageUrl(banner);
 }
 
-export async function updateBannerRecord(prisma: PrismaClient, id: string, input: UpdateBannerInput) {
+export async function updateBannerRecord(
+  prisma: PrismaClient,
+  id: string,
+  input: UpdateBannerInput,
+  storage?: ObjectStorage,
+  logger?: { warn: (obj: unknown, msg?: string) => void }
+) {
   const banner = await prisma.banner.findUnique({ where: { id } });
   if (!banner) {
     throw createHttpError(404, "Banner not found");
@@ -102,14 +148,31 @@ export async function updateBannerRecord(prisma: PrismaClient, id: string, input
     select: BANNER_SELECT,
   });
 
+  // If the image URL was replaced with a different value, clean up the previous file.
+  if (
+    storage
+    && input.imageUrl !== undefined
+    && banner.imageUrl
+    && banner.imageUrl !== input.imageUrl
+  ) {
+    await deleteBannerImageFromStorage(storage, banner.imageUrl, { bannerId: id, logger });
+  }
+
   return withPublicBannerImageUrl(updatedBanner);
 }
 
-export async function deleteBannerRecord(prisma: PrismaClient, id: string) {
+export async function deleteBannerRecord(
+  prisma: PrismaClient,
+  storage: ObjectStorage,
+  id: string,
+  logger?: { warn: (obj: unknown, msg?: string) => void }
+) {
   const banner = await prisma.banner.findUnique({ where: { id } });
   if (!banner) {
     throw createHttpError(404, "Banner not found");
   }
 
-  return prisma.banner.delete({ where: { id } });
+  const deleted = await prisma.banner.delete({ where: { id } });
+  await deleteBannerImageFromStorage(storage, banner.imageUrl, { bannerId: id, logger });
+  return deleted;
 }

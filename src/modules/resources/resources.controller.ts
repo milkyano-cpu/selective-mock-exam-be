@@ -111,7 +111,7 @@ export async function updateResourceHandler(request: FastifyRequest, reply: Fast
 
 export async function deleteResourceHandler(request: FastifyRequest, reply: FastifyReply) {
   const { id } = request.params as { id: string };
-  await deleteResourceRecord(request.server.prisma, id);
+  await deleteResourceRecord(request.server.prisma, request.server.storage, id, request.log);
   return reply.send({
     success: true,
     message: "Resource deleted successfully",

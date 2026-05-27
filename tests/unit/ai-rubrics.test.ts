@@ -15,8 +15,7 @@ function aiRubric(overrides: Record<string, unknown> = {}) {
   return {
     id: "SELECTIVE_ENTRY_DEFAULT",
     name: "Selective Entry Writing Default",
-    description: "Default aiRubric",
-    writingType: "selective_entry",
+    writingType: "CREATIVE",
     isDefault: true,
     isActive: true,
     totalMaxScore: 20,
@@ -85,6 +84,10 @@ function mockPrisma(overrides: Record<string, unknown> = {}) {
       findUnique: jest.fn(async () => aiRubricDetail()),
       update: jest.fn(async () => aiRubric()),
     },
+    aiRubricWritingType: {
+      findUnique: jest.fn(async () => ({ id: "type-creative", name: "CREATIVE" })),
+      findMany: jest.fn(async () => [{ name: "CREATIVE" }, { name: "PERSUASIVE" }]),
+    },
     ...overrides,
   };
 }
@@ -93,7 +96,6 @@ function csvBuffer(rows: Array<Record<string, string>>) {
   const headers = [
     "AIRubricID",
     "AIRubricName",
-    "Description",
     "WritingType",
     "IsDefault",
     "TotalMaxScore",
@@ -192,8 +194,7 @@ describe("aiRubrics module", () => {
     const result = await createAiRubric(prisma as never, {
       id: "SELECTIVE_ENTRY_DEFAULT",
       name: "Selective Entry Writing Default",
-      description: "Default aiRubric",
-      writingType: "selective_entry",
+      writingType: "CREATIVE",
       isDefault: true,
       isActive: true,
       totalMaxScore: 20,
@@ -208,15 +209,14 @@ describe("aiRubrics module", () => {
     });
 
     expect(prisma.tx.aiRubric.updateMany).toHaveBeenCalledWith({
-      where: { isDefault: true, writingType: "selective_entry" },
+      where: { isDefault: true, writingType: "CREATIVE" },
       data: { isDefault: false },
     });
     expect(prisma.tx.aiRubric.create).toHaveBeenCalledWith({
       data: {
         id: "SELECTIVE_ENTRY_DEFAULT",
         name: "Selective Entry Writing Default",
-        description: "Default aiRubric",
-        writingType: "selective_entry",
+        writingType: "CREATIVE",
         isDefault: true,
         isActive: true,
         totalMaxScore: 20,
@@ -268,8 +268,7 @@ describe("aiRubrics module", () => {
       {
         AIRubricID: "AI_RUBRIC_A",
         AIRubricName: "AiRubric A",
-        Description: "Imported",
-        WritingType: "essay",
+        WritingType: "CREATIVE",
         IsDefault: "yes",
         TotalMaxScore: "20",
         CriterionName: "Ideas",
@@ -294,16 +293,14 @@ describe("aiRubrics module", () => {
       create: {
         id: "AI_RUBRIC_A",
         name: "AiRubric A",
-        description: "Imported",
-        writingType: "essay",
+        writingType: "CREATIVE",
         isDefault: true,
         totalMaxScore: 20,
         isActive: true,
       },
       update: {
         name: "AiRubric A",
-        description: "Imported",
-        writingType: "essay",
+        writingType: "CREATIVE",
         isDefault: true,
         totalMaxScore: 20,
         isActive: true,
