@@ -100,6 +100,7 @@ const leaderboardEntrySchema = z.object({
   score:        z.number(),
   rankingLevel: z.string().nullable(),
   totalExams:   z.number(),
+  avgTimeSeconds: z.number().nullable(),
 });
 
 const leaderboardResponseSchema = z.object({
@@ -116,6 +117,7 @@ const leaderboardResponseSchema = z.object({
       score:        z.number().nullable(),
       rankingLevel: z.string().nullable(),
       totalExams:   z.number().nullable(),
+      avgTimeSeconds: z.number().nullable(),
       percentile:   z.number().nullable(),
     }),
   }),

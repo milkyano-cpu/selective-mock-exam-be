@@ -363,6 +363,7 @@ export async function getLeaderboard(
     select: {
       studentId: true,
       finalScore: true,
+      totalTimeSeconds: true,
       student: {
         select: { id: true, fullName: true, profilePhotoKey: true, role: true },
       },
@@ -375,6 +376,8 @@ export async function getLeaderboard(
     avatarUrl: string | null;
     total: number;
     count: number;
+    timeTotal: number;
+    timeCount: number;
   }>();
 
   for (const s of sessions) {
@@ -385,13 +388,21 @@ export async function getLeaderboard(
       avatarUrl: s.student.profilePhotoKey ?? null,
       total: 0,
       count: 0,
+      timeTotal: 0,
+      timeCount: 0,
     };
     entry.total += score;
     entry.count += 1;
+    if (typeof s.totalTimeSeconds === "number") {
+      entry.timeTotal += s.totalTimeSeconds;
+      entry.timeCount += 1;
+    }
     studentMap.set(s.studentId, entry);
   }
 
-  // Sort by avg desc → assign rank
+  // Sort: score DESC → totalExams DESC → avgTimeSeconds ASC (faster wins ties).
+  // Students without time data sort last on the time tiebreaker so they never
+  // beat a student with a faster recorded time.
   const sorted = Array.from(studentMap.entries())
     .map(([studentId, v]) => ({
       studentId,
@@ -399,8 +410,17 @@ export async function getLeaderboard(
       avatarUrl:   v.avatarUrl,
       score:       v.count > 0 ? v.total / v.count : 0,
       totalExams:  v.count,
+      avgTimeSeconds: v.timeCount > 0 ? v.timeTotal / v.timeCount : null,
     }))
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (b.totalExams !== a.totalExams) return b.totalExams - a.totalExams;
+      const aTime = a.avgTimeSeconds ?? Number.POSITIVE_INFINITY;
+      const bTime = b.avgTimeSeconds ?? Number.POSITIVE_INFINITY;
+      if (aTime !== bTime) return aTime - bTime;
+      // Fully tied — keep deterministic order by studentId so result is stable
+      return a.studentId.localeCompare(b.studentId);
+    });
 
   const ranked = sorted.map((e, i) => ({
     rank:         i + 1,
@@ -410,6 +430,7 @@ export async function getLeaderboard(
     score:        Math.round(e.score * 10) / 10,
     rankingLevel: deriveRankingLevel(e.score),
     totalExams:   e.totalExams,
+    avgTimeSeconds: e.avgTimeSeconds !== null ? Math.round(e.avgTimeSeconds) : null,
   }));
 
   const entries = ranked.slice(0, 10);
@@ -432,6 +453,7 @@ export async function getLeaderboard(
         score: null,
         rankingLevel: null,
         totalExams: null,
+        avgTimeSeconds: null,
         percentile: null,
       };
 
