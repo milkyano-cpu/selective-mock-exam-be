@@ -27,6 +27,43 @@ const subjectPerformanceItemSchema = z.object({
   subjectName:  z.string(),
   scoreAvg:     z.number(),
   topicCount:   z.number(),
+  bandLevel:    z.string(),
+});
+
+const scoreHistoryItemSchema = z.object({
+  sessionId:     z.string(),
+  examTitle:     z.string(),
+  score:         z.number(),
+  rankingLevel:  z.string().nullable(),
+  takenAt:       z.string(),
+  attemptNumber: z.number(),
+});
+
+const writingPerformanceCriterionSchema = z.object({
+  criterionName: z.string(),
+  score:         z.number(),
+  maxScore:      z.number(),
+  scorePercent:  z.number(),
+  feedback:      z.string().nullable(),
+  strengths:     z.array(z.string()),
+  improvements:  z.array(z.string()),
+});
+
+const writingPerformanceItemSchema = z.object({
+  sessionId:       z.string(),
+  examTitle:       z.string(),
+  takenAt:         z.string(),
+  bandLabel:       z.string().nullable(),
+  bandDescriptor:  z.string().nullable(),
+  criteria:        z.array(writingPerformanceCriterionSchema),
+});
+
+const tierRequiredResponseSchema = z.object({
+  success: z.literal(false),
+  error: z.literal("tier_required"),
+  message: z.string(),
+  requiredTier: z.literal("STANDARD"),
+  upgradeUrl: z.literal("/dashboard/billing"),
 });
 
 // ── GET /analytics/me ─────────────────────────────────────────────────────────
@@ -41,7 +78,10 @@ const myAnalyticsResponseSchema = z.object({
     rankingLevel:     z.string().nullable(),
     examHistory:      z.array(examHistoryItemSchema),
     topicPerformance: z.array(topicPerformanceItemSchema),
-    subjectPerformance: z.array(subjectPerformanceItemSchema),
+    subjectPerformance: z.array(subjectPerformanceItemSchema).optional(),
+    scoreHistory: z.array(scoreHistoryItemSchema).optional(),
+    percentile: z.number().nullable().optional(),
+    writingPerformance: z.array(writingPerformanceItemSchema).optional(),
   }),
 });
 
@@ -76,6 +116,7 @@ const leaderboardResponseSchema = z.object({
       score:        z.number().nullable(),
       rankingLevel: z.string().nullable(),
       totalExams:   z.number().nullable(),
+      percentile:   z.number().nullable(),
     }),
   }),
 });
@@ -99,7 +140,10 @@ const studentAnalyticsResponseSchema = z.object({
     rankingLevel: z.string().nullable(),
     examHistory:  z.array(examHistoryItemSchema),
     topicPerformance: z.array(topicPerformanceItemSchema),
-    subjectPerformance: z.array(subjectPerformanceItemSchema),
+    subjectPerformance: z.array(subjectPerformanceItemSchema).optional(),
+    scoreHistory: z.array(scoreHistoryItemSchema).optional(),
+    percentile: z.number().nullable().optional(),
+    writingPerformance: z.array(writingPerformanceItemSchema).optional(),
   }),
 });
 
@@ -117,7 +161,10 @@ const childrenAnalyticsResponseSchema = z.object({
       rankingLevel: z.string().nullable(),
       examHistory:  z.array(examHistoryItemSchema),
       topicPerformance: z.array(topicPerformanceItemSchema),
-      subjectPerformance: z.array(subjectPerformanceItemSchema),
+      subjectPerformance: z.array(subjectPerformanceItemSchema).optional(),
+      scoreHistory: z.array(scoreHistoryItemSchema).optional(),
+      percentile: z.number().nullable().optional(),
+      writingPerformance: z.array(writingPerformanceItemSchema).optional(),
     })
   ),
 });
@@ -125,6 +172,7 @@ const childrenAnalyticsResponseSchema = z.object({
 // ── Export ────────────────────────────────────────────────────────────────────
 
 export const { schemas: analyticsSchemas, $ref: analyticsRef } = buildJsonSchemas({
+  tierRequiredResponseSchema,
   myAnalyticsResponseSchema,
   leaderboardQuerySchema,
   leaderboardResponseSchema,

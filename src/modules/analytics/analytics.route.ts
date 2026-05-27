@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { requireRole } from "../../utils/authz.js";
+import { requireStandardStudentFeature } from "../../utils/membership.js";
 import { analyticsRef } from "./analytics.schema.js";
 import {
   getMyAnalyticsHandler,
@@ -9,14 +10,19 @@ import {
 } from "./analytics.controller.js";
 
 export async function analyticsRoutes(fastify: FastifyInstance) {
+  const standardAnalytics = requireStandardStudentFeature("Analytics");
+
   // GET /analytics/me — personal analytics for the logged-in student
   fastify.get("/me", {
     schema: {
       tags: ["Analytics"],
       summary: "Get my performance analytics",
-      response: { 200: analyticsRef("myAnalyticsResponseSchema") },
+      response: {
+        200: analyticsRef("myAnalyticsResponseSchema"),
+        403: analyticsRef("tierRequiredResponseSchema"),
+      },
     },
-    preHandler: [fastify.authenticate],
+    preHandler: [fastify.authenticate, standardAnalytics],
     handler: getMyAnalyticsHandler,
   });
 
@@ -26,9 +32,12 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
       tags: ["Analytics"],
       summary: "Get global leaderboard",
       querystring: analyticsRef("leaderboardQuerySchema"),
-      response: { 200: analyticsRef("leaderboardResponseSchema") },
+      response: {
+        200: analyticsRef("leaderboardResponseSchema"),
+        403: analyticsRef("tierRequiredResponseSchema"),
+      },
     },
-    preHandler: [fastify.authenticate],
+    preHandler: [fastify.authenticate, standardAnalytics],
     handler: getLeaderboardHandler,
   });
 

@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import type { LeaderboardQuery } from "./analytics.schema.js";
 import { decryptField } from "../../utils/field-encryption.js";
+import type { MembershipTier } from "../../utils/membership.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -29,6 +30,159 @@ function deriveRankingLevel(avg: number): string {
 
 // ── Shared: build analytics payload for a given studentId ────────────────────
 
+const basicAnalyticsFields = [
+  "studentId",
+  "studentName",
+  "avatarUrl",
+  "overallAvg",
+  "totalExams",
+  "totalTimeSeconds",
+  "rankingLevel",
+  "examHistory",
+  "topicPerformance",
+] as const;
+
+const standardAnalyticsFields = [
+  ...basicAnalyticsFields,
+  "scoreHistory",
+  "subjectPerformance",
+  "percentile",
+] as const;
+
+export function serializeAnalyticsForTier<T extends Record<string, unknown>>(data: T, tier: MembershipTier) {
+  if (tier === "PREMIUM") return data;
+
+  const allowedFields = tier === "STANDARD" ? standardAnalyticsFields : basicAnalyticsFields;
+  return Object.fromEntries(
+    allowedFields
+      .filter((field) => field in data)
+      .map((field) => [field, data[field]])
+  );
+}
+
+function calculatePeerPercentile(score: number, peerAverages: number[]) {
+  if (peerAverages.length === 0) return 0;
+
+  const belowCount = peerAverages.filter((average) => average < score).length;
+  return Math.round((belowCount / peerAverages.length) * 1000) / 10;
+}
+
+async function getStudentPercentile(prisma: PrismaClient, studentId: string, overallAvg: number | null) {
+  if (overallAvg === null) return null;
+
+  const peerSessions = await prisma.examSession.findMany({
+    where: {
+      studentId: { not: studentId },
+      status: "GRADED",
+      finalScore: { not: null },
+      student: { role: "STUDENT" },
+    },
+    select: {
+      studentId: true,
+      finalScore: true,
+    },
+  });
+
+  const peerTotals = new Map<string, { total: number; count: number }>();
+  for (const session of peerSessions) {
+    const entry = peerTotals.get(session.studentId) ?? { total: 0, count: 0 };
+    entry.total += Number(session.finalScore!);
+    entry.count += 1;
+    peerTotals.set(session.studentId, entry);
+  }
+
+  const peerAverages = Array.from(peerTotals.values()).map((entry) => entry.total / entry.count);
+  return calculatePeerPercentile(overallAvg, peerAverages);
+}
+
+async function buildWritingPerformance(prisma: PrismaClient, studentId: string) {
+  const scores = await prisma.essayAnswerScore.findMany({
+    where: {
+      studentAnswer: {
+        session: {
+          studentId,
+          status: "GRADED",
+        },
+      },
+    },
+    orderBy: { createdAt: "asc" },
+    select: {
+      criterionName: true,
+      score: true,
+      maxScore: true,
+      feedback: true,
+      strengths: true,
+      improvements: true,
+      studentAnswer: {
+        select: {
+          bandLabel: true,
+          bandDescriptor: true,
+          session: {
+            select: {
+              id: true,
+              endTime: true,
+              exam: { select: { title: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const writingBySession = new Map<string, {
+    sessionId: string;
+    examTitle: string;
+    takenAt: string;
+    sortTime: number;
+    bandLabel: string | null;
+    bandDescriptor: string | null;
+    criteria: Array<{
+      criterionName: string;
+      score: number;
+      maxScore: number;
+      scorePercent: number;
+      feedback: string | null;
+      strengths: string[];
+      improvements: string[];
+    }>;
+  }>();
+
+  for (const score of scores) {
+    const answer = score.studentAnswer;
+    const session = answer.session;
+    const existing = writingBySession.get(session.id);
+    const entry = existing ?? {
+      sessionId: session.id,
+      examTitle: session.exam.title,
+      takenAt: session.endTime?.toISOString() ?? new Date().toISOString(),
+      sortTime: session.endTime?.getTime() ?? Number.MAX_SAFE_INTEGER,
+      bandLabel: answer.bandLabel ?? null,
+      bandDescriptor: answer.bandDescriptor ?? null,
+      criteria: [],
+    };
+
+    if (entry.bandLabel === null && answer.bandLabel !== null) entry.bandLabel = answer.bandLabel;
+    if (entry.bandDescriptor === null && answer.bandDescriptor !== null) entry.bandDescriptor = answer.bandDescriptor;
+
+    const numericScore = Number(score.score);
+    const maxScore = Number(score.maxScore);
+    entry.criteria.push({
+      criterionName: score.criterionName,
+      score: numericScore,
+      maxScore,
+      scorePercent: maxScore > 0 ? (numericScore / maxScore) * 100 : 0,
+      feedback: score.feedback ?? null,
+      strengths: score.strengths,
+      improvements: score.improvements,
+    });
+    writingBySession.set(session.id, entry);
+  }
+
+  return Array.from(writingBySession.values())
+    .sort((a, b) => a.sortTime - b.sortTime)
+    .map(({ sortTime: _sortTime, ...session }) => session);
+}
+
 export async function buildStudentAnalytics(prisma: PrismaClient, studentId: string) {
   // 1. Graded exam sessions ordered by endTime desc
   const sessions = await prisma.examSession.findMany({
@@ -41,6 +195,7 @@ export async function buildStudentAnalytics(prisma: PrismaClient, studentId: str
       rankingLevel: true,
       totalTimeSeconds: true,
       endTime: true,
+      attemptNumber: true,
       exam: { select: { title: true } },
     },
   });
@@ -54,6 +209,19 @@ export async function buildStudentAnalytics(prisma: PrismaClient, studentId: str
     totalTimeSeconds: s.totalTimeSeconds ?? null,
     takenAt:          s.endTime?.toISOString() ?? new Date().toISOString(),
   }));
+
+  const scoreHistory = sessions
+    .filter((session) => session.finalScore !== null)
+    .slice()
+    .sort((a, b) => (a.endTime?.getTime() ?? Number.MAX_SAFE_INTEGER) - (b.endTime?.getTime() ?? Number.MAX_SAFE_INTEGER))
+    .map((session) => ({
+      sessionId: session.id,
+      examTitle: session.exam.title,
+      score: Number(session.finalScore!),
+      rankingLevel: session.rankingLevel ?? null,
+      takenAt: session.endTime?.toISOString() ?? new Date().toISOString(),
+      attemptNumber: session.attemptNumber,
+    }));
 
   // 2. Topic-level performance from StudentPerformance
   const topicPerfs = await prisma.studentPerformance.findMany({
@@ -85,12 +253,16 @@ export async function buildStudentAnalytics(prisma: PrismaClient, studentId: str
     entry.count += 1;
     subjectMap.set(t.subjectId, entry);
   }
-  const subjectPerformance = Array.from(subjectMap.entries()).map(([subjectId, v]) => ({
-    subjectId,
-    subjectName: v.name,
-    scoreAvg:    v.count > 0 ? v.total / v.count : 0,
-    topicCount:  v.count,
-  }));
+  const subjectPerformance = Array.from(subjectMap.entries()).map(([subjectId, v]) => {
+    const scoreAvg = v.count > 0 ? v.total / v.count : 0;
+    return {
+      subjectId,
+      subjectName: v.name,
+      scoreAvg,
+      topicCount: v.count,
+      bandLevel: deriveRankingLevel(scoreAvg),
+    };
+  });
 
   // 4. Aggregate totals
   const totalExams = sessions.length;
@@ -100,8 +272,23 @@ export async function buildStudentAnalytics(prisma: PrismaClient, studentId: str
     ? scoredSessions.reduce((sum, s) => sum + Number(s.finalScore!), 0) / scoredSessions.length
     : null;
   const rankingLevel = overallAvg !== null ? deriveRankingLevel(overallAvg) : null;
+  const [percentile, writingPerformance] = await Promise.all([
+    getStudentPercentile(prisma, studentId, overallAvg),
+    buildWritingPerformance(prisma, studentId),
+  ]);
 
-  return { overallAvg, totalExams, totalTimeSeconds, rankingLevel, examHistory, topicPerformance, subjectPerformance };
+  return {
+    overallAvg,
+    totalExams,
+    totalTimeSeconds,
+    rankingLevel,
+    examHistory,
+    topicPerformance,
+    scoreHistory,
+    subjectPerformance,
+    percentile,
+    writingPerformance,
+  };
 }
 
 // ── GET /analytics/me ─────────────────────────────────────────────────────────
@@ -230,8 +417,23 @@ export async function getLeaderboard(
   // Find requesting user's rank (full entry data for outside-top-10 display)
   const myIndex = sorted.findIndex((e) => e.studentId === requestingUserId);
   const myRank = myIndex >= 0
-    ? ranked[myIndex]
-    : { rank: null, studentId: requestingUserId, studentName: null, avatarUrl: null, score: null, rankingLevel: null, totalExams: null };
+    ? {
+        ...ranked[myIndex]!,
+        percentile: calculatePeerPercentile(
+          sorted[myIndex]!.score,
+          sorted.filter((entry) => entry.studentId !== requestingUserId).map((entry) => entry.score)
+        ),
+      }
+    : {
+        rank: null,
+        studentId: requestingUserId,
+        studentName: null,
+        avatarUrl: null,
+        score: null,
+        rankingLevel: null,
+        totalExams: null,
+        percentile: null,
+      };
 
   return { period: query.period, entries, myRank };
 }

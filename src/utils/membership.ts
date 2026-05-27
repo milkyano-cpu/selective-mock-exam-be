@@ -72,6 +72,23 @@ export function requirePremiumStudentFeature(featureName?: string) {
   };
 }
 
+export function requireStandardStudentFeature(featureName = "This feature") {
+  return async function standardStudentPreHandler(request: FastifyRequest, reply: FastifyReply) {
+    if (request.user.role !== "STUDENT") return;
+
+    const tier = await getFreshUserTier(request.server.prisma, request.user.sub);
+    if (tier === "BASIC") {
+      return reply.status(403).send({
+        success: false,
+        error: "tier_required",
+        message: `${featureName} requires a Standard membership`,
+        requiredTier: "STANDARD",
+        upgradeUrl: "/dashboard/billing",
+      });
+    }
+  };
+}
+
 export async function assertForumWriteAllowed(prisma: PrismaClient, actor: AuthActor) {
   if (actor.role !== "STUDENT") return;
 

@@ -4,6 +4,7 @@ import {
   assertForumWriteAllowed,
   assertPremiumStudentFeature,
   getPracticeAccess,
+  requireStandardStudentFeature,
 } from "../../src/utils/membership.js";
 
 const subjectOneTopics = [
@@ -51,6 +52,16 @@ function mockPrisma(tier: "BASIC" | "STANDARD" | "PREMIUM" = "BASIC") {
   };
 }
 
+function mockReply() {
+  const reply = {
+    status: jest.fn<(statusCode: number) => unknown>(),
+    send: jest.fn<(payload: unknown) => unknown>(),
+  };
+  reply.status.mockReturnValue(reply);
+  reply.send.mockImplementation((payload) => payload);
+  return reply;
+}
+
 describe("membership entitlement helpers", () => {
   it("allows only Premium students to use premium student features", async () => {
     await expect(
@@ -85,6 +96,50 @@ describe("membership entitlement helpers", () => {
     await expect(
       assertForumWriteAllowed(mockPrisma("PREMIUM") as never, { sub: "student-1", role: "STUDENT" })
     ).resolves.toBeUndefined();
+  });
+
+  it("returns a Standard upgrade response for Basic students accessing Standard features", async () => {
+    const preHandler = requireStandardStudentFeature("Analytics");
+    const basicReply = mockReply();
+
+    await preHandler(
+      {
+        user: { sub: "student-1", role: "STUDENT" },
+        server: { prisma: mockPrisma("BASIC") },
+      } as never,
+      basicReply as never
+    );
+
+    expect(basicReply.status).toHaveBeenCalledWith(403);
+    expect(basicReply.send).toHaveBeenCalledWith({
+      success: false,
+      error: "tier_required",
+      message: "Analytics requires a Standard membership",
+      requiredTier: "STANDARD",
+      upgradeUrl: "/dashboard/billing",
+    });
+
+    const standardReply = mockReply();
+    await preHandler(
+      {
+        user: { sub: "student-1", role: "STUDENT" },
+        server: { prisma: mockPrisma("STANDARD") },
+      } as never,
+      standardReply as never
+    );
+    expect(standardReply.status).not.toHaveBeenCalled();
+
+    const staffPrisma = mockPrisma("BASIC");
+    const staffReply = mockReply();
+    await preHandler(
+      {
+        user: { sub: "tutor-1", role: "TUTOR" },
+        server: { prisma: staffPrisma },
+      } as never,
+      staffReply as never
+    );
+    expect(staffPrisma.user.findUnique).not.toHaveBeenCalled();
+    expect(staffReply.status).not.toHaveBeenCalled();
   });
 
   it("returns only the free published topic per subject for Basic practice access", async () => {
