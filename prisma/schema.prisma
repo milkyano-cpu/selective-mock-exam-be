@@ -280,6 +280,7 @@ enum QuestionStatus {
   DRAFT
   PENDING_APPROVAL
   PUBLISHED
+  ARCHIVED
 }
 
 enum QuestionMarkingType {

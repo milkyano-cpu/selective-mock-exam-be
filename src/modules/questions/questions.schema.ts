@@ -161,7 +161,7 @@ const listQuestionsQuerySchema = z.object({
   passageId: z.string().uuid().optional(),
   type: z.enum(["MCQ", "ESSAY"]).optional(),
   difficulty: z.enum(["EASY", "MEDIUM", "HARD"]).optional(),
-  status: z.enum(["DRAFT", "PENDING_APPROVAL", "PUBLISHED"]).optional(),
+  status: z.enum(["DRAFT", "PENDING_APPROVAL", "PUBLISHED", "ARCHIVED"]).optional(),
   hasImage: z.coerce.boolean().optional(),
   isPracticeAllowed: z.coerce.boolean().optional(),
 });
@@ -230,8 +230,9 @@ const questionSchema = z.object({
   })),
   subtopics: z.array(z.string()),
   notes: z.string().nullable(),
-  status: z.enum(["DRAFT", "PENDING_APPROVAL", "PUBLISHED"]),
+  status: z.enum(["DRAFT", "PENDING_APPROVAL", "PUBLISHED", "ARCHIVED"]),
   rejectionNote: z.string().nullable(),
+  usedInExam: z.boolean(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

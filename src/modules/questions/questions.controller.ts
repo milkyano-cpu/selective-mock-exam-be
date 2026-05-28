@@ -12,6 +12,8 @@ import {
   bulkSubmitQuestions,
   approveQuestion,
   rejectQuestion,
+  unpublishQuestion,
+  archiveQuestion,
   bulkImportQuestions,
   resolveAndSavePendingRows,
   getNextQuestionId,
@@ -170,6 +172,32 @@ export async function rejectQuestionHandler(request: FastifyRequest, reply: Fast
   return reply.send({
     success: true,
     message: "Question rejected and returned to draft",
+    data: question,
+  });
+}
+
+export async function unpublishQuestionHandler(request: FastifyRequest, reply: FastifyReply) {
+  const { id } = request.params as { id: string };
+  const question = await unpublishQuestion(request.server.prisma, id);
+
+  request.log.info({ questionId: id, unpublishedBy: request.user.sub }, "Question unpublished");
+
+  return reply.send({
+    success: true,
+    message: "Question unpublished and returned to draft",
+    data: question,
+  });
+}
+
+export async function archiveQuestionHandler(request: FastifyRequest, reply: FastifyReply) {
+  const { id } = request.params as { id: string };
+  const question = await archiveQuestion(request.server.prisma, id);
+
+  request.log.info({ questionId: id, archivedBy: request.user.sub }, "Question archived");
+
+  return reply.send({
+    success: true,
+    message: "Question archived",
     data: question,
   });
 }

@@ -11,6 +11,8 @@ import {
   bulkSubmitQuestionsHandler,
   approveQuestionHandler,
   rejectQuestionHandler,
+  unpublishQuestionHandler,
+  archiveQuestionHandler,
   bulkImportQuestionsHandler,
   resolveImportHandler,
   getNextQuestionIdHandler,
@@ -161,5 +163,29 @@ export async function questionRoutes(fastify: FastifyInstance) {
     },
     preHandler: [fastify.authenticate, requireRole("ADMIN", "TUTOR")],
     handler: rejectQuestionHandler,
+  });
+
+  // PATCH /questions/:id/unpublish — admin only, blocked if used in any exam
+  fastify.patch("/:id/unpublish", {
+    schema: {
+      tags: ["Questions"],
+      summary: "Unpublish a question (PUBLISHED → DRAFT) if not used in any exam",
+      params: questionRef("idParamSchema"),
+      response: { 200: questionRef("singleQuestionResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN")],
+    handler: unpublishQuestionHandler,
+  });
+
+  // PATCH /questions/:id/archive — admin only, retires the question from future use
+  fastify.patch("/:id/archive", {
+    schema: {
+      tags: ["Questions"],
+      summary: "Archive a question (PUBLISHED → ARCHIVED) so it cannot be added to new exams",
+      params: questionRef("idParamSchema"),
+      response: { 200: questionRef("singleQuestionResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN")],
+    handler: archiveQuestionHandler,
   });
 }

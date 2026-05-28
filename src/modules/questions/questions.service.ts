@@ -112,6 +112,29 @@ async function attachImages<T extends { imageRefs: string[] }>(prisma: PrismaCli
   };
 }
 
+// Used so the FE can show a "Used in exam" hint on published questions and warn
+// the admin pre-flight that Unpublish will return 409.
+async function attachUsedInExam<T extends { id: string }>(prisma: PrismaClient, q: T) {
+  const used = await prisma.examQuestion.findFirst({
+    where: { questionId: q.id },
+    select: { examId: true },
+  });
+  return { ...q, usedInExam: Boolean(used) };
+}
+
+// Batch variant — one query for many questions, avoids N+1 on the list endpoint.
+async function attachUsedInExamMany<T extends { id: string }>(prisma: PrismaClient, qs: T[]) {
+  if (qs.length === 0) return qs.map((q) => ({ ...q, usedInExam: false }));
+  const ids = qs.map((q) => q.id);
+  const rows = await prisma.examQuestion.findMany({
+    where: { questionId: { in: ids } },
+    select: { questionId: true },
+    distinct: ["questionId"],
+  });
+  const usedSet = new Set(rows.map((r) => r.questionId));
+  return qs.map((q) => ({ ...q, usedInExam: usedSet.has(q.id) }));
+}
+
 function splitImageRefs(value?: string | null): string[] {
   if (!value) return [];
   return value
@@ -175,7 +198,7 @@ async function findQuestionById(prisma: PrismaClient, id: string) {
     select: QUESTION_SELECT,
   });
   if (!question) throw createHttpError(404, "Question not found");
-  return attachImages(prisma, serializeQuestion(question));
+  return attachUsedInExam(prisma, await attachImages(prisma, serializeQuestion(question)));
 }
 
 async function assertActiveAiRubricExists(prisma: PrismaClient, aiRubricId: string) {
@@ -467,7 +490,7 @@ export async function createQuestion(
     await markImagesLinked(prisma, imageRefs);
   }
 
-  return attachImages(prisma, serializeQuestion(question));
+  return attachUsedInExam(prisma, await attachImages(prisma, serializeQuestion(question)));
 }
 
 export async function listQuestions(prisma: PrismaClient, query: ListQuestionsQuery) {
@@ -503,8 +526,11 @@ export async function listQuestions(prisma: PrismaClient, query: ListQuestionsQu
     prisma.question.count({ where }),
   ]);
 
+  const withImages = await Promise.all(data.map((q) => attachImages(prisma, serializeQuestion(q))));
+  const enriched = await attachUsedInExamMany(prisma, withImages);
+
   return {
-    data: await Promise.all(data.map((q) => attachImages(prisma, serializeQuestion(q)))),
+    data: enriched,
     meta: {
       page,
       limit,
@@ -526,7 +552,13 @@ export async function updateQuestion(
   const existing = await findQuestionById(prisma, id);
 
   if (existing.status === "PUBLISHED") {
-    throw createHttpError(400, "Published questions cannot be edited. Reject the question first.");
+    throw createHttpError(
+      400,
+      "Published questions cannot be edited. Unpublish the question first if it has not been used in any exam."
+    );
+  }
+  if (existing.status === "ARCHIVED") {
+    throw createHttpError(400, "Archived questions cannot be edited.");
   }
 
   const effectiveType = body.type ?? existing.type;
@@ -660,7 +692,7 @@ export async function updateQuestion(
     await markImagesLinked(prisma, nextImageRefs);
   }
 
-  return attachImages(prisma, serializeQuestion(question));
+  return attachUsedInExam(prisma, await attachImages(prisma, serializeQuestion(question)));
 }
 
 export async function deleteQuestion(prisma: PrismaClient, id: string, role: string) {
@@ -720,7 +752,7 @@ export async function submitQuestion(prisma: PrismaClient, id: string) {
     select: QUESTION_SELECT,
   });
 
-  return attachImages(prisma, serializeQuestion(updatedQuestion));
+  return attachUsedInExam(prisma, await attachImages(prisma, serializeQuestion(updatedQuestion)));
 }
 
 export async function bulkSubmitQuestions(prisma: PrismaClient, ids: string[]) {
@@ -781,7 +813,7 @@ export async function approveQuestion(prisma: PrismaClient, id: string) {
     select: QUESTION_SELECT,
   });
 
-  return attachImages(prisma, serializeQuestion(updatedQuestion));
+  return attachUsedInExam(prisma, await attachImages(prisma, serializeQuestion(updatedQuestion)));
 }
 
 export async function rejectQuestion(
@@ -801,7 +833,53 @@ export async function rejectQuestion(
     select: QUESTION_SELECT,
   });
 
-  return attachImages(prisma, serializeQuestion(updatedQuestion));
+  return attachUsedInExam(prisma, await attachImages(prisma, serializeQuestion(updatedQuestion)));
+}
+
+export async function unpublishQuestion(prisma: PrismaClient, id: string) {
+  const existing = await findQuestionById(prisma, id);
+
+  if (existing.status !== "PUBLISHED") {
+    throw createHttpError(400, "Only published questions can be unpublished");
+  }
+
+  // If the question is already attached to any exam, unpublishing would leave
+  // those exams with a non-published reference. Admins must archive instead so
+  // existing exams keep their question while it is retired from future use.
+  const usedInExam = await prisma.examQuestion.findFirst({
+    where: { questionId: id },
+    select: { examId: true },
+  });
+  if (usedInExam) {
+    throw createHttpError(
+      409,
+      "This question is used in one or more exams and cannot be unpublished. Archive it instead."
+    );
+  }
+
+  const updated = await prisma.question.update({
+    where: { id },
+    data: { status: "DRAFT" },
+    select: QUESTION_SELECT,
+  });
+
+  return attachUsedInExam(prisma, await attachImages(prisma, serializeQuestion(updated)));
+}
+
+export async function archiveQuestion(prisma: PrismaClient, id: string) {
+  const existing = await findQuestionById(prisma, id);
+
+  if (existing.status !== "PUBLISHED") {
+    throw createHttpError(400, "Only published questions can be archived");
+  }
+
+  const updated = await prisma.question.update({
+    where: { id },
+    data: { status: "ARCHIVED" },
+    select: QUESTION_SELECT,
+  });
+
+  return attachUsedInExam(prisma, await attachImages(prisma, serializeQuestion(updated)));
 }
 
 // ── CSV helpers ───────────────────────────────────────────────────────────────
@@ -1265,7 +1343,7 @@ export async function bulkImportQuestions(
   const createdQuestionsWithRowNumbers = await Promise.all(
     insertableRows.map(async (row, idx) => ({
       rowNumber: row.rowNumber,
-      question: await attachImages(prisma, serializeQuestion(createdQuestions[idx]!)),
+      question: await attachUsedInExam(prisma, await attachImages(prisma, serializeQuestion(createdQuestions[idx]!))),
     }))
   );
 
@@ -1457,7 +1535,7 @@ export async function resolveAndSavePendingRows(
   const createdQuestionsWithRowNumbers = await Promise.all(
     insertableRows.map(async (row, idx) => ({
       rowNumber: row.rowNumber,
-      question: await attachImages(prisma, serializeQuestion(createdQuestions[idx]!)),
+      question: await attachUsedInExam(prisma, await attachImages(prisma, serializeQuestion(createdQuestions[idx]!))),
     }))
   );
 
