@@ -11,6 +11,8 @@ import {
   deleteTutor,
   deleteUserHandler,
   getAdminStatsHandler,
+  updateUserHandler,
+  updateUserStatusHandler,
 } from "./admin.controller.js";
 import { requireRole } from "../../utils/authz.js";
 
@@ -47,6 +49,38 @@ export async function adminRoutes(fastify: FastifyInstance) {
     },
     preHandler: [fastify.authenticate, requireRole("ADMIN")],
     handler: createStaff,
+  });
+
+  fastify.put("/users/:id", {
+    schema: {
+      tags: ["Admin"],
+      summary: "Update a staff (TUTOR or ADMIN) profile",
+      params: adminRef("userParamsSchema"),
+      body: adminRef("updateTutorBodySchema"),
+      response: {
+        200: adminRef("updateUserResponseSchema"),
+        403: adminRef("forbiddenResponseSchema"),
+        404: adminRef("notFoundResponseSchema"),
+      },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN")],
+    handler: updateUserHandler,
+  });
+
+  fastify.patch("/users/:id/status", {
+    schema: {
+      tags: ["Admin"],
+      summary: "Change a staff (TUTOR or ADMIN) account status",
+      params: adminRef("userParamsSchema"),
+      body: adminRef("updateTutorStatusBodySchema"),
+      response: {
+        200: adminRef("updateUserStatusResponseSchema"),
+        403: adminRef("forbiddenResponseSchema"),
+        404: adminRef("notFoundResponseSchema"),
+      },
+    },
+    preHandler: [fastify.authenticate, requireRole("ADMIN")],
+    handler: updateUserStatusHandler,
   });
 
   fastify.delete("/users/:id", {

@@ -6,6 +6,7 @@ import type {
   TutorParams,
   UpdateTutorInput,
   UpdateTutorStatusInput,
+  UserParams,
 } from "./admin.schema.js";
 import {
   createStaffAccount,
@@ -17,6 +18,8 @@ import {
   updateTutorStatus as updateTutorStatusService,
   deleteTutor as deleteTutorService,
   deleteUserById,
+  updateUserById,
+  updateUserStatusById,
 } from "./admin.service.js";
 import { getAdminDashboardStats } from "./admin-stats.service.js";
 import { sendStaffWelcomeEmail } from "../../lib/email.js";
@@ -226,6 +229,51 @@ export async function deleteTutor(
   return reply.send({
     success: true,
     message: "Tutor deleted successfully",
+  });
+}
+
+export async function updateUserHandler(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const { id } = request.params as UserParams;
+  const body = request.body as UpdateTutorInput;
+  const user = await updateUserById(request.server.prisma, id, body);
+
+  request.log.info(
+    { userId: id, updatedBy: request.user.sub },
+    "User profile updated"
+  );
+
+  return reply.send({
+    success: true,
+    message: "User updated successfully",
+    data: user,
+  });
+}
+
+export async function updateUserStatusHandler(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const { id } = request.params as UserParams;
+  const body = request.body as UpdateTutorStatusInput;
+  const user = await updateUserStatusById(
+    request.server.prisma,
+    id,
+    body,
+    request.user.sub
+  );
+
+  request.log.info(
+    { userId: id, newStatus: body.status, updatedBy: request.user.sub },
+    "User status updated"
+  );
+
+  return reply.send({
+    success: true,
+    message: `User status changed to ${body.status}`,
+    data: user,
   });
 }
 

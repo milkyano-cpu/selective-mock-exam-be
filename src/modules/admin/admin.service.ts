@@ -331,6 +331,103 @@ export async function deleteTutor(prisma: PrismaClient, id: string) {
   await prisma.user.update({ where: { id }, data: { deletedAt: now } });
 }
 
+export async function updateUserStatusById(
+  prisma: PrismaClient,
+  id: string,
+  input: UpdateTutorStatusInput,
+  actorId: string
+) {
+  if (id === actorId) {
+    throw createHttpError(403, "You cannot change your own status");
+  }
+
+  const user = await prisma.user.findFirst({
+    where: { id, deletedAt: null },
+    select: { id: true, role: true },
+  });
+  if (!user) throw createHttpError(404, "User not found");
+  if (user.role !== "TUTOR" && user.role !== "ADMIN") {
+    throw createHttpError(403, "Only TUTOR and ADMIN accounts can change status here");
+  }
+
+  // Suspending/banning should kick the user out of any active session so the
+  // restriction takes effect immediately, not on next token refresh.
+  if (input.status === "SUSPENDED" || input.status === "BANNED") {
+    await prisma.refreshToken.updateMany({
+      where: { userId: id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+  }
+
+  const rawUser = await prisma.user.update({
+    where: { id },
+    data: { status: input.status },
+    select: TUTOR_SELECT,
+  });
+
+  const { fullNameTokens, ...rest } = decryptUser(rawUser);
+  return rest;
+}
+
+export async function updateUserById(
+  prisma: PrismaClient,
+  id: string,
+  input: UpdateTutorInput
+) {
+  const user = await prisma.user.findFirst({
+    where: { id, deletedAt: null },
+    select: { id: true, role: true },
+  });
+  if (!user) throw createHttpError(404, "User not found");
+  if (user.role !== "TUTOR" && user.role !== "ADMIN") {
+    throw createHttpError(403, "Only TUTOR and ADMIN accounts can be edited here");
+  }
+
+  const data: Record<string, unknown> = {};
+
+  if (input.email !== undefined) {
+    const newBlindIndex = emailToBlindIndex(input.email);
+    const existing = await prisma.user.findFirst({
+      where: { email: newBlindIndex, id: { not: id } },
+      select: { id: true },
+    });
+    if (existing) throw createHttpError(409, "Email already in use");
+    data.email = newBlindIndex;
+    data.emailEncrypted = encryptField(normalizeEmail(input.email));
+  }
+
+  if (input.fullName !== undefined) {
+    const encrypted = encryptUserFields({ email: "", fullName: input.fullName });
+    data.fullName = encrypted.fullName;
+    data.fullNameTokens = encrypted.fullNameTokens;
+  }
+
+  if (input.phoneNumber !== undefined) {
+    data.phoneNumber = input.phoneNumber !== null ? encryptField(input.phoneNumber) : null;
+  }
+
+  if (input.address !== undefined) {
+    data.address = input.address !== null ? encryptField(input.address) : null;
+  }
+
+  if (input.gender !== undefined) data.gender = input.gender;
+
+  try {
+    const rawUser = await prisma.user.update({
+      where: { id },
+      data,
+      select: TUTOR_SELECT,
+    });
+    const { fullNameTokens, ...rest } = decryptUser(rawUser);
+    return rest;
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      throw createHttpError(409, "Email already in use");
+    }
+    throw error;
+  }
+}
+
 export async function deleteUserById(prisma: PrismaClient, userId: string) {
   const user = await prisma.user.findFirst({
     where: { id: userId, deletedAt: null },

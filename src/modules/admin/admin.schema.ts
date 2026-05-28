@@ -141,6 +141,22 @@ const deleteUserResponseSchema = z.object({
   message: z.string(),
 });
 
+const userParamsSchema = z.object({
+  id: z.string().uuid("Invalid user ID"),
+});
+
+const updateUserResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: tutorItemSchema,
+});
+
+const updateUserStatusResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: tutorItemSchema,
+});
+
 const listUsersQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
@@ -184,6 +200,7 @@ export type TutorParams = z.infer<typeof tutorParamsSchema>;
 export type UpdateTutorInput = z.infer<typeof updateTutorBodySchema>;
 export type UpdateTutorStatusInput = z.infer<typeof updateTutorStatusBodySchema>;
 export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>;
+export type UserParams = z.infer<typeof userParamsSchema>;
 
 export const { schemas: adminSchemas, $ref: adminRef } = buildJsonSchemas({
   createStaffBodySchema,
@@ -203,4 +220,7 @@ export const { schemas: adminSchemas, $ref: adminRef } = buildJsonSchemas({
   listUsersResponseSchema,
   syncTiersResponseSchema,
   deleteUserResponseSchema,
+  userParamsSchema,
+  updateUserResponseSchema,
+  updateUserStatusResponseSchema,
 });
