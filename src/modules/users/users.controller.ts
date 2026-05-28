@@ -5,6 +5,7 @@ import {
   uploadMyProfilePhoto,
   softDeleteUser,
 } from "./users.service.js";
+import { createHttpError } from "../../utils/http-error.js";
 
 async function readMultipartFileBuffer(request: FastifyRequest) {
   const file = await request.file();
@@ -57,6 +58,9 @@ export async function getMyProfilePhoto(request: FastifyRequest, reply: FastifyR
 }
 
 export async function deleteMyAccount(request: FastifyRequest, reply: FastifyReply) {
+  if (request.user.role === "STUDENT") {
+    throw createHttpError(403, "Account deletion must be requested through your parent account.");
+  }
   await softDeleteUser(request.server.prisma, request.user.sub);
   return reply.status(200).send({ success: true, message: "Account deleted successfully." });
 }

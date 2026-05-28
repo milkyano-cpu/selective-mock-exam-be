@@ -157,6 +157,54 @@ const studentAnalyticsResponseSchema = z.object({
   }),
 });
 
+const childActiveSubscriptionSchema = z.object({
+  id: z.string(),
+  tier: z.enum(["STANDARD", "PREMIUM"]),
+  status: z.string(),
+  currentPeriodEnd: z.string(),
+  cancelAtPeriodEnd: z.boolean(),
+});
+
+// Lightweight list — used to populate the parent's child selector. Full analytics
+// is fetched lazily per-child via /analytics/children/:studentId.
+const childrenListResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z.array(
+    z.object({
+      studentId:    z.string(),
+      studentName:  z.string(),
+      avatarUrl:    z.string().nullable(),
+      tier:         z.enum(["BASIC", "STANDARD", "PREMIUM"]),
+      activeSubscription: childActiveSubscriptionSchema.nullable(),
+    })
+  ),
+});
+
+// Per-child analytics for parent — same shape as student analytics, plus identity
+// fields. Tier-gated fields are omitted by the controller before send.
+const childAnalyticsResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z.object({
+    studentId:    z.string(),
+    studentName:  z.string(),
+    avatarUrl:    z.string().nullable(),
+    tier:         z.enum(["BASIC", "STANDARD", "PREMIUM"]),
+    overallAvg:   z.number().nullable(),
+    totalExams:   z.number(),
+    totalTimeSeconds: z.number(),
+    rankingLevel: z.string().nullable(),
+    examHistory:  z.array(examHistoryItemSchema),
+    topicPerformance: z.array(topicPerformanceItemSchema),
+    subjectPerformance: z.array(subjectPerformanceItemSchema).optional(),
+    scoreHistory: z.array(scoreHistoryItemSchema).optional(),
+    percentile: z.number().nullable().optional(),
+    writingPerformance: z.array(writingPerformanceItemSchema).optional(),
+  }),
+});
+
+// Legacy — kept for backward compatibility but unused by the new selector flow.
 const childrenAnalyticsResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
@@ -165,6 +213,8 @@ const childrenAnalyticsResponseSchema = z.object({
       studentId:    z.string(),
       studentName:  z.string(),
       avatarUrl:    z.string().nullable(),
+      tier:         z.enum(["BASIC", "STANDARD", "PREMIUM"]),
+      activeSubscription: childActiveSubscriptionSchema.nullable(),
       overallAvg:   z.number().nullable(),
       totalExams:   z.number(),
       totalTimeSeconds: z.number(),
@@ -188,6 +238,8 @@ export const { schemas: analyticsSchemas, $ref: analyticsRef } = buildJsonSchema
   leaderboardResponseSchema,
   studentAnalyticsParamsSchema,
   studentAnalyticsResponseSchema,
+  childrenListResponseSchema,
+  childAnalyticsResponseSchema,
   childrenAnalyticsResponseSchema,
 });
 

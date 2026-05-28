@@ -7,6 +7,15 @@ const billingCheckoutBodySchema = z.object({
   tier: billingTierSchema,
 });
 
+const parentCheckoutBodySchema = z.object({
+  studentId: z.string({ error: "studentId is required" }).uuid("Invalid studentId"),
+  tier: billingTierSchema,
+});
+
+const parentPortalBodySchema = z.object({
+  studentId: z.string({ error: "studentId is required" }).uuid("Invalid studentId"),
+});
+
 const billingSubscriptionSchema = z.object({
   id: z.string(),
   tier: z.enum(["STANDARD", "PREMIUM"]),
@@ -100,10 +109,14 @@ const billingErrorResponseSchema = z.object({
 });
 
 export type BillingCheckoutBody = z.infer<typeof billingCheckoutBodySchema>;
+export type ParentCheckoutBody = z.infer<typeof parentCheckoutBodySchema>;
+export type ParentPortalBody = z.infer<typeof parentPortalBodySchema>;
 export type BillingTier = z.infer<typeof billingTierSchema>;
 
 export const { schemas: billingSchemas, $ref: billingRef } = buildJsonSchemas({
   billingCheckoutBodySchema,
+  parentCheckoutBodySchema,
+  parentPortalBodySchema,
   billingMeResponseSchema,
   billingCheckoutResponseSchema,
   billingPortalResponseSchema,

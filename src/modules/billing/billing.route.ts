@@ -4,6 +4,8 @@ import { billingRef } from "./billing.schema.js";
 import {
   createCheckoutSessionHandler,
   createCustomerPortalSessionHandler,
+  createParentCheckoutSessionHandler,
+  createParentPortalSessionHandler,
   getBillingInvoiceDownloadHandler,
   getBillingOverviewHandler,
   listBillingInvoicesHandler,
@@ -23,14 +25,14 @@ export async function billingRoutes(fastify: FastifyInstance) {
   fastify.post("/checkout", {
     schema: {
       tags: ["Billing"],
-      summary: "Create a Stripe Checkout Session for a subscription",
+      summary: "Create a Stripe Checkout Session for a subscription (PARENT only)",
       body: billingRef("billingCheckoutBodySchema"),
       response: {
         201: billingRef("billingCheckoutResponseSchema"),
         503: billingRef("billingErrorResponseSchema"),
       },
     },
-    preHandler: [fastify.authenticate, requireRole("STUDENT")],
+    preHandler: [fastify.authenticate, requireRole("PARENT")],
     handler: createCheckoutSessionHandler,
   });
 
@@ -73,5 +75,38 @@ export async function billingRoutes(fastify: FastifyInstance) {
     },
     preHandler: [fastify.authenticate, requireRole("STUDENT", "PARENT")],
     handler: getBillingInvoiceDownloadHandler,
+  });
+
+  // Parent acts on behalf of their linked student.
+  fastify.post("/parent/checkout", {
+    schema: {
+      tags: ["Billing"],
+      summary: "Parent creates a Stripe Checkout Session for a linked student",
+      body: billingRef("parentCheckoutBodySchema"),
+      response: {
+        201: billingRef("billingCheckoutResponseSchema"),
+        403: billingRef("billingErrorResponseSchema"),
+        404: billingRef("billingErrorResponseSchema"),
+        503: billingRef("billingErrorResponseSchema"),
+      },
+    },
+    preHandler: [fastify.authenticate, requireRole("PARENT")],
+    handler: createParentCheckoutSessionHandler,
+  });
+
+  fastify.post("/parent/portal", {
+    schema: {
+      tags: ["Billing"],
+      summary: "Parent creates a Stripe Customer Portal session for a linked student",
+      body: billingRef("parentPortalBodySchema"),
+      response: {
+        200: billingRef("billingPortalResponseSchema"),
+        403: billingRef("billingErrorResponseSchema"),
+        404: billingRef("billingErrorResponseSchema"),
+        503: billingRef("billingErrorResponseSchema"),
+      },
+    },
+    preHandler: [fastify.authenticate, requireRole("PARENT")],
+    handler: createParentPortalSessionHandler,
   });
 }

@@ -38,6 +38,8 @@ const basicAnalyticsFields = [
   "studentId",
   "studentName",
   "avatarUrl",
+  "tier",
+  "activeSubscription",
   "overallAvg",
   "totalExams",
   "totalTimeSeconds",
@@ -476,9 +478,13 @@ export async function getStudentAnalytics(prisma: PrismaClient, studentId: strin
   };
 }
 
+const ACTIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing"]);
+
+// Lightweight list of children for the parent selector. Excludes soft-deleted
+// students. Full analytics is fetched lazily per-child via getChildAnalytics.
 export async function getChildrenAnalytics(prisma: PrismaClient, parentId: string) {
   const relations = await prisma.parentStudentRelation.findMany({
-    where: { parentId },
+    where: { parentId, student: { deletedAt: null } },
     orderBy: { createdAt: "asc" },
     select: {
       student: {
@@ -486,22 +492,82 @@ export async function getChildrenAnalytics(prisma: PrismaClient, parentId: strin
           id: true,
           fullName: true,
           profilePhotoKey: true,
+          tier: true,
+          subscriptions: {
+            orderBy: { currentPeriodEnd: "desc" },
+            select: {
+              id: true,
+              tier: true,
+              status: true,
+              currentPeriodEnd: true,
+              cancelAtPeriodEnd: true,
+            },
+          },
         },
       },
     },
   });
 
-  return Promise.all(
-    relations.map(async ({ student }) => {
-      const analytics = await buildStudentAnalytics(prisma, student.id);
-      return {
-        studentId: student.id,
-        studentName: decryptField(student.fullName).trim(),
-        avatarUrl: student.profilePhotoKey ?? null,
-        ...analytics,
-      };
-    })
-  );
+  const now = new Date();
+
+  return relations.map(({ student }) => {
+    const activeSubscription = student.subscriptions.find(
+      (sub) => ACTIVE_SUBSCRIPTION_STATUSES.has(sub.status) && sub.currentPeriodEnd > now
+    );
+    return {
+      studentId: student.id,
+      studentName: decryptField(student.fullName).trim(),
+      avatarUrl: student.profilePhotoKey ?? null,
+      tier: student.tier,
+      activeSubscription: activeSubscription
+        ? {
+            id: activeSubscription.id,
+            tier: activeSubscription.tier,
+            status: activeSubscription.status,
+            currentPeriodEnd: activeSubscription.currentPeriodEnd.toISOString(),
+            cancelAtPeriodEnd: activeSubscription.cancelAtPeriodEnd,
+          }
+        : null,
+    };
+  });
+}
+
+// Per-child analytics for parent. Verifies relation (and excludes soft-deleted
+// students), then builds full analytics for tier-gated serialization.
+export async function getChildAnalyticsForParent(
+  prisma: PrismaClient,
+  parentId: string,
+  studentId: string
+) {
+  const relation = await prisma.parentStudentRelation.findFirst({
+    where: {
+      parentId,
+      studentId,
+      student: { deletedAt: null },
+    },
+    select: {
+      student: {
+        select: {
+          id: true,
+          fullName: true,
+          profilePhotoKey: true,
+          tier: true,
+        },
+      },
+    },
+  });
+
+  if (!relation) return null;
+  const { student } = relation;
+
+  const analytics = await buildStudentAnalytics(prisma, student.id);
+  return {
+    studentId: student.id,
+    studentName: decryptField(student.fullName).trim(),
+    avatarUrl: student.profilePhotoKey ?? null,
+    tier: student.tier,
+    ...analytics,
+  };
 }
 
 // ── GET /analytics/leaderboard ────────────────────────────────────────────────

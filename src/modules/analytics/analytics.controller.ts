@@ -7,6 +7,7 @@ import {
   getLeaderboard,
   getStudentAnalytics,
   getChildrenAnalytics,
+  getChildAnalyticsForParent,
   serializeAnalyticsForTier,
 } from "./analytics.service.js";
 
@@ -32,11 +33,15 @@ export async function getStudentAnalyticsHandler(request: FastifyRequest, reply:
 
 export async function getChildrenAnalyticsHandler(request: FastifyRequest, reply: FastifyReply) {
   const data = await getChildrenAnalytics(request.server.prisma, request.user.sub);
-  const serializedData = await Promise.all(
-    data.map(async (child) => {
-      const tier = await getFreshUserTier(request.server.prisma, child.studentId);
-      return serializeAnalyticsForTier(child, tier);
-    })
-  );
-  return reply.send({ success: true, message: "OK", data: serializedData });
+  return reply.send({ success: true, message: "OK", data });
+}
+
+export async function getChildAnalyticsHandler(request: FastifyRequest, reply: FastifyReply) {
+  const { studentId } = request.params as StudentAnalyticsParams;
+  const data = await getChildAnalyticsForParent(request.server.prisma, request.user.sub, studentId);
+  if (!data) {
+    throw createHttpError(403, "You are not linked to this student");
+  }
+  const tier = await getFreshUserTier(request.server.prisma, studentId);
+  return reply.send({ success: true, message: "OK", data: serializeAnalyticsForTier(data, tier) });
 }

@@ -7,6 +7,7 @@ import {
   getLeaderboardHandler,
   getStudentAnalyticsHandler,
   getChildrenAnalyticsHandler,
+  getChildAnalyticsHandler,
 } from "./analytics.controller.js";
 
 export async function analyticsRoutes(fastify: FastifyInstance) {
@@ -44,11 +45,22 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
   fastify.get("/children", {
     schema: {
       tags: ["Analytics"],
-      summary: "Get analytics for students linked to the logged-in parent",
-      response: { 200: analyticsRef("childrenAnalyticsResponseSchema") },
+      summary: "List linked students for the logged-in parent (lightweight)",
+      response: { 200: analyticsRef("childrenListResponseSchema") },
     },
     preHandler: [fastify.authenticate, requireRole("PARENT")],
     handler: getChildrenAnalyticsHandler,
+  });
+
+  fastify.get("/children/:studentId", {
+    schema: {
+      tags: ["Analytics"],
+      summary: "Get a specific linked child's analytics for the logged-in parent",
+      params: analyticsRef("studentAnalyticsParamsSchema"),
+      response: { 200: analyticsRef("childAnalyticsResponseSchema") },
+    },
+    preHandler: [fastify.authenticate, requireRole("PARENT")],
+    handler: getChildAnalyticsHandler,
   });
 
   // GET /analytics/students/:studentId — admin/tutor view of a student
