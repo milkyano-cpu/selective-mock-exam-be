@@ -715,8 +715,16 @@ export async function upsertStripeInvoice(
   }
 
   const subscriptionId = getInvoiceSubscriptionId(invoice);
-  const periodStart = timestampToDate((invoice as Stripe.Invoice & { period_start?: number | null }).period_start);
-  const periodEnd = timestampToDate((invoice as Stripe.Invoice & { period_end?: number | null }).period_end);
+  // Subscription invoices: read the billing period from the first line item.
+  // The invoice's top-level period_start/period_end can both equal the issue
+  // date, which makes the period column read "28 May – 28 May" instead of the
+  // actual coverage window. Line items always carry the correct subscription
+  // period; fall back to top-level fields only when no line is available.
+  const linePeriod = invoice.lines?.data?.[0]?.period;
+  const periodStart = timestampToDate(linePeriod?.start)
+    ?? timestampToDate((invoice as Stripe.Invoice & { period_start?: number | null }).period_start);
+  const periodEnd = timestampToDate(linePeriod?.end)
+    ?? timestampToDate((invoice as Stripe.Invoice & { period_end?: number | null }).period_end);
   const paidAt = timestampToDate(invoice.status_transitions?.paid_at ?? null);
   const existingInvoice = await prisma.billingInvoice.findUnique({
     where: { stripeInvoiceId: invoice.id },
@@ -814,6 +822,46 @@ export async function upsertStripeInvoice(
       currency: stored.currency,
     };
   }
+}
+
+// Active sync — pulls the latest subscription state from Stripe for every
+// linked child of the given parent and upserts it locally. Used after the
+// parent returns from the Stripe billing portal so the cancel-at-period-end
+// flag reflects on the billing page even if the webhook is delayed or the
+// local environment isn't receiving webhooks.
+export async function refreshParentChildrenFromStripe(prisma: PrismaClient, parentId: string) {
+  const relations = await prisma.parentStudentRelation.findMany({
+    where: { parentId, student: { deletedAt: null } },
+    select: { studentId: true },
+  });
+  if (relations.length === 0) return { refreshed: 0 };
+
+  const studentIds = relations.map((r) => r.studentId);
+  const subscriptions = await prisma.subscription.findMany({
+    where: { userId: { in: studentIds } },
+    orderBy: { currentPeriodEnd: "desc" },
+    select: { stripeSubscriptionId: true },
+  });
+
+  const uniqueIds = Array.from(
+    new Set(subscriptions.map((s) => s.stripeSubscriptionId).filter((id): id is string => Boolean(id)))
+  );
+  if (uniqueIds.length === 0) return { refreshed: 0 };
+
+  let refreshed = 0;
+  await Promise.all(
+    uniqueIds.map(async (id) => {
+      try {
+        const fresh = await retrieveSubscription(id);
+        const result = await upsertStripeSubscription(prisma, fresh);
+        if (result.handled) refreshed += 1;
+      } catch {
+        // ignore individual failures so one bad subscription doesn't block the rest
+      }
+    })
+  );
+
+  return { refreshed };
 }
 
 export function constructStripeWebhookEvent(rawBody: Buffer, signature: string) {

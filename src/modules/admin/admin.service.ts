@@ -332,9 +332,25 @@ export async function deleteTutor(prisma: PrismaClient, id: string) {
 }
 
 export async function deleteUserById(prisma: PrismaClient, userId: string) {
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, deletedAt: true } });
+  const user = await prisma.user.findFirst({
+    where: { id: userId, deletedAt: null },
+    select: { id: true },
+  });
   if (!user) throw createHttpError(404, "User not found");
-  if (user.deletedAt) throw createHttpError(409, "User is already deleted");
+
+  const activeSubscription = await prisma.subscription.findFirst({
+    where: {
+      userId,
+      status: { in: ["active", "trialing"] },
+    },
+    select: { id: true },
+  });
+  if (activeSubscription) {
+    throw createHttpError(
+      409,
+      "This account has an active subscription. The parent must cancel it before the account can be deleted."
+    );
+  }
 
   const now = new Date();
   await prisma.refreshToken.updateMany({

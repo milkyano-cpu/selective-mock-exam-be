@@ -108,6 +108,14 @@ const billingErrorResponseSchema = z.object({
   statusCode: z.number(),
 });
 
+const billingParentRefreshResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z.object({
+    refreshed: z.number(),
+  }),
+});
+
 export type BillingCheckoutBody = z.infer<typeof billingCheckoutBodySchema>;
 export type ParentCheckoutBody = z.infer<typeof parentCheckoutBodySchema>;
 export type ParentPortalBody = z.infer<typeof parentPortalBodySchema>;
@@ -124,4 +132,5 @@ export const { schemas: billingSchemas, $ref: billingRef } = buildJsonSchemas({
   billingInvoicesResponseSchema,
   billingInvoiceDownloadResponseSchema,
   billingErrorResponseSchema,
+  billingParentRefreshResponseSchema,
 });

@@ -11,6 +11,7 @@ import {
   getBillingOverview,
   getBillingInvoiceDownload,
   listBillingInvoices,
+  refreshParentChildrenFromStripe,
 } from "./billing.service.js";
 import { env } from "../../config/env.js";
 import { assertParentOwnsStudent } from "../../utils/authz.js";
@@ -73,6 +74,11 @@ export async function createParentPortalSessionHandler(request: FastifyRequest, 
 export async function listBillingInvoicesHandler(request: FastifyRequest, reply: FastifyReply) {
   const invoices = await listBillingInvoices(request.server.prisma, request.user);
   return reply.send({ success: true, message: "Billing invoices retrieved", data: { invoices } });
+}
+
+export async function refreshParentBillingHandler(request: FastifyRequest, reply: FastifyReply) {
+  const data = await refreshParentChildrenFromStripe(request.server.prisma, request.user.sub);
+  return reply.send({ success: true, message: "Parent billing refreshed from Stripe", data });
 }
 
 export async function getBillingInvoiceDownloadHandler(request: FastifyRequest, reply: FastifyReply) {
