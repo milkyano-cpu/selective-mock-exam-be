@@ -39,6 +39,9 @@ const registerBodySchema = z.object({
   students: z
     .array(studentSchema, { error: "Students list is required" })
     .min(1, "At least one student is required"),
+  agreedToTerms: z.literal(true, {
+    error: "You must agree to the Terms & Conditions",
+  }),
 });
 
 const registerResponseSchema = z.object({

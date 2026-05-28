@@ -4,13 +4,21 @@ import { buildJsonSchemas } from "../../utils/build-schemas.js";
 // ── Shared sub-schemas ────────────────────────────────────────────────────────
 
 const examHistoryItemSchema = z.object({
-  sessionId:   z.string(),
-  examId:      z.string(),
-  examTitle:   z.string(),
-  finalScore:  z.number().nullable(),
-  rankingLevel: z.string().nullable(),
+  examId:           z.string(),
+  examTitle:        z.string(),
+  examType:         z.string(),
+  bestSessionId:    z.string().nullable(),
+  bestScore:        z.number().nullable(),
+  latestSessionId:  z.string().nullable(),
+  latestScore:      z.number().nullable(),
+  totalAttempts:    z.number(),
+  rankingLevel:     z.string().nullable(),
   totalTimeSeconds: z.number().nullable(),
-  takenAt:     z.string(),
+  takenAt:          z.string(),
+  // Legacy aliases retained for FE compatibility — point to the best attempt
+  // (which is what overallAvg now counts). Prefer bestSessionId / bestScore.
+  sessionId:        z.string(),
+  finalScore:       z.number().nullable(),
 });
 
 const topicPerformanceItemSchema = z.object({

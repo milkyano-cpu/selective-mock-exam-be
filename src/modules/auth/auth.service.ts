@@ -10,6 +10,7 @@ import { encryptUserFields, emailToBlindIndex, decryptUser } from "../../utils/u
 import { decryptField } from "../../utils/field-encryption.js";
 
 const SALT_ROUNDS = 12;
+const TERMS_VERSION = "1.0";
 
 export interface RegisteredAccount {
   id: string;
@@ -83,6 +84,8 @@ export async function registerParentWithStudents(
     students: { id: string }[];
   };
 
+  const termsAcceptedAt = new Date();
+
   try {
     result = await prisma.$transaction(async (tx) => {
       const parentEncrypted = encryptUserFields({
@@ -96,6 +99,8 @@ export async function registerParentWithStudents(
           ...parentEncrypted,
           passwordHash: parentHash,
           role: "PARENT",
+          termsAcceptedAt,
+          termsVersion: TERMS_VERSION,
         },
         select: { id: true },
       });
@@ -111,6 +116,8 @@ export async function registerParentWithStudents(
               gender: s.gender,
               yearLevel: s.yearLevel,
               schoolName: s.schoolName,
+              termsAcceptedAt,
+              termsVersion: TERMS_VERSION,
             },
             select: { id: true },
           });
