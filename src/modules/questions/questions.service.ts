@@ -722,6 +722,10 @@ export async function deleteQuestion(prisma: PrismaClient, id: string, role: str
     throw createHttpError(403, "Published questions cannot be deleted");
   }
 
+  if (question.status === "ARCHIVED") {
+    throw createHttpError(403, "Archived questions cannot be deleted. They are retained to preserve exam history.");
+  }
+
   const usageCount =
     question._count.examQuestions + question._count.answers + question._count.practiceAnswers;
 
