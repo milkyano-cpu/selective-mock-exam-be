@@ -4,6 +4,7 @@ import {
   getMyProfilePhotoAccess,
   uploadMyProfilePhoto,
   softDeleteUser,
+  softDeleteChildAccount,
 } from "./users.service.js";
 import { createHttpError } from "../../utils/http-error.js";
 
@@ -63,6 +64,12 @@ export async function deleteMyAccount(request: FastifyRequest, reply: FastifyRep
   }
   await softDeleteUser(request.server.prisma, request.user.sub);
   return reply.status(200).send({ success: true, message: "Account deleted successfully." });
+}
+
+export async function deleteChildAccount(request: FastifyRequest, reply: FastifyReply) {
+  const { studentId } = request.params as { studentId: string };
+  await softDeleteChildAccount(request.server.prisma, request.user.sub, studentId);
+  return reply.status(200).send({ success: true, message: "Student account deleted successfully." });
 }
 
 export async function uploadProfilePhoto(request: FastifyRequest, reply: FastifyReply) {

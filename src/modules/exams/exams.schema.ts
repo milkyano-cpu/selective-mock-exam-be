@@ -159,6 +159,12 @@ const examIdParamSchema = z.object({
   id: z.string().uuid(),
 });
 
+// A parent reads a linked student's attempt summary by passing the target
+// studentId; students omit it and implicitly read their own attempts.
+const examAttemptSummaryQuerySchema = z.object({
+  studentId: z.string().uuid().optional(),
+});
+
 // ── Exam Questions schemas ────────────────────────────────────────────────────
 
 const addExamQuestionsBodySchema = z.object({
@@ -619,6 +625,7 @@ export const { schemas: examSchemas, $ref: examRef } = buildJsonSchemas({
   singleExamResponseSchema,
   examDeleteResponseSchema,
   examIdParamSchema,
+  examAttemptSummaryQuerySchema,
   addExamQuestionsBodySchema,
   examQuestionItemSchema,
   examWithQuestionsResponseSchema,

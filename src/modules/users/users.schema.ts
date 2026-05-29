@@ -63,6 +63,10 @@ const deleteAccountResponseSchema = z.object({
   message: z.string(),
 });
 
+const deleteChildParamsSchema = z.object({
+  studentId: z.string().min(1),
+});
+
 export const { schemas: userSchemas, $ref: userRef } = buildJsonSchemas({
   getMeResponseSchema,
   userUnauthorizedResponseSchema,
@@ -70,4 +74,5 @@ export const { schemas: userSchemas, $ref: userRef } = buildJsonSchemas({
   uploadMyProfilePhotoResponseSchema,
   userNotFoundResponseSchema,
   deleteAccountResponseSchema,
+  deleteChildParamsSchema,
 });

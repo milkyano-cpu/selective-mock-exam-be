@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
+import { requireRole } from "../../utils/authz.js";
 import { userRef } from "./users.schema.js";
-import { getMe, getMyProfilePhoto, uploadProfilePhoto, deleteMyAccount } from "./users.controller.js";
+import { getMe, getMyProfilePhoto, uploadProfilePhoto, deleteMyAccount, deleteChildAccount } from "./users.controller.js";
 
 export async function usersRoutes(fastify: FastifyInstance) {
   fastify.get("/me", {
@@ -46,5 +47,20 @@ export async function usersRoutes(fastify: FastifyInstance) {
     },
     preHandler: [fastify.authenticate],
     handler: deleteMyAccount,
+  });
+
+  fastify.delete("/parent/children/:studentId", {
+    schema: {
+      tags: ["Users"],
+      summary: "Parent soft-deletes a linked student's account",
+      params: userRef("deleteChildParamsSchema"),
+      response: {
+        200: userRef("deleteAccountResponseSchema"),
+        403: userRef("userNotFoundResponseSchema"),
+        409: userRef("userNotFoundResponseSchema"),
+      },
+    },
+    preHandler: [fastify.authenticate, requireRole("PARENT")],
+    handler: deleteChildAccount,
   });
 }

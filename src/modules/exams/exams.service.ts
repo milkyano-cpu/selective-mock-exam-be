@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { createHttpError } from "../../utils/http-error.js";
+import { assertCanAccessStudent } from "../../utils/authz.js";
 import { decryptField } from "../../utils/field-encryption.js";
 import { createNotification } from "../../lib/notify.js";
 import { generateSessionInsightsWithAi } from "../../utils/ai-insights.js";
@@ -1103,8 +1104,13 @@ export async function startRetakeSession(
 export async function getExamAttemptSummary(
   prisma: PrismaClient,
   examId: string,
-  studentId: string
+  actor: { sub: string; role: string },
+  requestedStudentId?: string
 ) {
+  // Students read their own attempts; a parent must target a linked student.
+  const studentId = requestedStudentId ?? actor.sub;
+  await assertCanAccessStudent(prisma, actor, studentId);
+
   const exam = await prisma.exam.findUnique({
     where: { id: examId },
     select: {
@@ -1633,10 +1639,10 @@ export async function submitExamSession(
 export async function getSessionInsights(
   prisma: PrismaClient,
   sessionId: string,
-  studentId: string
+  actor: { sub: string; role: string }
 ) {
-  // Use getSessionResult to reuse all the existing formatting logic
-  const result = await getSessionResult(prisma, sessionId, studentId);
+  // Use getSessionResult to reuse all the existing formatting logic (and auth)
+  const result = await getSessionResult(prisma, sessionId, actor);
   
   if (result.status !== "GRADED" && result.status !== "SUBMITTED") {
     throw createHttpError(400, "Insights are only available for submitted exams.");
@@ -2306,7 +2312,10 @@ export async function submitManualGrades(
   }
 
   if (refreshedSession.status === "GRADED") {
-    await getExamAttemptSummary(prisma, refreshedSession.exam.id, refreshedSession.studentId);
+    await getExamAttemptSummary(prisma, refreshedSession.exam.id, {
+      sub: refreshedSession.studentId,
+      role: "STUDENT",
+    });
   }
 
   return {
@@ -2330,7 +2339,7 @@ export async function submitManualGrades(
 export async function getSessionResult(
   prisma: PrismaClient,
   sessionId: string,
-  studentId: string
+  actor: { sub: string; role: string }
 ) {
   const session = await prisma.examSession.findUnique({
     where: { id: sessionId },
@@ -2395,7 +2404,8 @@ export async function getSessionResult(
   });
 
   if (!session) throw createHttpError(404, "Session not found");
-  if (session.studentId !== studentId) throw createHttpError(403, "Forbidden");
+  // The student who took the session, or a parent linked to that student.
+  await assertCanAccessStudent(prisma, actor, session.studentId);
   if (session.status === "IN_PROGRESS") {
     throw createHttpError(400, "Exam session is still in progress");
   }

@@ -228,7 +228,7 @@ export async function getSessionResultHandler(
   const data = await getSessionResult(
     request.server.prisma,
     sessionId,
-    request.user.sub
+    request.user
   );
   return reply.send({ success: true, message: "Results retrieved", data });
 }
@@ -267,7 +267,7 @@ export async function getSessionInsightsHandler(
   reply: FastifyReply
 ) {
   const { sessionId } = request.params as { sessionId: string };
-  const data = await getSessionInsights(request.server.prisma, sessionId, request.user.sub);
+  const data = await getSessionInsights(request.server.prisma, sessionId, request.user);
   return reply.send({ success: true, message: "AI Insights generated successfully", data });
 }
 
@@ -290,10 +290,12 @@ export async function getExamAttemptSummaryHandler(
   reply: FastifyReply
 ) {
   const { id } = request.params as { id: string };
+  const { studentId } = request.query as { studentId?: string };
   const data = await getExamAttemptSummary(
     request.server.prisma,
     id,
-    request.user.sub
+    request.user,
+    studentId
   );
   return reply.send({ success: true, message: "Attempt summary retrieved", data });
 }

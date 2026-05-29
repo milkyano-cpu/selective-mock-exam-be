@@ -397,6 +397,45 @@ export async function softDeleteUser(prisma: PrismaClient, userId: string) {
   });
 }
 
+const ACTIVE_SUBSCRIPTION_STATUSES = ["active", "trialing"];
+
+export async function softDeleteChildAccount(
+  prisma: PrismaClient,
+  parentId: string,
+  studentId: string
+) {
+  // The requestor must be the parent of a still-active (not soft-deleted) student.
+  const relation = await prisma.parentStudentRelation.findFirst({
+    where: {
+      parentId,
+      studentId,
+      student: { deletedAt: null },
+    },
+    select: { parentId: true },
+  });
+
+  if (!relation) {
+    throw createHttpError(403, "Parent is not linked to this student");
+  }
+
+  const activeSubscription = await prisma.subscription.findFirst({
+    where: {
+      userId: studentId,
+      status: { in: ACTIVE_SUBSCRIPTION_STATUSES },
+    },
+    select: { id: true },
+  });
+
+  if (activeSubscription) {
+    throw createHttpError(
+      409,
+      "This account has an active subscription. Cancel it first before deleting."
+    );
+  }
+
+  await softDeleteUser(prisma, studentId);
+}
+
 export async function getUserById(prisma: PrismaClient, userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },

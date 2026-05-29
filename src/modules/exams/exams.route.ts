@@ -113,7 +113,7 @@ export async function examRoutes(fastify: FastifyInstance) {
       params: examRef("examSessionParamSchema"),
       response: { 200: examRef("sessionResultResponseSchema") },
     },
-    preHandler: [fastify.authenticate, requireRole("STUDENT")],
+    preHandler: [fastify.authenticate, requireRole("STUDENT", "PARENT")],
     handler: getSessionResultHandler,
   });
 
@@ -125,7 +125,7 @@ export async function examRoutes(fastify: FastifyInstance) {
       params: examRef("examSessionParamSchema"),
       response: { 200: examRef("sessionInsightsResponseSchema") },
     },
-    preHandler: [fastify.authenticate, requireRole("STUDENT")],
+    preHandler: [fastify.authenticate, requireRole("STUDENT", "PARENT")],
     handler: getSessionInsightsHandler,
   });
 
@@ -201,9 +201,10 @@ export async function examRoutes(fastify: FastifyInstance) {
       tags: ["Exams"],
       summary: "Get exam attempt summary (first, latest, best score, incorrect questions)",
       params: examRef("examIdParamSchema"),
+      querystring: examRef("examAttemptSummaryQuerySchema"),
       response: { 200: examRef("examAttemptSummaryResponseSchema") },
     },
-    preHandler: [fastify.authenticate, requireRole("STUDENT")],
+    preHandler: [fastify.authenticate, requireRole("STUDENT", "PARENT")],
     handler: getExamAttemptSummaryHandler,
   });
 

@@ -535,7 +535,10 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
   );
 
   if (sessionStatus === "GRADED") {
-    await getExamAttemptSummary(prisma, session.exam.id, session.studentId);
+    await getExamAttemptSummary(prisma, session.exam.id, {
+      sub: session.studentId,
+      role: "STUDENT",
+    });
   }
 
   if (pendingReviewCount > 0) {
