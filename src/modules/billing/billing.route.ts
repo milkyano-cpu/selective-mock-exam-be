@@ -9,7 +9,6 @@ import {
   getBillingInvoiceDownloadHandler,
   getBillingOverviewHandler,
   listBillingInvoicesHandler,
-  refreshParentBillingHandler,
 } from "./billing.controller.js";
 
 export async function billingRoutes(fastify: FastifyInstance) {
@@ -93,19 +92,6 @@ export async function billingRoutes(fastify: FastifyInstance) {
     },
     preHandler: [fastify.authenticate, requireRole("PARENT")],
     handler: createParentCheckoutSessionHandler,
-  });
-
-  fastify.post("/parent/refresh", {
-    schema: {
-      tags: ["Billing"],
-      summary: "Refresh linked children's subscription state from Stripe",
-      response: {
-        200: billingRef("billingParentRefreshResponseSchema"),
-        503: billingRef("billingErrorResponseSchema"),
-      },
-    },
-    preHandler: [fastify.authenticate, requireRole("PARENT")],
-    handler: refreshParentBillingHandler,
   });
 
   fastify.post("/parent/portal", {

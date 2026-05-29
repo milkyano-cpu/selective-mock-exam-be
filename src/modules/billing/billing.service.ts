@@ -824,46 +824,6 @@ export async function upsertStripeInvoice(
   }
 }
 
-// Active sync — pulls the latest subscription state from Stripe for every
-// linked child of the given parent and upserts it locally. Used after the
-// parent returns from the Stripe billing portal so the cancel-at-period-end
-// flag reflects on the billing page even if the webhook is delayed or the
-// local environment isn't receiving webhooks.
-export async function refreshParentChildrenFromStripe(prisma: PrismaClient, parentId: string) {
-  const relations = await prisma.parentStudentRelation.findMany({
-    where: { parentId, student: { deletedAt: null } },
-    select: { studentId: true },
-  });
-  if (relations.length === 0) return { refreshed: 0 };
-
-  const studentIds = relations.map((r) => r.studentId);
-  const subscriptions = await prisma.subscription.findMany({
-    where: { userId: { in: studentIds } },
-    orderBy: { currentPeriodEnd: "desc" },
-    select: { stripeSubscriptionId: true },
-  });
-
-  const uniqueIds = Array.from(
-    new Set(subscriptions.map((s) => s.stripeSubscriptionId).filter((id): id is string => Boolean(id)))
-  );
-  if (uniqueIds.length === 0) return { refreshed: 0 };
-
-  let refreshed = 0;
-  await Promise.all(
-    uniqueIds.map(async (id) => {
-      try {
-        const fresh = await retrieveSubscription(id);
-        const result = await upsertStripeSubscription(prisma, fresh);
-        if (result.handled) refreshed += 1;
-      } catch {
-        // ignore individual failures so one bad subscription doesn't block the rest
-      }
-    })
-  );
-
-  return { refreshed };
-}
-
 export function constructStripeWebhookEvent(rawBody: Buffer, signature: string) {
   if (!env.STRIPE_WEBHOOK_SECRET) {
     throw createHttpError(503, "Stripe webhook not configured");
