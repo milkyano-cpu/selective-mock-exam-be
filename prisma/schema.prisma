@@ -102,6 +102,8 @@ model User {
   studentPathways      StudentPathway[]          @relation("StudentPathways")
   tutorPathways        StudentPathway[]          @relation("TutorPathways")
   pathwayProgress      PathwayNodeProgress[]
+  pathwayPlansAsTutor   PathwayPlan[]            @relation("PathwayPlanTutor")
+  pathwayPlansAsStudent PathwayPlan[]            @relation("PathwayPlanStudent")
   uploadedResources    Resource[]                @relation("uploadedResources")
 
   @@map("users")
@@ -414,6 +416,7 @@ model Question {
   answers                  StudentAnswer[]
   practiceAnswers          PracticeAnswer[]
   practiceSessionQuestions PracticeSessionQuestion[]
+  pathwayNodeQuestions     PathwayNodeQuestion[]
   flashcards               Flashcard[]
 
   @@index([subjectId, topicId, status, difficulty])
@@ -769,8 +772,28 @@ model ExamAttemptSummary {
 // DOMAIN 5b: LEARNING PATHWAYS
 // ==========================================
 
+model PathwayPlan {
+  id          String           @id @default(uuid())
+  name        String
+  tutorId     String           @map("tutor_id")
+  studentId   String           @map("student_id")
+  dueDate     DateTime?        @map("due_date")
+  completedAt DateTime?        @map("completed_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  tutor    User             @relation("PathwayPlanTutor", fields: [tutorId], references: [id])
+  student  User             @relation("PathwayPlanStudent", fields: [studentId], references: [id])
+  pathways StudentPathway[]
+
+  @@index([tutorId])
+  @@index([studentId])
+  @@map("pathway_plans")
+}
+
 model StudentPathway {
   id               String   @id @default(uuid())
+  planId           String   @map("plan_id")
   studentId        String   @map("student_id")
   subjectId        String   @map("subject_id")
   tutorId          String   @map("tutor_id")
@@ -778,12 +801,14 @@ model StudentPathway {
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
+  plan    PathwayPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
   student User          @relation("StudentPathways", fields: [studentId], references: [id])
   tutor   User          @relation("TutorPathways", fields: [tutorId], references: [id])
   subject Subject       @relation(fields: [subjectId], references: [id])
   nodes   PathwayNode[]
 
-  @@unique([studentId, subjectId])
+  @@unique([planId, subjectId])
+  @@index([planId])
   @@index([studentId])
   @@index([tutorId])
   @@map("student_pathways")
@@ -800,12 +825,30 @@ model PathwayNode {
   pathway          StudentPathway        @relation(fields: [pathwayId], references: [id], onDelete: Cascade)
   topic            Topic                 @relation(fields: [topicId], references: [id])
   progress         PathwayNodeProgress[]
+  questions        PathwayNodeQuestion[]
   practiceSessions PracticeSession[]
 
   @@unique([pathwayId, topicId])
   @@unique([pathwayId, orderIndex])
   @@index([pathwayId])
   @@map("pathway_nodes")
+}
+
+model PathwayNodeQuestion {
+  id         String   @id @default(uuid())
+  nodeId     String   @map("node_id")
+  questionId String   @map("question_id")
+  orderIndex Int      @map("order_index")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  node     PathwayNode @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  question Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([nodeId, questionId])
+  @@unique([nodeId, orderIndex])
+  @@index([nodeId])
+  @@index([questionId])
+  @@map("pathway_node_questions")
 }
 
 model PathwayNodeProgress {

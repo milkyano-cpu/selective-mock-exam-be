@@ -241,6 +241,11 @@ const getPracticeSessionResponseSchema = z.object({
     subjectId: z.string().nullable(),
     subjectName: z.string().nullable(),
     sourceType: practiceSourceEnum,
+    // Pathway linkage — present only for PATHWAY sessions. Lets the FE tie a
+    // finished session to its exact plan (e.g. completion celebration).
+    pathwayNodeId: z.string().nullable(),
+    pathwayId: z.string().nullable(),
+    planId: z.string().nullable(),
     difficulty: difficultyFilterEnum,
         questionCount: z.number(),
         status: practiceStatusEnum,

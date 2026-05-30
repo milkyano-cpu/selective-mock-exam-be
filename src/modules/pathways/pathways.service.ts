@@ -8,6 +8,7 @@ import type { CreatePathwayInput, AddNodeInput, ReorderNodesInput, UpdateProgres
 
 const PATHWAY_LIST_SELECT = {
   id: true,
+  planId: true,
   studentId: true,
   subjectId: true,
   tutorId: true,
@@ -27,6 +28,7 @@ function nodeWithProgressSelect(studentId: string) {
     createdAt: true,
     updatedAt: true,
     topic: { select: { id: true, name: true, subjectId: true } },
+    _count: { select: { questions: true } },
     progress: {
       where: { studentId },
       select: {
@@ -41,10 +43,11 @@ function nodeWithProgressSelect(studentId: string) {
 }
 
 function formatPathwayItem(
-  p: { _count: { nodes: number }; id: string; studentId: string; subjectId: string; tutorId: string; thresholdCorrect: number; createdAt: Date; updatedAt: Date; subject: { id: string; name: string } }
+  p: { _count: { nodes: number }; id: string; planId: string; studentId: string; subjectId: string; tutorId: string; thresholdCorrect: number; createdAt: Date; updatedAt: Date; subject: { id: string; name: string } }
 ) {
   return {
     id: p.id,
+    planId: p.planId,
     studentId: p.studentId,
     subjectId: p.subjectId,
     tutorId: p.tutorId,
@@ -64,6 +67,7 @@ function formatNode(n: {
   createdAt: Date;
   updatedAt: Date;
   topic: { id: string; name: string; subjectId: string };
+  _count?: { questions: number };
   progress: { correctAnswers: number; totalAttempts: number; isUnlocked: boolean; completedAt: Date | null }[];
 }) {
   return {
@@ -72,6 +76,7 @@ function formatNode(n: {
     topicId: n.topicId,
     orderIndex: n.orderIndex,
     topic: n.topic,
+    questionCount: n._count?.questions ?? 0,
     progress: n.progress[0]
       ? {
           correctAnswers: n.progress[0].correctAnswers,
@@ -83,6 +88,18 @@ function formatNode(n: {
     createdAt: n.createdAt.toISOString(),
     updatedAt: n.updatedAt.toISOString(),
   };
+}
+
+// Fisher-Yates shuffle — used so retakes do not present the same order
+function shuffle<T>(items: T[]): T[] {
+  const result = [...items];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const temp = result[i] as T;
+    result[i] = result[j] as T;
+    result[j] = temp;
+  }
+  return result;
 }
 
 // ── listPathways ─────────────────────────────────────────────────────────────
@@ -127,9 +144,19 @@ export async function getPathwayDetail(
 
 export async function createPathway(
   prisma: PrismaClient,
-  tutorId: string,
+  actor: { sub: string; role: string },
   input: CreatePathwayInput
 ) {
+  const plan = await prisma.pathwayPlan.findUnique({
+    where: { id: input.planId },
+    select: { id: true, tutorId: true, studentId: true, completedAt: true },
+  });
+  if (!plan) throw createHttpError(404, "Pathway plan not found");
+
+  if (actor.role !== "ADMIN" && plan.tutorId !== actor.sub) {
+    throw createHttpError(403, "You do not own this pathway plan");
+  }
+
   const subject = await prisma.subject.findUnique({
     where: { id: input.subjectId },
     select: {
@@ -140,21 +167,14 @@ export async function createPathway(
   });
   if (!subject) throw createHttpError(404, "Subject not found");
 
-  const student = await prisma.user.findUnique({
-    where: { id: input.studentId },
-    select: { id: true, role: true },
-  });
-  if (!student || student.role !== "STUDENT") {
-    throw createHttpError(404, "Student not found");
-  }
-
   try {
     const result = await prisma.$transaction(async (tx) => {
       const pathway = await tx.studentPathway.create({
         data: {
-          studentId: input.studentId,
+          planId: plan.id,
+          studentId: plan.studentId,
           subjectId: input.subjectId,
-          tutorId,
+          tutorId: plan.tutorId,
           thresholdCorrect: input.thresholdCorrect,
         },
       });
@@ -173,7 +193,7 @@ export async function createPathway(
             tx.pathwayNodeProgress.create({
               data: {
                 nodeId: node.id,
-                studentId: input.studentId,
+                studentId: plan.studentId,
                 isUnlocked: idx === 0,
               },
             })
@@ -181,26 +201,34 @@ export async function createPathway(
         );
       }
 
+      // Adding a new pathway to an already-complete plan re-opens it
+      if (plan.completedAt !== null) {
+        await tx.pathwayPlan.update({
+          where: { id: plan.id },
+          data: { completedAt: null },
+        });
+      }
+
       return getPathwayDetail(
         tx as unknown as PrismaClient,
         pathway.id,
-        input.studentId
+        plan.studentId
       );
     });
 
     // Notify student — fire-and-forget, not critical
     void createNotification(prisma, {
-      userId: input.studentId,
+      userId: plan.studentId,
       type: "PATHWAY_ASSIGNED",
       title: "New Learning Pathway Assigned",
       message: `Your tutor has assigned you a new learning pathway: ${subject.name}`,
-      data: { pathwayId: result.id, subjectId: subject.id, subjectName: subject.name },
+      data: { pathwayId: result.id, planId: plan.id, subjectId: subject.id, subjectName: subject.name },
     });
 
     return result;
   } catch (error) {
     if (isUniqueConstraintError(error)) {
-      throw createHttpError(409, "A pathway for this subject already exists for this student");
+      throw createHttpError(409, "A pathway for this subject already exists in this plan");
     }
     throw error;
   }
@@ -230,6 +258,7 @@ export async function addNode(
     where: { id: pathwayId },
     select: {
       id: true,
+      planId: true,
       studentId: true,
       nodes: {
         select: { orderIndex: true },
@@ -262,6 +291,12 @@ export async function addNode(
           studentId: pathway.studentId,
           isUnlocked: isFirstNode,
         },
+      });
+
+      // Adding a node to a pathway inside an already-complete plan re-opens it
+      await tx.pathwayPlan.updateMany({
+        where: { id: pathway.planId, completedAt: { not: null } },
+        data: { completedAt: null },
       });
 
       return newNode;
@@ -377,6 +412,7 @@ export async function startNodePractice(
     select: {
       id: true,
       topicId: true,
+      pathway: { select: { thresholdCorrect: true } },
       progress: {
         where: { studentId },
         select: { isUnlocked: true },
@@ -412,15 +448,24 @@ export async function startNodePractice(
     };
   }
 
-  const questions = await prisma.question.findMany({
-    where: { topicId: node.topicId, type: "MCQ", status: "PUBLISHED", isPracticeAllowed: true },
-    select: { id: true },
-    take: 10,
-  });
+  // Questions are curated by the tutor per node — never a topic-wide fallback.
+  const curatedQuestions = await getNodeQuestions(prisma, node.id);
 
-  if (questions.length === 0) {
-    throw createHttpError(422, "No published MCQ questions available for this pathway topic");
+  if (curatedQuestions.length === 0) {
+    throw createHttpError(422, "No questions have been added to this node yet.");
   }
+
+  // A node with fewer questions than the pass threshold can never be completed
+  // (max correct < threshold), which would stall the pathway. Block it clearly.
+  if (curatedQuestions.length < node.pathway.thresholdCorrect) {
+    throw createHttpError(
+      422,
+      "This node doesn't have enough questions yet. Ask your tutor to add more."
+    );
+  }
+
+  // Shuffle so retakes do not present the same order, but always the same set.
+  const questions = shuffle(curatedQuestions.map((nq) => nq.question));
 
   const session = await prisma.$transaction(async (tx) => {
     const created = await tx.practiceSession.create({
@@ -529,4 +574,206 @@ export async function updateNodeProgress(
     isUnlocked: progress.isUnlocked,
     completedAt: progress.completedAt?.toISOString() ?? null,
   };
+}
+
+// ── Node question curation (SME-111) ──────────────────────────────────────────
+
+const NODE_QUESTION_SELECT = {
+  id: true,
+  nodeId: true,
+  questionId: true,
+  orderIndex: true,
+  question: {
+    select: {
+      id: true,
+      type: true,
+      difficulty: true,
+      status: true,
+      questionText: true,
+      latexEnabled: true,
+      options: true,
+      correctAnswer: true,
+      explanation: true,
+      topicId: true,
+      topic: { select: { id: true, name: true } },
+    },
+  },
+} as const;
+
+type NodeQuestionRow = {
+  id: string;
+  nodeId: string;
+  questionId: string;
+  orderIndex: number;
+  question: {
+    id: string;
+    type: string;
+    difficulty: string;
+    status: string;
+    questionText: string;
+    latexEnabled: boolean;
+    options: unknown;
+    correctAnswer: string | null;
+    explanation: string | null;
+    topicId: string;
+    topic: { id: string; name: string };
+  };
+};
+
+function formatNodeQuestion(row: NodeQuestionRow) {
+  return {
+    id: row.id,
+    nodeId: row.nodeId,
+    questionId: row.questionId,
+    orderIndex: row.orderIndex,
+    question: {
+      id: row.question.id,
+      type: row.question.type,
+      difficulty: row.question.difficulty,
+      status: row.question.status,
+      questionText: row.question.questionText,
+      latexEnabled: row.question.latexEnabled,
+      options: (row.question.options as Array<{ key: string; text: string }> | null) ?? null,
+      correctAnswer: row.question.correctAnswer ?? null,
+      explanation: row.question.explanation ?? null,
+      topicId: row.question.topicId,
+      topic: row.question.topic,
+    },
+  };
+}
+
+/**
+ * Resolve a node, the pathway it belongs to, and the owning tutor — used by
+ * controllers to authorize question-curation actions.
+ */
+export async function getNodeForAccess(prisma: PrismaClient, nodeId: string) {
+  return prisma.pathwayNode.findUnique({
+    where: { id: nodeId },
+    select: {
+      id: true,
+      pathwayId: true,
+      pathway: { select: { id: true, tutorId: true, studentId: true, planId: true } },
+    },
+  });
+}
+
+export async function getNodeQuestions(prisma: PrismaClient, nodeId: string) {
+  const rows = await prisma.pathwayNodeQuestion.findMany({
+    where: { nodeId },
+    select: NODE_QUESTION_SELECT,
+    orderBy: { orderIndex: "asc" },
+  });
+
+  return rows.map(formatNodeQuestion);
+}
+
+export async function addQuestionsToNode(
+  prisma: PrismaClient,
+  nodeId: string,
+  questionIds: string[]
+) {
+  // De-dupe within the request and against questions already in the node.
+  const requested = Array.from(new Set(questionIds));
+
+  const existing = await prisma.pathwayNodeQuestion.findMany({
+    where: { nodeId },
+    select: { questionId: true, orderIndex: true },
+  });
+  const existingIds = new Set(existing.map((row) => row.questionId));
+  const toAdd = requested.filter((id) => !existingIds.has(id));
+
+  if (toAdd.length === 0) {
+    return getNodeQuestions(prisma, nodeId);
+  }
+
+  // Only attach questions that actually exist (FK would otherwise throw).
+  const validQuestions = await prisma.question.findMany({
+    where: { id: { in: toAdd } },
+    select: { id: true },
+  });
+  const validIds = new Set(validQuestions.map((q) => q.id));
+  const orderedToAdd = toAdd.filter((id) => validIds.has(id));
+
+  if (orderedToAdd.length === 0) {
+    return getNodeQuestions(prisma, nodeId);
+  }
+
+  const maxOrderIndex = existing.reduce(
+    (max, row) => (row.orderIndex > max ? row.orderIndex : max),
+    -1
+  );
+
+  await prisma.pathwayNodeQuestion.createMany({
+    data: orderedToAdd.map((questionId, idx) => ({
+      nodeId,
+      questionId,
+      orderIndex: maxOrderIndex + 1 + idx,
+    })),
+    skipDuplicates: true,
+  });
+
+  return getNodeQuestions(prisma, nodeId);
+}
+
+export async function removeQuestionFromNode(
+  prisma: PrismaClient,
+  nodeId: string,
+  questionId: string
+) {
+  const existing = await prisma.pathwayNodeQuestion.findUnique({
+    where: { nodeId_questionId: { nodeId, questionId } },
+    select: { id: true },
+  });
+  if (!existing) throw createHttpError(404, "Question not found in this node");
+
+  await prisma.pathwayNodeQuestion.delete({
+    where: { nodeId_questionId: { nodeId, questionId } },
+  });
+}
+
+export async function reorderNodeQuestions(
+  prisma: PrismaClient,
+  nodeId: string,
+  orderedQuestionIds: string[]
+) {
+  const existing = await prisma.pathwayNodeQuestion.findMany({
+    where: { nodeId },
+    select: { questionId: true },
+  });
+  const existingIds = new Set(existing.map((row) => row.questionId));
+
+  for (const questionId of orderedQuestionIds) {
+    if (!existingIds.has(questionId)) {
+      throw createHttpError(400, `Question ${questionId} is not in this node`);
+    }
+  }
+  if (orderedQuestionIds.length !== existing.length) {
+    throw createHttpError(400, "Reorder must include every question currently in the node");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    // Two-pass update via a temporary negative offset to dodge the
+    // (nodeId, orderIndex) unique constraint while shuffling.
+    const offset = orderedQuestionIds.length + 1;
+
+    await Promise.all(
+      orderedQuestionIds.map((questionId, idx) =>
+        tx.pathwayNodeQuestion.update({
+          where: { nodeId_questionId: { nodeId, questionId } },
+          data: { orderIndex: -(offset + idx) },
+        })
+      )
+    );
+
+    await Promise.all(
+      orderedQuestionIds.map((questionId, idx) =>
+        tx.pathwayNodeQuestion.update({
+          where: { nodeId_questionId: { nodeId, questionId } },
+          data: { orderIndex: idx },
+        })
+      )
+    );
+  });
+
+  return getNodeQuestions(prisma, nodeId);
 }

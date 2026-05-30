@@ -16,6 +16,7 @@ import profilePhotoCleanupPlugin from "./plugins/profile-photo-cleanup.plugin.js
 import broadcastPlugin from "./plugins/broadcast.plugin.js";
 import gradingPlugin from "./plugins/grading.plugin.js";
 import cleanupPlugin from "./plugins/cleanup.plugin.js";
+import pathwayOverduePlugin from "./plugins/pathway-overdue.plugin.js";
 
 // Routes
 import { healthRoutes } from "./modules/health/health.route.js";
@@ -39,6 +40,7 @@ import { forumRoutes } from "./modules/forum/forum.route.js";
 import { aiRubricRoutes } from "./modules/ai-rubrics/ai-rubrics.route.js";
 import { aiRubricWritingTypeRoutes } from "./modules/ai-rubric-writing-types/ai-rubric-writing-types.route.js";
 import { pathwayRoutes } from "./modules/pathways/pathways.route.js";
+import { pathwayPlanRoutes } from "./modules/pathway-plans/pathway-plans.route.js";
 import { practiceRoutes } from "./modules/practice/practice.route.js";
 import { billingRoutes } from "./modules/billing/billing.route.js";
 import { resourceRoutes } from "./modules/resources/resources.route.js";
@@ -66,6 +68,7 @@ import { forumSchemas } from "./modules/forum/forum.schema.js";
 import { aiRubricSchemas } from "./modules/ai-rubrics/ai-rubrics.schema.js";
 import { aiRubricWritingTypeSchemas } from "./modules/ai-rubric-writing-types/ai-rubric-writing-types.schema.js";
 import { pathwaySchemas } from "./modules/pathways/pathways.schema.js";
+import { pathwayPlanSchemas } from "./modules/pathway-plans/pathway-plans.schema.js";
 import { practiceSchemas } from "./modules/practice/practice.schema.js";
 import { billingSchemas } from "./modules/billing/billing.schema.js";
 import { resourceSchemas } from "./modules/resources/resources.schema.js";
@@ -92,6 +95,7 @@ export async function buildApp() {
   await app.register(broadcastPlugin);
   await app.register(gradingPlugin);
   await app.register(cleanupPlugin);    // Expired token cleanup
+  await app.register(pathwayOverduePlugin); // Pathway plan overdue notifications
 
   // ─── Register JSON Schemas (must be before routes) ───────────────
   for (const schema of [
@@ -115,6 +119,7 @@ export async function buildApp() {
     ...aiRubricSchemas,
     ...aiRubricWritingTypeSchemas,
     ...pathwaySchemas,
+    ...pathwayPlanSchemas,
     ...practiceSchemas,
     ...billingSchemas,
     ...resourceSchemas,
@@ -176,6 +181,7 @@ export async function buildApp() {
       await api.register(aiRubricRoutes, { prefix: "/ai-rubrics" });
       await api.register(aiRubricWritingTypeRoutes, { prefix: "/ai-rubric-writing-types" });
       await api.register(pathwayRoutes, { prefix: "/pathways" });
+      await api.register(pathwayPlanRoutes, { prefix: "/pathway-plans" });
       await api.register(practiceRoutes, { prefix: "/practice" });
       await api.register(billingRoutes, { prefix: "/billing" });
       await api.register(resourceRoutes, { prefix: "/resources" });

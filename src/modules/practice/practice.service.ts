@@ -583,7 +583,15 @@ export async function getPracticeSession(
       startedAt: true,
       endedAt: true,
       totalTimeSeconds: true,
+      pathwayNodeId: true,
       topic: { select: { id: true, name: true, subject: { select: { id: true, name: true } } } },
+      pathwayNode: {
+        select: {
+          id: true,
+          pathwayId: true,
+          pathway: { select: { planId: true } },
+        },
+      },
       sessionQuestions: {
         orderBy: { order: "asc" },
         select: PRACTICE_QUESTION_WITH_ANSWER_SELECT,
@@ -666,6 +674,9 @@ export async function getPracticeSession(
     subjectId: session.topic?.subject.id ?? null,
     subjectName: session.topic?.subject.name ?? null,
     sourceType,
+    pathwayNodeId: session.pathwayNodeId ?? null,
+    pathwayId: session.pathwayNode?.pathwayId ?? null,
+    planId: session.pathwayNode?.pathway.planId ?? null,
     difficulty: formatDifficulty(session.difficulty),
     questionCount: session.questionCount,
     status: session.status as "IN_PROGRESS" | "COMPLETED",

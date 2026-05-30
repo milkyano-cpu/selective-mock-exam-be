@@ -42,6 +42,7 @@ const pluginMocks = {
   aiRubricRoutes: jest.fn(),
   aiRubricWritingTypeRoutes: jest.fn(),
   pathwayRoutes: jest.fn(),
+  pathwayPlanRoutes: jest.fn(),
   practiceRoutes: jest.fn(),
   billingRoutes: jest.fn(),
   resourceRoutes: jest.fn(),
@@ -135,6 +136,9 @@ jest.unstable_mockModule("../../src/modules/ai-rubric-writing-types/ai-rubric-wr
 jest.unstable_mockModule("../../src/modules/pathways/pathways.route.js", () => ({
   pathwayRoutes: pluginMocks.pathwayRoutes,
 }));
+jest.unstable_mockModule("../../src/modules/pathway-plans/pathway-plans.route.js", () => ({
+  pathwayPlanRoutes: pluginMocks.pathwayPlanRoutes,
+}));
 jest.unstable_mockModule("../../src/modules/practice/practice.route.js", () => ({
   practiceRoutes: pluginMocks.practiceRoutes,
 }));
@@ -210,6 +214,9 @@ jest.unstable_mockModule("../../src/modules/ai-rubric-writing-types/ai-rubric-wr
 jest.unstable_mockModule("../../src/modules/pathways/pathways.schema.js", () => ({
   pathwaySchemas: [{ $id: "pathway" }],
 }));
+jest.unstable_mockModule("../../src/modules/pathway-plans/pathway-plans.schema.js", () => ({
+  pathwayPlanSchemas: [{ $id: "pathwayPlan" }],
+}));
 jest.unstable_mockModule("../../src/modules/practice/practice.schema.js", () => ({
   practiceSchemas: [{ $id: "practice" }],
 }));
@@ -261,7 +268,7 @@ describe("app builder", () => {
     expect(options.trustProxy).toBe(true);
     expect(options.genReqId({ headers: { "x-trace-id": "trace-1" } })).toBe("trace-1");
     expect(options.genReqId({ headers: {} })).toEqual(expect.any(String));
-    expect(fakeApp.addSchema).toHaveBeenCalledTimes(26);
+    expect(fakeApp.addSchema).toHaveBeenCalledTimes(27);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.securityPlugin);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.storagePlugin);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.profilePhotoCleanupPlugin);
@@ -277,6 +284,8 @@ describe("app builder", () => {
     expect(pluginMocks.questionRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/questions" });
     expect(pluginMocks.webhookRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/webhooks" });
     expect(pluginMocks.aiRubricWritingTypeRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/ai-rubric-writing-types" });
+    expect(pluginMocks.pathwayRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/pathways" });
+    expect(pluginMocks.pathwayPlanRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/pathway-plans" });
     expect(pluginMocks.billingRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/billing" });
     expect(pluginMocks.resourceRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/resources" });
     expect(pluginMocks.studentCalendarRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/student-calendar" });

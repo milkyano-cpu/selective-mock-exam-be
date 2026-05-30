@@ -28,6 +28,7 @@ const completedAt = new Date("2026-05-08T01:00:00.000Z");
 function pathway(overrides: Record<string, unknown> = {}) {
   return {
     id: "pathway-1",
+    planId: "plan-1",
     studentId: "student-1",
     subjectId: "subject-vr",
     tutorId: "tutor-1",
@@ -49,6 +50,7 @@ function node(overrides: Record<string, unknown> = {}) {
     createdAt: now,
     updatedAt: now,
     topic: { id: "topic-1", name: "Analogies", subjectId: "subject-vr" },
+    _count: { questions: 0 },
     progress: [
       {
         correctAnswers: 2,
@@ -64,6 +66,7 @@ function node(overrides: Record<string, unknown> = {}) {
 function formattedPathway(overrides: Record<string, unknown> = {}) {
   return {
     id: "pathway-1",
+    planId: "plan-1",
     studentId: "student-1",
     subjectId: "subject-vr",
     tutorId: "tutor-1",
@@ -83,6 +86,7 @@ function formattedNode(overrides: Record<string, unknown> = {}) {
     topicId: "topic-1",
     orderIndex: 0,
     topic: { id: "topic-1", name: "Analogies", subjectId: "subject-vr" },
+    questionCount: 0,
     progress: {
       correctAnswers: 2,
       totalAttempts: 5,
@@ -100,6 +104,10 @@ function createTx() {
     studentPathway: {
       create: jest.fn(async () => ({ id: "pathway-1" })),
       findUnique: jest.fn(async () => ({ ...pathway(), nodes: [node()] })),
+    },
+    pathwayPlan: {
+      update: jest.fn(async () => undefined),
+      updateMany: jest.fn(async () => ({ count: 0 })),
     },
     pathwayNode: {
       create: jest
@@ -133,6 +141,16 @@ function mockPrisma(overrides: Record<string, unknown> = {}) {
       if (typeof arg === "function") return (arg as (txArg: typeof tx) => Promise<unknown>)(tx);
       return Promise.all(arg as Promise<unknown>[]);
     }),
+    pathwayPlan: {
+      findUnique: jest.fn(async () => ({
+        id: "plan-1",
+        tutorId: "tutor-1",
+        studentId: "student-1",
+        completedAt: null,
+      })),
+      update: jest.fn(async () => undefined),
+      updateMany: jest.fn(async () => ({ count: 0 })),
+    },
     studentPathway: {
       findMany: jest.fn(async () => [pathway()]),
       findUnique: jest.fn(async () => ({ ...pathway(), nodes: [node()] })),
@@ -142,7 +160,10 @@ function mockPrisma(overrides: Record<string, unknown> = {}) {
       findUnique: jest.fn(async () => ({
         id: "subject-vr",
         name: "Verbal Reasoning",
-        topics: [{ id: "topic-1" }, { id: "topic-2" }],
+        topics: [
+          { id: "topic-1" },
+          { id: "topic-2" },
+        ],
       })),
     },
     user: {
@@ -152,7 +173,12 @@ function mockPrisma(overrides: Record<string, unknown> = {}) {
       findUnique: jest.fn(async () => ({ id: "topic-3" })),
     },
     pathwayNode: {
-      findFirst: jest.fn(async () => node({ pathway: { id: "pathway-1", thresholdCorrect: 3 } })),
+      findFirst: jest.fn(async () => node({ pathway: { id: "pathway-1", thresholdCorrect: 2 } })),
+      findUnique: jest.fn(async () => ({
+        id: "node-1",
+        pathwayId: "pathway-1",
+        pathway: { id: "pathway-1", tutorId: "tutor-1", studentId: "student-1", planId: "plan-1" },
+      })),
       findMany: jest.fn(async () => [{ id: "node-1" }, { id: "node-2" }]),
       update: jest.fn(async () => undefined),
     },
@@ -163,6 +189,52 @@ function mockPrisma(overrides: Record<string, unknown> = {}) {
         isUnlocked: true,
         completedAt,
       })),
+    },
+    pathwayNodeQuestion: {
+      findMany: jest.fn(async () => [
+        {
+          id: "nq-1",
+          nodeId: "node-1",
+          questionId: "question-1",
+          orderIndex: 0,
+          question: {
+            id: "question-1",
+            type: "MCQ",
+            difficulty: "EASY",
+            status: "PUBLISHED",
+            questionText: "Q1",
+            latexEnabled: false,
+            options: null,
+            correctAnswer: "A",
+            explanation: null,
+            topicId: "topic-1",
+            topic: { id: "topic-1", name: "Analogies" },
+          },
+        },
+        {
+          id: "nq-2",
+          nodeId: "node-1",
+          questionId: "question-2",
+          orderIndex: 1,
+          question: {
+            id: "question-2",
+            type: "MCQ",
+            difficulty: "EASY",
+            status: "PUBLISHED",
+            questionText: "Q2",
+            latexEnabled: false,
+            options: null,
+            correctAnswer: "B",
+            explanation: null,
+            topicId: "topic-1",
+            topic: { id: "topic-1", name: "Analogies" },
+          },
+        },
+      ]),
+      findUnique: jest.fn(async () => ({ id: "nq-1" })),
+      createMany: jest.fn(async () => ({ count: 1 })),
+      delete: jest.fn(async () => undefined),
+      update: jest.fn(async () => undefined),
     },
     question: {
       findMany: jest.fn(async () => [{ id: "question-1" }, { id: "question-2" }]),
@@ -191,17 +263,20 @@ function mockReply() {
 function mockRequest(overrides: Record<string, unknown> = {}) {
   return {
     query: {},
-    params: { id: "pathway-1", nodeId: "node-1" },
+    params: { id: "pathway-1", nodeId: "node-1", questionId: "question-1" },
     body: {
+      planId: "plan-1",
       studentId: "student-1",
       subjectId: "subject-vr",
       thresholdCorrect: 3,
       topicId: "topic-3",
       order: [{ nodeId: "node-1", orderIndex: 1 }],
+      questionIds: ["question-3"],
+      orderedQuestionIds: ["question-1", "question-2"],
       correctAnswers: 3,
       totalAttempts: 5,
     },
-    user: { sub: "student-1", role: "STUDENT" },
+    user: { sub: "tutor-1", role: "TUTOR" },
     server: { prisma: mockPrisma() },
     log: { info: jest.fn() },
     ...overrides,
@@ -260,22 +335,30 @@ describe("pathways module", () => {
   it("creates a pathway with subject topics, progress rows, and notification", async () => {
     const prisma = mockPrisma();
 
-    const result = await pathwaysService.createPathway(prisma as never, "tutor-1", {
-      studentId: "student-1",
+    const result = await pathwaysService.createPathway(prisma as never, { sub: "tutor-1", role: "TUTOR" }, {
+      planId: "plan-1",
       subjectId: "subject-vr",
       thresholdCorrect: 3,
     });
 
+    expect(prisma.pathwayPlan.findUnique).toHaveBeenCalledWith({
+      where: { id: "plan-1" },
+      select: { id: true, tutorId: true, studentId: true, completedAt: true },
+    });
     expect(prisma.subject.findUnique).toHaveBeenCalledWith({
       where: { id: "subject-vr" },
       select: {
         id: true,
         name: true,
-        topics: { select: { id: true }, orderBy: { name: "asc" } },
+        topics: {
+          select: { id: true },
+          orderBy: { name: "asc" },
+        },
       },
     });
     expect(prisma.tx.studentPathway.create).toHaveBeenCalledWith({
       data: {
+        planId: "plan-1",
         studentId: "student-1",
         subjectId: "subject-vr",
         tutorId: "tutor-1",
@@ -294,30 +377,43 @@ describe("pathways module", () => {
       expect.objectContaining({
         userId: "student-1",
         type: "PATHWAY_ASSIGNED",
-        data: { pathwayId: "pathway-1", subjectId: "subject-vr", subjectName: "Verbal Reasoning" },
+        data: { pathwayId: "pathway-1", planId: "plan-1", subjectId: "subject-vr", subjectName: "Verbal Reasoning" },
       })
     );
     expect(result.id).toBe("pathway-1");
   });
 
-  it("rejects create pathway for missing subject, missing student, or duplicate pathway", async () => {
+  it("rejects create pathway for missing plan, missing subject, wrong owner, or duplicate pathway", async () => {
+    const noPlan = mockPrisma({ pathwayPlan: { findUnique: jest.fn(async () => null) } });
+    await expect(
+      pathwaysService.createPathway(noPlan as never, { sub: "tutor-1", role: "TUTOR" }, {
+        planId: "missing",
+        subjectId: "subject-vr",
+        thresholdCorrect: 3,
+      })
+    ).rejects.toMatchObject({ statusCode: 404, message: "Pathway plan not found" });
+
+    const notOwner = mockPrisma({
+      pathwayPlan: {
+        findUnique: jest.fn(async () => ({ id: "plan-1", tutorId: "other-tutor", studentId: "student-1", completedAt: null })),
+      },
+    });
+    await expect(
+      pathwaysService.createPathway(notOwner as never, { sub: "tutor-1", role: "TUTOR" }, {
+        planId: "plan-1",
+        subjectId: "subject-vr",
+        thresholdCorrect: 3,
+      })
+    ).rejects.toMatchObject({ statusCode: 403, message: "You do not own this pathway plan" });
+
     const noSubject = mockPrisma({ subject: { findUnique: jest.fn(async () => null) } });
     await expect(
-      pathwaysService.createPathway(noSubject as never, "tutor-1", {
-        studentId: "student-1",
+      pathwaysService.createPathway(noSubject as never, { sub: "tutor-1", role: "TUTOR" }, {
+        planId: "plan-1",
         subjectId: "missing",
         thresholdCorrect: 3,
       })
     ).rejects.toMatchObject({ statusCode: 404, message: "Subject not found" });
-
-    const noStudent = mockPrisma({ user: { findUnique: jest.fn(async () => ({ id: "parent-1", role: "PARENT" })) } });
-    await expect(
-      pathwaysService.createPathway(noStudent as never, "tutor-1", {
-        studentId: "parent-1",
-        subjectId: "subject-vr",
-        thresholdCorrect: 3,
-      })
-    ).rejects.toMatchObject({ statusCode: 404, message: "Student not found" });
 
     const duplicate = mockPrisma({
       $transaction: jest.fn(async () => {
@@ -325,14 +421,14 @@ describe("pathways module", () => {
       }),
     });
     await expect(
-      pathwaysService.createPathway(duplicate as never, "tutor-1", {
-        studentId: "student-1",
+      pathwaysService.createPathway(duplicate as never, { sub: "tutor-1", role: "TUTOR" }, {
+        planId: "plan-1",
         subjectId: "subject-vr",
         thresholdCorrect: 3,
       })
     ).rejects.toMatchObject({
       statusCode: 409,
-      message: "A pathway for this subject already exists for this student",
+      message: "A pathway for this subject already exists in this plan",
     });
   });
 
@@ -354,7 +450,7 @@ describe("pathways module", () => {
     const prisma = mockPrisma({
       studentPathway: {
         ...mockPrisma().studentPathway,
-        findUnique: jest.fn(async () => ({ ...pathway(), nodes: [{ orderIndex: 1 }] })),
+        findUnique: jest.fn(async () => ({ ...pathway(), planId: "plan-1", nodes: [{ orderIndex: 1 }] })),
       },
     });
     prisma.tx.pathwayNode.create.mockReset();
@@ -370,6 +466,10 @@ describe("pathways module", () => {
     });
     expect(prisma.tx.pathwayNodeProgress.create).toHaveBeenCalledWith({
       data: { nodeId: "node-3", studentId: "student-1", isUnlocked: false },
+    });
+    expect(prisma.tx.pathwayPlan.updateMany).toHaveBeenCalledWith({
+      where: { id: "plan-1", completedAt: { not: null } },
+      data: { completedAt: null },
     });
     expect(result).toMatchObject({ id: "node-3", progress: null });
 
@@ -451,15 +551,15 @@ describe("pathways module", () => {
     });
   });
 
-  it("starts practice only for unlocked nodes", async () => {
+  it("starts practice from curated node questions for unlocked nodes", async () => {
     const prisma = mockPrisma();
 
     const result = await pathwaysService.startNodePractice(prisma as never, "pathway-1", "node-1", "student-1");
 
-    expect(prisma.question.findMany).toHaveBeenCalledWith({
-      where: { topicId: "topic-1", type: "MCQ", status: "PUBLISHED", isPracticeAllowed: true },
-      select: { id: true },
-      take: 10,
+    expect(prisma.pathwayNodeQuestion.findMany).toHaveBeenCalledWith({
+      where: { nodeId: "node-1" },
+      select: expect.any(Object),
+      orderBy: { orderIndex: "asc" },
     });
     expect(prisma.tx.practiceSession.create).toHaveBeenCalledWith({
       data: {
@@ -472,12 +572,13 @@ describe("pathways module", () => {
       },
       select: { id: true, topicId: true },
     });
-    expect(prisma.tx.practiceSessionQuestion.createMany).toHaveBeenCalledWith({
-      data: [
-        { sessionId: "practice-1", questionId: "question-1", order: 1 },
-        { sessionId: "practice-1", questionId: "question-2", order: 2 },
-      ],
-    });
+    // Questions are shuffled, so assert the set rather than the order.
+    const createManyArg = prisma.tx.practiceSessionQuestion.createMany.mock.calls[0]?.[0] as {
+      data: { sessionId: string; questionId: string; order: number }[];
+    };
+    expect(createManyArg.data).toHaveLength(2);
+    expect(createManyArg.data.map((d) => d.questionId).sort()).toEqual(["question-1", "question-2"]);
+    expect(createManyArg.data.map((d) => d.order).sort()).toEqual([1, 2]);
     expect(result).toEqual({ sessionId: "practice-1", topicId: "topic-1", nodeId: "node-1" });
 
     const locked = mockPrisma({
@@ -488,6 +589,30 @@ describe("pathways module", () => {
     ).rejects.toMatchObject({
       statusCode: 403,
       message: "This node is locked. Complete the previous node first.",
+    });
+
+    const noQuestions = mockPrisma({
+      pathwayNodeQuestion: { ...mockPrisma().pathwayNodeQuestion, findMany: jest.fn(async () => []) },
+    });
+    await expect(
+      pathwaysService.startNodePractice(noQuestions as never, "pathway-1", "node-1", "student-1")
+    ).rejects.toMatchObject({
+      statusCode: 422,
+      message: "No questions have been added to this node yet.",
+    });
+
+    // Node has questions but fewer than the pass threshold → cannot be completed.
+    const belowThreshold = mockPrisma({
+      pathwayNode: {
+        ...mockPrisma().pathwayNode,
+        findFirst: jest.fn(async () => node({ pathway: { id: "pathway-1", thresholdCorrect: 5 } })),
+      },
+    });
+    await expect(
+      pathwaysService.startNodePractice(belowThreshold as never, "pathway-1", "node-1", "student-1")
+    ).rejects.toMatchObject({
+      statusCode: 422,
+      message: "This node doesn't have enough questions yet. Ask your tutor to add more.",
     });
   });
 

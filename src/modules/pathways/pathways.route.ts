@@ -12,6 +12,10 @@ import {
   reorderNodesHandler,
   startPracticeHandler,
   updateProgressHandler,
+  listNodeQuestionsHandler,
+  addNodeQuestionsHandler,
+  removeNodeQuestionHandler,
+  reorderNodeQuestionsHandler,
 } from "./pathways.controller.js";
 
 export async function pathwayRoutes(fastify: FastifyInstance) {
@@ -146,5 +150,74 @@ export async function pathwayRoutes(fastify: FastifyInstance) {
     },
     preHandler: [fastify.authenticate, premiumPathways],
     handler: updateProgressHandler,
+  });
+
+  // ── Node question curation (SME-111) — TUTOR or ADMIN only ──────────────────
+
+  // GET /pathways/nodes/:nodeId/questions
+  fastify.get("/nodes/:nodeId/questions", {
+    schema: {
+      tags: ["Pathways"],
+      summary: "List curated questions for a node",
+      params: pathwayRef("nodeOnlyParamsSchema"),
+      response: {
+        200: pathwayRef("nodeQuestionsResponseSchema"),
+        403: pathwayRef("pathwayErrorResponseSchema"),
+        404: pathwayRef("pathwayErrorResponseSchema"),
+      },
+    },
+    preHandler: [fastify.authenticate, requireRole("TUTOR", "ADMIN")],
+    handler: listNodeQuestionsHandler,
+  });
+
+  // POST /pathways/nodes/:nodeId/questions
+  fastify.post("/nodes/:nodeId/questions", {
+    schema: {
+      tags: ["Pathways"],
+      summary: "Add curated questions to a node",
+      params: pathwayRef("nodeOnlyParamsSchema"),
+      body: pathwayRef("addNodeQuestionsBodySchema"),
+      response: {
+        201: pathwayRef("nodeQuestionsResponseSchema"),
+        403: pathwayRef("pathwayErrorResponseSchema"),
+        404: pathwayRef("pathwayErrorResponseSchema"),
+      },
+    },
+    preHandler: [fastify.authenticate, requireRole("TUTOR", "ADMIN")],
+    handler: addNodeQuestionsHandler,
+  });
+
+  // PUT /pathways/nodes/:nodeId/questions/reorder — before /:questionId to avoid conflict
+  fastify.put("/nodes/:nodeId/questions/reorder", {
+    schema: {
+      tags: ["Pathways"],
+      summary: "Reorder curated questions in a node",
+      params: pathwayRef("nodeOnlyParamsSchema"),
+      body: pathwayRef("reorderNodeQuestionsBodySchema"),
+      response: {
+        200: pathwayRef("nodeQuestionsResponseSchema"),
+        400: pathwayRef("pathwayErrorResponseSchema"),
+        403: pathwayRef("pathwayErrorResponseSchema"),
+        404: pathwayRef("pathwayErrorResponseSchema"),
+      },
+    },
+    preHandler: [fastify.authenticate, requireRole("TUTOR", "ADMIN")],
+    handler: reorderNodeQuestionsHandler,
+  });
+
+  // DELETE /pathways/nodes/:nodeId/questions/:questionId
+  fastify.delete("/nodes/:nodeId/questions/:questionId", {
+    schema: {
+      tags: ["Pathways"],
+      summary: "Remove a curated question from a node",
+      params: pathwayRef("nodeQuestionParamsSchema"),
+      response: {
+        200: pathwayRef("deletePathwayResponseSchema"),
+        403: pathwayRef("pathwayErrorResponseSchema"),
+        404: pathwayRef("pathwayErrorResponseSchema"),
+      },
+    },
+    preHandler: [fastify.authenticate, requireRole("TUTOR", "ADMIN")],
+    handler: removeNodeQuestionHandler,
   });
 }
