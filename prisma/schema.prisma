@@ -212,6 +212,8 @@ model Topic {
   resources        StudyResource[]
   pathwayNodes     PathwayNode[]
 
+  isFreeTopic Boolean @default(false) @map("is_free_topic")
+
   @@unique([subjectId, name])
   @@index([subjectId])
   @@map("topics")
@@ -456,6 +458,8 @@ model Exam {
   createdBy       String      @map("created_by")
   createdAt       DateTime    @default(now()) @map("created_at")
   updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  requiredTier Tier @default(BASIC) @map("required_tier")
 
   thresholdSuperior     Int @default(72) @map("threshold_superior")
   thresholdAboveAverage Int @default(60) @map("threshold_above_average")

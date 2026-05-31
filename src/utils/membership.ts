@@ -19,6 +19,16 @@ export type FreePracticeTopic = {
 
 export const PAID_TIERS: MembershipTier[] = ["STANDARD", "PREMIUM"];
 
+export async function getSettingValue(
+  prisma: PrismaClient,
+  key: string,
+  fallback: number
+): Promise<number> {
+  const setting = await prisma.systemSetting.findUnique({ where: { key } });
+  const parsed = setting ? parseInt(setting.value, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export function hasFullPracticeAccess(tier: MembershipTier) {
   return tier === "STANDARD" || tier === "PREMIUM";
 }
@@ -106,6 +116,7 @@ export function requireForumWriteAccess() {
 
 export async function getFreePracticeTopics(prisma: PrismaClient): Promise<FreePracticeTopic[]> {
   const topics = await prisma.topic.findMany({
+    where: { isFreeTopic: true },
     select: {
       id: true,
       subjectId: true,
@@ -117,74 +128,40 @@ export async function getFreePracticeTopics(prisma: PrismaClient): Promise<FreeP
         },
       },
     },
-    orderBy: [{ subjectId: "asc" }, { name: "asc" }, { id: "asc" }],
   });
 
-  const firstBySubject = new Map<string, (typeof topics)[number]>();
-  const firstPublishedBySubject = new Map<string, (typeof topics)[number]>();
+  if (topics.length === 0) return [];
 
-  for (const topic of topics) {
-    if (!firstBySubject.has(topic.subjectId)) {
-      firstBySubject.set(topic.subjectId, topic);
-    }
-
-    if (topic._count.questions > 0 && !firstPublishedBySubject.has(topic.subjectId)) {
-      firstPublishedBySubject.set(topic.subjectId, topic);
-    }
-  }
-
-  return Array.from(firstBySubject.entries()).map(([subjectId, fallbackTopic]) => {
-    const topic = firstPublishedBySubject.get(subjectId) ?? fallbackTopic;
-    return {
-      subjectId,
-      subjectName: topic.subject.name,
-      topicId: topic.id,
-      topicName: topic.name,
-      availableQuestions: topic._count.questions,
-    };
-  });
-}
-
-export async function getFreePracticeTopicForSubject(
-  prisma: PrismaClient,
-  subjectId: string
-): Promise<FreePracticeTopic | null> {
-  const topics = await prisma.topic.findMany({
-    where: { subjectId },
-    select: {
-      id: true,
-      subjectId: true,
-      name: true,
-      subject: { select: { id: true, name: true } },
-      _count: {
-        select: {
-          questions: { where: { type: "MCQ", status: "PUBLISHED", isPracticeAllowed: true } },
-        },
-      },
-    },
-    orderBy: [{ name: "asc" }, { id: "asc" }],
-  });
-
-  const topic = topics.find((item) => item._count.questions > 0) ?? topics[0] ?? null;
-  if (!topic) return null;
-
-  return {
-    subjectId: topic.subjectId,
-    subjectName: topic.subject.name,
-    topicId: topic.id,
-    topicName: topic.name,
-    availableQuestions: topic._count.questions,
-  };
+  return topics.map((t) => ({
+    subjectId: t.subjectId,
+    subjectName: t.subject.name,
+    topicId: t.id,
+    topicName: t.name,
+    availableQuestions: t._count.questions,
+  }));
 }
 
 export async function getPracticeAccess(prisma: PrismaClient, studentId: string) {
   const student = await getStudentMembership(prisma, studentId);
   const fullPracticeAccess = hasFullPracticeAccess(student.tier);
 
+  // Daily session usage is only meaningful for Basic (limited) members.
+  let dailyUsage: { used: number; limit: number } | null = null;
+  if (!fullPracticeAccess) {
+    const limit = await getSettingValue(prisma, "BASIC_DAILY_PRACTICE_LIMIT", 5);
+    const dayStart = new Date();
+    dayStart.setHours(0, 0, 0, 0);
+    const used = await prisma.practiceSession.count({
+      where: { studentId, startedAt: { gte: dayStart } },
+    });
+    dailyUsage = { used, limit };
+  }
+
   return {
     tier: student.tier,
     fullPracticeAccess,
     freeTopics: fullPracticeAccess ? [] : await getFreePracticeTopics(prisma),
+    dailyUsage,
   };
 }
 
@@ -197,21 +174,16 @@ export async function assertCanUsePracticeTopic(
   if (hasFullPracticeAccess(student.tier)) return;
 
   if (!topicId) {
-    throw createHttpError(403, "Basic members can only practice the first topic in each subject");
+    throw createHttpError(403, "Basic members can only practice free topics.");
   }
 
   const topic = await prisma.topic.findUnique({
     where: { id: topicId },
-    select: { subjectId: true },
+    select: { isFreeTopic: true },
   });
 
-  if (!topic) {
-    throw createHttpError(404, "Topic not found");
-  }
-
-  const freeTopic = await getFreePracticeTopicForSubject(prisma, topic.subjectId);
-  if (!freeTopic || freeTopic.topicId !== topicId) {
-    throw createHttpError(403, "Basic members can only practice the first topic in each subject");
+  if (!topic?.isFreeTopic) {
+    throw createHttpError(403, "Basic members can only practice free topics.");
   }
 }
 

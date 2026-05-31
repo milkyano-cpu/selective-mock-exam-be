@@ -1,9 +1,15 @@
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient, Tier } from "@prisma/client";
 import { createHttpError } from "../../utils/http-error.js";
 import { assertCanAccessStudent } from "../../utils/authz.js";
 import { decryptField } from "../../utils/field-encryption.js";
 import { createNotification } from "../../lib/notify.js";
 import { generateSessionInsightsWithAi } from "../../utils/ai-insights.js";
+import {
+  getFreshUserTier,
+  hasFullPracticeAccess,
+  hasPremiumAccess,
+  type MembershipTier,
+} from "../../utils/membership.js";
 import {
   IMAGE_SUMMARY_SELECT,
   serializeImageSummary,
@@ -348,6 +354,7 @@ const EXAM_SELECT = {
   createdBy: true,
   createdAt: true,
   updatedAt: true,
+  requiredTier: true,
   thresholdSuperior: true,
   thresholdAboveAverage: true,
   thresholdHighAverage: true,
@@ -368,6 +375,7 @@ function serializeExam(exam: {
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
+  requiredTier: Tier;
   thresholdSuperior: number;
   thresholdAboveAverage: number;
   thresholdHighAverage: number;
@@ -388,6 +396,7 @@ function serializeExam(exam: {
     hasSessions: (exam._count.sessions ?? 0) > 0,
     createdAt: exam.createdAt.toISOString(),
     updatedAt: exam.updatedAt.toISOString(),
+    requiredTier: exam.requiredTier,
     thresholdSuperior: exam.thresholdSuperior,
     thresholdAboveAverage: exam.thresholdAboveAverage,
     thresholdHighAverage: exam.thresholdHighAverage,
@@ -409,6 +418,7 @@ export async function createExamRecord(
       durationMinutes: body.durationMinutes,
       gradingType: body.gradingType,
       createdBy,
+      ...(body.requiredTier !== undefined && { requiredTier: body.requiredTier }),
       ...(body.thresholdSuperior !== undefined && { thresholdSuperior: body.thresholdSuperior }),
       ...(body.thresholdAboveAverage !== undefined && { thresholdAboveAverage: body.thresholdAboveAverage }),
       ...(body.thresholdHighAverage !== undefined && { thresholdHighAverage: body.thresholdHighAverage }),
@@ -488,6 +498,7 @@ export async function updateExamRecord(
       ...(body.examType !== undefined && { examType: body.examType }),
       ...(body.durationMinutes !== undefined && { durationMinutes: body.durationMinutes }),
       ...(body.gradingType !== undefined && { gradingType: body.gradingType }),
+      ...(body.requiredTier !== undefined && { requiredTier: body.requiredTier }),
       ...(body.thresholdSuperior !== undefined && { thresholdSuperior: body.thresholdSuperior }),
       ...(body.thresholdAboveAverage !== undefined && { thresholdAboveAverage: body.thresholdAboveAverage }),
       ...(body.thresholdHighAverage !== undefined && { thresholdHighAverage: body.thresholdHighAverage }),
@@ -2336,7 +2347,67 @@ export async function submitManualGrades(
   };
 }
 
+type AssembledSessionResult = Awaited<ReturnType<typeof assembleSessionResult>>;
+
+/**
+ * Apply membership-tier gating to a fully-assembled session result. The full
+ * data always stays in the DB (and in the assembled object) — this only strips
+ * fields from the response shape based on the viewer's tier:
+ *
+ *   BASIC    → score + rankingLevel only (no MCQ explanations, no AI feedback)
+ *   STANDARD → + MCQ explanation, overall essay feedback, band descriptor
+ *   PREMIUM  → + per-criterion breakdown, strengths, improvements
+ *
+ * The response envelope is unchanged; gated fields are nulled / emptied so the
+ * existing response schema stays valid for every tier.
+ */
+function serializeExamResult(result: AssembledSessionResult, tier: MembershipTier) {
+  const isStandardPlus = hasFullPracticeAccess(tier); // STANDARD or PREMIUM
+  const isPremium = hasPremiumAccess(tier);
+
+  const answers = result.answers.map((answer) => {
+    // STANDARD+ keep MCQ explanations; BASIC does not.
+    const explanation = isStandardPlus ? answer.explanation : null;
+
+    // Essay AI feedback: STANDARD gets the overall feedback + band descriptor,
+    // PREMIUM additionally gets the per-criterion breakdown + strengths/improvements.
+    let aiFeedback = answer.aiFeedback;
+    if (aiFeedback) {
+      if (!isStandardPlus) {
+        // BASIC sees no AI feedback content at all.
+        aiFeedback = null;
+      } else if (!isPremium) {
+        // STANDARD: keep overall feedback + band, strip the premium breakdown.
+        aiFeedback = {
+          ...aiFeedback,
+          strengths: [],
+          improvements: [],
+          criterionScores: [],
+        };
+      }
+    }
+
+    return { ...answer, explanation, aiFeedback };
+  });
+
+  return { ...result, answers };
+}
+
 export async function getSessionResult(
+  prisma: PrismaClient,
+  sessionId: string,
+  actor: { sub: string; role: string }
+) {
+  const result = await assembleSessionResult(prisma, sessionId, actor);
+  // Gate the response by the session owner's tier (students are the owners;
+  // parents view their child's result at the child's tier).
+  const tier = await getFreshUserTier(prisma, result.studentId);
+  // Expose the owning student's tier so the FE gates sections by the OWNER's
+  // tier (not the viewer's) — important when a parent views a child's result.
+  return { ...serializeExamResult(result, tier), ownerTier: tier };
+}
+
+async function assembleSessionResult(
   prisma: PrismaClient,
   sessionId: string,
   actor: { sub: string; role: string }
@@ -2457,6 +2528,7 @@ export async function getSessionResult(
   return {
     sessionId: session.id,
     examId: session.examId,
+    studentId: session.studentId,
     examTitle: session.exam.title,
     status: session.status as "SUBMITTED" | "GRADED",
     finalScore: session.finalScore !== null && session.finalScore !== undefined ? Number(session.finalScore) : null,

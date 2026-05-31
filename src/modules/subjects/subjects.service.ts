@@ -48,6 +48,7 @@ const TOPIC_SELECT = {
   subjectId: true,
   name: true,
   description: true,
+  isFreeTopic: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -425,6 +426,7 @@ export async function updateTopic(
   const data: Record<string, unknown> = {};
   if (input.name !== undefined) data.name = input.name.trim();
   if (input.description !== undefined) data.description = input.description;
+  if (input.isFreeTopic !== undefined) data.isFreeTopic = input.isFreeTopic;
 
   if (Object.keys(data).length === 0) {
     throw createHttpError(400, "No fields to update");

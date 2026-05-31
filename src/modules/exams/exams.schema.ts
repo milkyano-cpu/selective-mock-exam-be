@@ -6,6 +6,7 @@ import { buildJsonSchemas } from "../../utils/build-schemas.js";
 const examTypeEnum = z.enum(["MOCK_EXAM", "ASSIGNMENT"]);
 const gradingTypeEnum = z.enum(["AUTO", "MANUAL"]);
 const examStatusEnum = z.enum(["DRAFT", "PUBLISHED"]);
+const tierEnum = z.enum(["BASIC", "STANDARD", "PREMIUM"]);
 const sessionStatusEnum = z.enum(["IN_PROGRESS", "SUBMITTED", "GRADED"]);
 const retakeModeEnum = z.enum(["FULL", "INCORRECT_ONLY", "SUBJECT_ONLY"]);
 const rankingLevelEnum = z.enum(["SUPERIOR", "ABOVE_AVERAGE", "HIGH_AVERAGE", "AVERAGE", "LOW_AVERAGE"]);
@@ -74,6 +75,7 @@ const createExamBodySchema = z.object({
   examType: examTypeEnum,
   durationMinutes: z.number().int().min(1).max(600),
   gradingType: gradingTypeEnum,
+  requiredTier: tierEnum.optional(),
   thresholdSuperior: rankingThresholdSchema.optional(),
   thresholdAboveAverage: rankingThresholdSchema.optional(),
   thresholdHighAverage: rankingThresholdSchema.optional(),
@@ -86,6 +88,7 @@ const updateExamBodySchema = z
     examType: examTypeEnum.optional(),
     durationMinutes: z.number().int().min(1).max(600).optional(),
     gradingType: gradingTypeEnum.optional(),
+    requiredTier: tierEnum.optional(),
     thresholdSuperior: rankingThresholdSchema.optional(),
     thresholdAboveAverage: rankingThresholdSchema.optional(),
     thresholdHighAverage: rankingThresholdSchema.optional(),
@@ -108,6 +111,7 @@ const examItemSchema = z.object({
   hasSessions: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  requiredTier: z.enum(["BASIC", "STANDARD", "PREMIUM"]),
   thresholdSuperior: z.number(),
   thresholdAboveAverage: z.number(),
   thresholdHighAverage: z.number(),
@@ -376,6 +380,7 @@ const sessionResultResponseSchema = z.object({
     gradingType: gradingTypeEnum,
     startTime: z.string(),
     endTime: z.string().nullable(),
+    ownerTier: tierEnum,
     answers: z.array(sessionResultAnswerSchema),
   }),
 });

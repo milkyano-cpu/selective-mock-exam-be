@@ -17,6 +17,7 @@ const topicItemSchema = z.object({
   subjectId: z.string(),
   name: z.string(),
   description: z.string().nullable(),
+  isFreeTopic: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -172,6 +173,7 @@ const updateTopicBodySchema = z.object({
     .max(500, "Description must be at most 500 characters")
     .nullable()
     .optional(),
+  isFreeTopic: z.boolean().optional(),
 });
 
 const listTopicsQuerySchema = z.object({

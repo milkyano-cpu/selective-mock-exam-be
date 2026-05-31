@@ -5,7 +5,9 @@ import { decryptField } from "../../utils/field-encryption.js";
 import {
   assertCanUsePracticeSession,
   assertCanUsePracticeTopic,
+  getFreshUserTier,
   getPracticeAccess,
+  getSettingValue,
 } from "../../utils/membership.js";
 import {
   IMAGE_SUMMARY_SELECT,
@@ -238,6 +240,23 @@ export async function startPracticeSession(
   body: StartPracticeBody
 ) {
   await assertCanUsePracticeTopic(prisma, studentId, body.topicId ?? null);
+
+  // Daily practice session limit (Basic only).
+  const studentTier = await getFreshUserTier(prisma, studentId);
+  if (studentTier === "BASIC") {
+    const limit = await getSettingValue(prisma, "BASIC_DAILY_PRACTICE_LIMIT", 5);
+    const dayStart = new Date();
+    dayStart.setHours(0, 0, 0, 0);
+    const count = await prisma.practiceSession.count({
+      where: { studentId, startedAt: { gte: dayStart } },
+    });
+    if (count >= limit) {
+      throw createHttpError(
+        403,
+        `Basic members can only start ${limit} practice sessions per day.`
+      );
+    }
+  }
 
   // 1. Resolve topic/subject metadata
   let topicMeta: { id: string; name: string; subject: { id: string; name: string } } | null = null;

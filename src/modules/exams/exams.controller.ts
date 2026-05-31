@@ -1,5 +1,8 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
+import type { Tier } from "@prisma/client";
 import { getQueue } from "../../lib/queue.js";
+import { createHttpError } from "../../utils/http-error.js";
+import { getFreshUserTier, getSettingValue } from "../../utils/membership.js";
 import type {
   CreateExamBody,
   UpdateExamBody,
@@ -117,10 +120,60 @@ export async function listSessionsHandler(request: FastifyRequest, reply: Fastif
 
 export async function startSessionHandler(request: FastifyRequest, reply: FastifyReply) {
   const { id } = request.params as { id: string };
+  const prisma = request.server.prisma;
+  const studentId = request.user.sub;
+
+  // ── Tier gating (students only) ────────────────────────────────────────────
+  if (request.user.role === "STUDENT") {
+    const exam = await prisma.exam.findUnique({
+      where: { id },
+      select: { requiredTier: true, examType: true },
+    });
+    if (!exam) throw createHttpError(404, "Exam not found");
+
+    const studentTier = await getFreshUserTier(prisma, studentId);
+
+    // Gate 1 — exam requires a higher tier than the student has.
+    const tierOrder: Tier[] = ["BASIC", "STANDARD", "PREMIUM"];
+    if (tierOrder.indexOf(studentTier) < tierOrder.indexOf(exam.requiredTier)) {
+      return reply.status(403).send({
+        error: "tier_required",
+        message: "This exam requires a higher membership tier.",
+        requiredTier: exam.requiredTier,
+        upgradeUrl: "/dashboard/billing",
+      });
+    }
+
+    // Gate 2 — monthly mock exam limit (Basic only). Only blocks starting a NEW
+    // mock exam this month; resuming an existing in-progress session is allowed.
+    if (studentTier === "BASIC" && exam.examType === "MOCK_EXAM") {
+      const hasInProgress = await prisma.examSession.findFirst({
+        where: { examId: id, studentId, status: "IN_PROGRESS" },
+        select: { id: true },
+      });
+      if (!hasInProgress) {
+        const limit = await getSettingValue(prisma, "BASIC_MOCK_EXAM_LIMIT", 1);
+        const monthStart = new Date();
+        monthStart.setDate(1);
+        monthStart.setHours(0, 0, 0, 0);
+        const count = await prisma.examSession.count({
+          where: {
+            studentId,
+            exam: { examType: "MOCK_EXAM" },
+            startTime: { gte: monthStart },
+          },
+        });
+        if (count >= limit) {
+          throw createHttpError(403, `Basic members can only take ${limit} mock exam per month.`);
+        }
+      }
+    }
+  }
+
   const data = await startOrResumeSession(
-    request.server.prisma,
+    prisma,
     id,
-    request.user.sub
+    studentId
   );
   const isNew = data.answeredCount === 0;
   return reply.status(isNew ? 201 : 200).send({
@@ -276,10 +329,34 @@ export async function getSessionInsightsHandler(
 export async function startRetakeHandler(request: FastifyRequest, reply: FastifyReply) {
   const { id } = request.params as { id: string };
   const body = request.body as StartRetakeBody;
+  const prisma = request.server.prisma;
+  const studentId = request.user.sub;
+
+  // ── Gate 3 — retake limit per tier (students only) ─────────────────────────
+  if (request.user.role === "STUDENT") {
+    const studentTier = await getFreshUserTier(prisma, studentId);
+
+    // Basic cannot retake at all.
+    if (studentTier === "BASIC") {
+      throw createHttpError(403, "Retakes require a Standard or Premium membership.");
+    }
+
+    const limitKey = studentTier === "PREMIUM" ? "PREMIUM_RETAKE_LIMIT" : "STANDARD_RETAKE_LIMIT";
+    const fallback = studentTier === "PREMIUM" ? 9999 : 3;
+    const limit = await getSettingValue(prisma, limitKey, fallback);
+
+    const retakeCount = await prisma.examSession.count({
+      where: { examId: id, studentId, attemptNumber: { gt: 1 } },
+    });
+    if (retakeCount >= limit) {
+      throw createHttpError(403, "You have reached the retake limit for your membership tier.");
+    }
+  }
+
   const data = await startRetakeSession(
-    request.server.prisma,
+    prisma,
     id,
-    request.user.sub,
+    studentId,
     body
   );
   return reply.status(201).send({ success: true, message: "Retake session started", data });

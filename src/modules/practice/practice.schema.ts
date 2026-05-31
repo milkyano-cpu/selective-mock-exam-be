@@ -228,6 +228,12 @@ const practiceAccessResponseSchema = z.object({
         availableQuestions: z.number(),
       })
     ),
+    dailyUsage: z
+      .object({
+        used: z.number(),
+        limit: z.number(),
+      })
+      .nullable(),
   }),
 });
 
