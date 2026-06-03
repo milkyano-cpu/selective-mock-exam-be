@@ -27,6 +27,7 @@ const planListItemSchema = z.object({
   tutorName: z.string().nullable(),
   dueDate: z.string().nullable(),
   completedAt: z.string().nullable(),
+  isPublished: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
   subjects: z.array(planSubjectSummarySchema),

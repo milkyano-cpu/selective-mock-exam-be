@@ -8,6 +8,7 @@ import {
   getPlanHandler,
   updatePlanHandler,
   deletePlanHandler,
+  publishPlanHandler,
   addPlanPathwayHandler,
   removePlanPathwayHandler,
 } from "./pathway-plans.controller.js";
@@ -74,6 +75,22 @@ export async function pathwayPlanRoutes(fastify: FastifyInstance) {
     },
     preHandler: [fastify.authenticate, requireRole("TUTOR", "ADMIN")],
     handler: updatePlanHandler,
+  });
+
+  // PATCH /pathway-plans/:id/publish (owner TUTOR or ADMIN) — one-way publish
+  fastify.patch("/:id/publish", {
+    schema: {
+      tags: ["Pathway Plans"],
+      summary: "Publish a draft plan so the student can see it",
+      params: pathwayPlanRef("planParamsSchema"),
+      response: {
+        200: pathwayPlanRef("createPlanResponseSchema"),
+        403: pathwayPlanRef("planErrorResponseSchema"),
+        404: pathwayPlanRef("planErrorResponseSchema"),
+      },
+    },
+    preHandler: [fastify.authenticate, requireRole("TUTOR", "ADMIN")],
+    handler: publishPlanHandler,
   });
 
   // DELETE /pathway-plans/:id (owner TUTOR or ADMIN)

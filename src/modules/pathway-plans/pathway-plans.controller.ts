@@ -13,6 +13,7 @@ import {
   getPlan,
   updatePlan,
   deletePlan,
+  publishPlan,
   addPathwayToPlan,
   removePathwayFromPlan,
   assertCanAccessPlan,
@@ -46,7 +47,7 @@ export async function getPlanHandler(
 
   const plan = await request.server.prisma.pathwayPlan.findUnique({
     where: { id },
-    select: { tutorId: true, studentId: true },
+    select: { tutorId: true, studentId: true, isPublished: true },
   });
   if (!plan) {
     return reply.status(404).send({
@@ -86,6 +87,19 @@ export async function deletePlanHandler(
   await deletePlan(request.server.prisma, id);
   request.log.info({ planId: id, deletedBy: request.user.sub }, "Pathway plan deleted");
   return reply.send({ success: true, message: "Pathway plan deleted" });
+}
+
+export async function publishPlanHandler(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const { id } = request.params as PlanParams;
+
+  await assertOwnsPlan(request.server.prisma, request.user, id);
+
+  const data = await publishPlan(request.server.prisma, id);
+  request.log.info({ planId: id, publishedBy: request.user.sub }, "Pathway plan published");
+  return reply.send({ success: true, message: "Pathway plan published", data });
 }
 
 export async function addPlanPathwayHandler(

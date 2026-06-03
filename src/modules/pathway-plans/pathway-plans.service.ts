@@ -24,6 +24,7 @@ const PLAN_WITH_PROGRESS_SELECT = {
   studentId: true,
   dueDate: true,
   completedAt: true,
+  isPublished: true,
   createdAt: true,
   updatedAt: true,
   student: { select: { id: true, fullName: true } },
@@ -116,6 +117,7 @@ function formatPlanBase(plan: PlanWithProgress) {
     tutorName: plan.tutor ? decryptField(plan.tutor.fullName).trim() : null,
     dueDate: plan.dueDate?.toISOString() ?? null,
     completedAt: plan.completedAt?.toISOString() ?? null,
+    isPublished: plan.isPublished,
     createdAt: plan.createdAt.toISOString(),
     updatedAt: plan.updatedAt.toISOString(),
     subjects: summary.subjects,
@@ -152,10 +154,13 @@ async function loadPlanForAccess(prisma: PrismaClient, planId: string) {
 export async function assertCanAccessPlan(
   prisma: PrismaClient,
   actor: Actor,
-  plan: { tutorId: string; studentId: string }
+  plan: { tutorId: string; studentId: string; isPublished: boolean }
 ) {
   if (actor.role === "ADMIN") return;
   if (actor.role === "TUTOR" && plan.tutorId === actor.sub) return;
+  // Below here the actor is a student, parent, or non-owning tutor. Draft plans
+  // are invisible to them — 404 (not 403) so a draft's existence isn't leaked.
+  if (!plan.isPublished) throw createHttpError(404, "Pathway plan not found");
   if (actor.role === "STUDENT" && plan.studentId === actor.sub) return;
   if (actor.role === "PARENT") {
     await assertParentOwnsStudent(prisma, actor.sub, plan.studentId);
@@ -191,6 +196,9 @@ export async function createPlan(
     throw createHttpError(404, "Student not found");
   }
 
+  // Plans are created as drafts (isPublished defaults to false). The student is
+  // not notified yet — that happens on publish, once the plan is actually
+  // visible to them.
   const created = await prisma.pathwayPlan.create({
     data: {
       name: input.name,
@@ -201,15 +209,49 @@ export async function createPlan(
     select: PLAN_WITH_PROGRESS_SELECT,
   });
 
-  void createNotification(prisma, {
-    userId: input.studentId,
-    type: "PATHWAY_PLAN_ASSIGNED",
-    title: "New Learning Plan Assigned",
-    message: `Your tutor has created a new learning plan: ${input.name}`,
-    data: { planId: created.id, planName: created.name },
-  });
-
   return formatPlanListItem(created);
+}
+
+// ── publishPlan ──────────────────────────────────────────────────────────────
+
+/**
+ * Publish a draft plan. Publishing is one-way: once a plan is visible to the
+ * student it stays visible (to hide it, the tutor deletes the plan). The
+ * "plan assigned" notification fires here so the student only hears about a
+ * plan they can actually open.
+ */
+export async function publishPlan(prisma: PrismaClient, planId: string) {
+  const existing = await prisma.pathwayPlan.findUnique({
+    where: { id: planId },
+    select: { id: true, isPublished: true },
+  });
+  if (!existing) throw createHttpError(404, "Pathway plan not found");
+
+  if (!existing.isPublished) {
+    await prisma.pathwayPlan.update({
+      where: { id: planId },
+      data: { isPublished: true },
+    });
+  }
+
+  const plan = await prisma.pathwayPlan.findUnique({
+    where: { id: planId },
+    select: PLAN_WITH_PROGRESS_SELECT,
+  });
+  if (!plan) throw createHttpError(404, "Pathway plan not found");
+
+  // Only notify on the first publish, so re-publishing a no-op never re-pings.
+  if (!existing.isPublished) {
+    void createNotification(prisma, {
+      userId: plan.studentId,
+      type: "PATHWAY_PLAN_ASSIGNED",
+      title: "New Learning Plan Assigned",
+      message: `Your tutor has assigned you a new learning plan: ${plan.name}`,
+      data: { planId: plan.id, planName: plan.name },
+    });
+  }
+
+  return formatPlanListItem(plan);
 }
 
 // ── listPlans ────────────────────────────────────────────────────────────────
@@ -226,6 +268,8 @@ export async function listPlans(
     if (query.studentId) where.studentId = query.studentId;
   } else if (actor.role === "STUDENT") {
     where.studentId = actor.sub;
+    // Students never see draft plans.
+    where.isPublished = true;
   } else if (actor.role === "PARENT") {
     // Parent may only see plans for children they are linked to.
     if (query.studentId) {
@@ -238,6 +282,8 @@ export async function listPlans(
       });
       where.studentId = { in: relations.map((r) => r.studentId) };
     }
+    // Parents never see draft plans either.
+    where.isPublished = true;
   } else if (actor.role === "ADMIN") {
     if (query.studentId) where.studentId = query.studentId;
   }

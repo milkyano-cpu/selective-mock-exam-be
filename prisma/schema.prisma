@@ -783,6 +783,9 @@ model PathwayPlan {
   studentId   String           @map("student_id")
   dueDate     DateTime?        @map("due_date")
   completedAt DateTime?        @map("completed_at")
+  // Draft until the tutor publishes. Students and parents only ever see
+  // published plans, so tutors can set up nodes/questions in private first.
+  isPublished Boolean          @default(false) @map("is_published")
   createdAt   DateTime         @default(now()) @map("created_at")
   updatedAt   DateTime         @updatedAt @map("updated_at")
 
