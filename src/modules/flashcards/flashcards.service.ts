@@ -221,7 +221,12 @@ export async function updateFlashcard(prisma: PrismaClient, studentId: string, i
 
 export async function deleteFlashcard(prisma: PrismaClient, studentId: string, id: string) {
   await findOwnedFlashcard(prisma, studentId, id);
-  await prisma.flashcard.delete({ where: { id } });
+  // FlashcardReview references Flashcard with ON DELETE RESTRICT, so the review
+  // row must be removed before the card itself, within a single transaction.
+  await prisma.$transaction(async (tx) => {
+    await tx.flashcardReview.deleteMany({ where: { flashcardId: id } });
+    await tx.flashcard.delete({ where: { id } });
+  });
 }
 
 export async function reviewFlashcard(prisma: PrismaClient, studentId: string, id: string, rating: ReviewRating) {

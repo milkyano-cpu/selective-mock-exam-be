@@ -72,9 +72,11 @@ function createTx() {
           backContent: "Trimmed back",
         })
       ),
+      delete: jest.fn(async () => flashcard()),
     },
     flashcardReview: {
       create: jest.fn(async () => undefined),
+      deleteMany: jest.fn(async () => ({ count: 1 })),
     },
   };
 }
@@ -269,7 +271,8 @@ describe("flashcards module", () => {
       data: { frontContent: "Updated front" },
       select: expect.any(Object),
     });
-    expect(prisma.flashcard.delete).toHaveBeenCalledWith({ where: { id: "flashcard-1" } });
+    expect(prisma.tx.flashcardReview.deleteMany).toHaveBeenCalledWith({ where: { flashcardId: "flashcard-1" } });
+    expect(prisma.tx.flashcard.delete).toHaveBeenCalledWith({ where: { id: "flashcard-1" } });
     expect(updated.frontContent).toBe("Updated front");
   });
 
