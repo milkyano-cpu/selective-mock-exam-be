@@ -1,7 +1,8 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import {
   assertCanUsePracticeTopic,
-  assertForumWriteAllowed,
+  assertForumAccess,
+  assertForumWriteAccess,
   assertPremiumStudentFeature,
   getPracticeAccess,
   requireStandardStudentFeature,
@@ -12,6 +13,7 @@ const subjectOneTopics = [
     id: "topic-a",
     subjectId: "subject-1",
     name: "Algebra",
+    isFreeTopic: false,
     subject: { id: "subject-1", name: "Maths" },
     _count: { questions: 0 },
   },
@@ -19,6 +21,7 @@ const subjectOneTopics = [
     id: "topic-b",
     subjectId: "subject-1",
     name: "Fractions",
+    isFreeTopic: true,
     subject: { id: "subject-1", name: "Maths" },
     _count: { questions: 3 },
   },
@@ -30,23 +33,45 @@ const allTopics = [
     id: "topic-c",
     subjectId: "subject-2",
     name: "Analogies",
+    isFreeTopic: true,
     subject: { id: "subject-2", name: "Verbal Reasoning" },
     _count: { questions: 4 },
   },
 ];
 
-function mockPrisma(tier: "BASIC" | "STANDARD" | "PREMIUM" = "BASIC") {
+function mockPrisma(
+  tier: "BASIC" | "STANDARD" | "PREMIUM" = "BASIC",
+  options: { isForumBanned?: boolean; activeMajorWarning?: boolean } = {}
+) {
   return {
     user: {
-      findUnique: jest.fn(async () => ({ id: "student-1", role: "STUDENT", tier })),
+      findUnique: jest.fn(async () => ({
+        id: "student-1",
+        role: "STUDENT",
+        tier,
+        isForumBanned: options.isForumBanned ?? false,
+      })),
+    },
+    systemSetting: {
+      findUnique: jest.fn(async () => null),
+    },
+    practiceSession: {
+      count: jest.fn(async () => 0),
+    },
+    forumWarning: {
+      findFirst: jest.fn(async () => (options.activeMajorWarning ? { id: "warning-1" } : null)),
     },
     topic: {
       findUnique: jest.fn(async ({ where }: { where: { id: string } }) => {
         const topic = allTopics.find((item) => item.id === where.id);
-        return topic ? { subjectId: topic.subjectId } : null;
+        return topic ? { subjectId: topic.subjectId, isFreeTopic: topic.isFreeTopic } : null;
       }),
-      findMany: jest.fn(async ({ where }: { where?: { subjectId?: string } } = {}) =>
-        where?.subjectId ? allTopics.filter((topic) => topic.subjectId === where.subjectId) : allTopics
+      findMany: jest.fn(async ({ where }: { where?: { subjectId?: string; isFreeTopic?: boolean } } = {}) =>
+        allTopics.filter((topic) => {
+          if (where?.subjectId && topic.subjectId !== where.subjectId) return false;
+          if (where?.isFreeTopic !== undefined && topic.isFreeTopic !== where.isFreeTopic) return false;
+          return true;
+        })
       ),
     },
   };
@@ -81,21 +106,62 @@ describe("membership entitlement helpers", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("makes Basic students read-only in forum write flows", async () => {
+  it("restricts forum access to Premium students; parents/tutors/admins are exempt", async () => {
+    // Students below Premium are blocked entirely (read + write).
     await expect(
-      assertForumWriteAllowed(mockPrisma("BASIC") as never, { sub: "student-1", role: "STUDENT" })
+      assertForumAccess(mockPrisma("BASIC") as never, { sub: "student-1", role: "STUDENT" })
     ).rejects.toMatchObject({
       statusCode: 403,
-      message: "Basic members can read the forum but cannot post or comment",
+      message: "Forum access requires a Premium membership.",
     });
 
     await expect(
-      assertForumWriteAllowed(mockPrisma("STANDARD") as never, { sub: "student-1", role: "STUDENT" })
+      assertForumAccess(mockPrisma("STANDARD") as never, { sub: "student-1", role: "STUDENT" })
+    ).rejects.toMatchObject({ statusCode: 403 });
+
+    // Parents have forum access on any tier (no Premium requirement).
+    await expect(
+      assertForumAccess(mockPrisma("BASIC") as never, { sub: "parent-1", role: "PARENT" })
+    ).resolves.toBeUndefined();
+
+    // PREMIUM students are allowed.
+    await expect(
+      assertForumAccess(mockPrisma("PREMIUM") as never, { sub: "student-1", role: "STUDENT" })
     ).resolves.toBeUndefined();
 
     await expect(
-      assertForumWriteAllowed(mockPrisma("PREMIUM") as never, { sub: "student-1", role: "STUDENT" })
+      assertForumAccess(
+        mockPrisma("PREMIUM", { isForumBanned: true }) as never,
+        { sub: "student-1", role: "STUDENT" }
+      )
+    ).rejects.toMatchObject({
+      statusCode: 403,
+      message: "Your forum access has been suspended due to repeated violations.",
+    });
+
+    // Tutor and Admin bypass the tier check regardless of tier.
+    await expect(
+      assertForumAccess(mockPrisma("BASIC") as never, { sub: "tutor-1", role: "TUTOR" })
     ).resolves.toBeUndefined();
+    await expect(
+      assertForumAccess(mockPrisma("BASIC") as never, { sub: "admin-1", role: "ADMIN" })
+    ).resolves.toBeUndefined();
+  });
+
+  it("restricts forum posting for 24 hours after a major warning", async () => {
+    await expect(
+      assertForumWriteAccess(mockPrisma("PREMIUM") as never, { sub: "student-1", role: "STUDENT" })
+    ).resolves.toBeUndefined();
+
+    await expect(
+      assertForumWriteAccess(
+        mockPrisma("PREMIUM", { activeMajorWarning: true }) as never,
+        { sub: "student-1", role: "STUDENT" }
+      )
+    ).rejects.toMatchObject({
+      statusCode: 403,
+      message: "Posting is restricted for 24 hours after a major forum warning.",
+    });
   });
 
   it("returns a Standard upgrade response for Basic students accessing Standard features", async () => {
@@ -175,6 +241,7 @@ describe("membership entitlement helpers", () => {
           availableQuestions: 4,
         },
       ],
+      dailyUsage: { used: 0, limit: 5 },
     });
   });
 
@@ -183,12 +250,12 @@ describe("membership entitlement helpers", () => {
 
     await expect(assertCanUsePracticeTopic(mockPrisma("BASIC") as never, "student-1", "topic-a")).rejects.toMatchObject({
       statusCode: 403,
-      message: "Basic members can only practice the first topic in each subject",
+      message: "Basic members can only practice free topics.",
     });
 
     await expect(assertCanUsePracticeTopic(mockPrisma("BASIC") as never, "student-1", null)).rejects.toMatchObject({
       statusCode: 403,
-      message: "Basic members can only practice the first topic in each subject",
+      message: "Basic members can only practice free topics.",
     });
 
     await expect(assertCanUsePracticeTopic(mockPrisma("STANDARD") as never, "student-1", null)).resolves.toBeUndefined();

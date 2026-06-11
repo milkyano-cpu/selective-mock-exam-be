@@ -55,6 +55,7 @@ model User {
   role                     Role
   status                   UserStatus @default(ACTIVE)
   tier                     Tier       @default(BASIC)
+  isForumBanned            Boolean    @default(false) @map("is_forum_banned")
   phoneNumber              String?    @map("phone_number") // AES-256-GCM encrypted if set
   address                  String? // AES-256-GCM encrypted if set
   gender                   Gender?
@@ -945,6 +946,8 @@ enum ForumStatus {
   FLAGGED
   UNDER_REVIEW
   REJECTED
+  HIDDEN
+  REMOVED
 }
 
 enum FlagReason {
@@ -962,19 +965,22 @@ enum FlagStatus {
 }
 
 enum WarningLevel {
-  WARNING
-  SUSPEND
+  MINOR
+  MAJOR
+  BAN
 }
 
 model ForumThread {
-  id        String       @id @default(uuid())
-  authorId  String       @map("author_id")
-  segment   ForumSegment
-  title     String
-  isPinned  Boolean      @default(false) @map("is_pinned")
-  isLocked  Boolean      @default(false) @map("is_locked")
-  createdAt DateTime     @default(now()) @map("created_at")
-  updatedAt DateTime     @updatedAt @map("updated_at")
+  id          String       @id @default(uuid())
+  authorId    String       @map("author_id")
+  segment     ForumSegment
+  title       String
+  isPinned    Boolean      @default(false) @map("is_pinned")
+  isLocked    Boolean      @default(false) @map("is_locked")
+  // Mirrors the opening post's anonymity so list/detail can mask the author.
+  isAnonymous Boolean      @default(false) @map("is_anonymous")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
 
   author User        @relation("ForumThreadAuthor", fields: [authorId], references: [id])
   posts  ForumPost[]

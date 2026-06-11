@@ -20,6 +20,7 @@ const getMeResponseSchema = z.object({
     role: z.string(),
     status: z.string(),
     tier: z.enum(["BASIC", "STANDARD", "PREMIUM"]),
+    isForumBanned: z.boolean(),
     hasProfilePhoto: z.boolean(),
     profilePhotoUpdatedAt: z.string().nullable(),
     createdAt: z.string(),

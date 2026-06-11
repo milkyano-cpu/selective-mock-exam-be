@@ -26,6 +26,7 @@ const PROFILE_SELECT = {
   role: true,
   status: true,
   tier: true,
+  isForumBanned: true,
   profilePhotoKey: true,
   profilePhotoUpdatedAt: true,
   createdAt: true,

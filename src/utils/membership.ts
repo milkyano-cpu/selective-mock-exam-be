@@ -18,6 +18,7 @@ export type FreePracticeTopic = {
 };
 
 export const PAID_TIERS: MembershipTier[] = ["STANDARD", "PREMIUM"];
+const FORUM_MAJOR_RESTRICTION_MS = 24 * 60 * 60 * 1000;
 
 export async function getSettingValue(
   prisma: PrismaClient,
@@ -99,18 +100,55 @@ export function requireStandardStudentFeature(featureName = "This feature") {
   };
 }
 
-export async function assertForumWriteAllowed(prisma: PrismaClient, actor: AuthActor) {
-  if (actor.role !== "STUDENT") return;
+// Forum is a Premium-only feature, for both reading and writing. TUTOR and
+// ADMIN always have access (moderation/support); everyone else needs PREMIUM.
+export async function assertForumAccess(prisma: PrismaClient, actor: AuthActor) {
+  if (actor.role === "ADMIN" || actor.role === "TUTOR") return;
 
-  const tier = await getFreshUserTier(prisma, actor.sub);
-  if (tier === "BASIC") {
-    throw createHttpError(403, "Basic members can read the forum but cannot post or comment");
+  // One lookup covers both gates: Premium tier (students only) + per-forum ban
+  // (separate from account-wide status; blocks both reading and writing).
+  const user = await prisma.user.findUnique({
+    where: { id: actor.sub },
+    select: { tier: true, isForumBanned: true },
+  });
+  if (!user) throw createHttpError(404, "User not found");
+  // Parents get forum access on any tier; students need Premium.
+  if (actor.role !== "PARENT" && user.tier !== "PREMIUM") {
+    throw createHttpError(403, "Forum access requires a Premium membership.");
+  }
+  if (user.isForumBanned) {
+    throw createHttpError(403, "Your forum access has been suspended due to repeated violations.");
   }
 }
 
+export async function assertForumWriteAccess(prisma: PrismaClient, actor: AuthActor) {
+  await assertForumAccess(prisma, actor);
+  if (actor.role === "ADMIN" || actor.role === "TUTOR") return;
+
+  const restrictedSince = new Date(Date.now() - FORUM_MAJOR_RESTRICTION_MS);
+  const activeMajorWarning = await prisma.forumWarning.findFirst({
+    where: {
+      userId: actor.sub,
+      level: "MAJOR",
+      createdAt: { gte: restrictedSince },
+    },
+    select: { id: true },
+  });
+
+  if (activeMajorWarning) {
+    throw createHttpError(403, "Posting is restricted for 24 hours after a major forum warning.");
+  }
+}
+
+export function requireForumAccess() {
+  return async function forumAccessPreHandler(request: FastifyRequest, _reply: FastifyReply) {
+    await assertForumAccess(request.server.prisma, request.user);
+  };
+}
+
 export function requireForumWriteAccess() {
-  return async function forumWritePreHandler(request: FastifyRequest, _reply: FastifyReply) {
-    await assertForumWriteAllowed(request.server.prisma, request.user);
+  return async function forumWriteAccessPreHandler(request: FastifyRequest, _reply: FastifyReply) {
+    await assertForumWriteAccess(request.server.prisma, request.user);
   };
 }
 

@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from "fastify";
 import type {
   CreateThreadBody,
   CreatePostBody,
+  EditPostBody,
   FlagPostBody,
   ListThreadsQuery,
   ListPostsQuery,
@@ -11,6 +12,7 @@ import type {
   AdminListWarningsQuery,
   AdminPinThreadBody,
   AdminLockThreadBody,
+  AdminHidePostBody,
   AdminBannedWordBody,
 } from "./forum.schema.js";
 import * as forumService from "./forum.service.js";
@@ -91,11 +93,28 @@ export async function deletePostHandler(
   request: FastifyRequest<{ Params: { postId: string } }>,
   reply: FastifyReply
 ) {
-  await forumService.deletePost(
+  const { threadDeleted } = await forumService.deletePost(
     request.server.prisma,
     request.params.postId,
     request.user.sub,
     request.user.role
+  );
+  return reply.send({
+    success: true,
+    message: threadDeleted ? "Thread deleted" : "Post deleted",
+    threadDeleted,
+  });
+}
+
+export async function editPostHandler(
+  request: FastifyRequest<{ Params: { postId: string }; Body: EditPostBody }>,
+  reply: FastifyReply
+) {
+  await forumService.editPost(
+    request.server.prisma,
+    request.params.postId,
+    request.user.sub,
+    request.body.content
   );
   return reply.status(204).send();
 }
@@ -104,13 +123,17 @@ export async function flagPostHandler(
   request: FastifyRequest<{ Params: { postId: string }; Body: FlagPostBody }>,
   reply: FastifyReply
 ) {
-  await forumService.flagPost(
+  const { alreadyReported } = await forumService.flagPost(
     request.server.prisma,
     request.params.postId,
     request.user.sub,
     request.body
   );
-  return reply.send({ success: true, message: "Post flagged for review" });
+  return reply.send({
+    success: true,
+    message: alreadyReported ? "You've already reported this post" : "Post flagged for review",
+    alreadyReported,
+  });
 }
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
@@ -144,9 +167,26 @@ export async function adminWarnUserHandler(
     request.server.prisma,
     request.params.userId,
     request.user.sub,
+    request.user.role,
     request.body
   );
   return reply.send({ success: true, message: "Warning issued" });
+}
+
+export async function liftForumBanHandler(
+  request: FastifyRequest<{ Params: { userId: string } }>,
+  reply: FastifyReply
+) {
+  await forumService.liftForumBan(request.server.prisma, request.params.userId);
+  return reply.status(204).send();
+}
+
+export async function deleteWarningHandler(
+  request: FastifyRequest<{ Params: { warningId: string } }>,
+  reply: FastifyReply
+) {
+  await forumService.deleteWarning(request.server.prisma, request.params.warningId);
+  return reply.status(204).send();
 }
 
 export async function adminListWarningsHandler(
@@ -187,6 +227,45 @@ export async function adminApprovePostHandler(
 ) {
   await forumService.adminApprovePost(request.server.prisma, request.params.postId);
   return reply.send({ success: true, message: "Post approved" });
+}
+
+export async function restorePostHandler(
+  request: FastifyRequest<{ Params: { postId: string } }>,
+  reply: FastifyReply
+) {
+  await forumService.restorePost(
+    request.server.prisma,
+    request.params.postId,
+    request.user.role
+  );
+  return reply.send({ success: true, message: "Post restored" });
+}
+
+export async function adminHidePostHandler(
+  request: FastifyRequest<{ Params: { postId: string }; Body: AdminHidePostBody }>,
+  reply: FastifyReply
+) {
+  await forumService.adminHidePost(request.server.prisma, request.params.postId, request.body);
+  return reply.send({
+    success: true,
+    message: request.body.isHidden ? "Post hidden" : "Post unhidden",
+  });
+}
+
+export async function adminRemovePostHandler(
+  request: FastifyRequest<{ Params: { postId: string } }>,
+  reply: FastifyReply
+) {
+  await forumService.adminRemovePost(request.server.prisma, request.params.postId);
+  return reply.send({ success: true, message: "Post removed" });
+}
+
+export async function listModeratedPostsHandler(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const data = await forumService.listModeratedPosts(request.server.prisma, request.user.role);
+  return reply.send({ success: true, data });
 }
 
 export async function listBannedWordsHandler(

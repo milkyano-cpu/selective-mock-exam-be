@@ -4,10 +4,10 @@ import { buildJsonSchemas } from "../../utils/build-schemas.js";
 // ── Shared enums ──────────────────────────────────────────────────────────────
 
 const forumSegmentEnum = z.enum(["STUDENT", "PARENT"]);
-const forumStatusEnum = z.enum(["ACTIVE", "FLAGGED", "UNDER_REVIEW", "REJECTED"]);
+const forumStatusEnum = z.enum(["ACTIVE", "FLAGGED", "UNDER_REVIEW", "REJECTED", "HIDDEN", "REMOVED"]);
 const flagReasonEnum = z.enum(["INAPPROPRIATE", "SPAM", "OFF_TOPIC", "MISINFORMATION", "OTHER"]);
 const flagStatusEnum = z.enum(["PENDING", "APPROVED", "REJECTED"]);
-const warningLevelEnum = z.enum(["WARNING", "SUSPEND"]);
+const warningLevelEnum = z.enum(["MINOR", "MAJOR", "BAN"]);
 
 // ── Request schemas ───────────────────────────────────────────────────────────
 
@@ -20,6 +20,10 @@ export const createThreadBodySchema = z.object({
 export const createPostBodySchema = z.object({
   content: z.string().trim().min(1).max(5000),
   isAnonymous: z.boolean().default(false),
+});
+
+export const editPostBodySchema = z.object({
+  content: z.string().trim().min(1).max(5000),
 });
 
 export const flagPostBodySchema = z.object({
@@ -50,7 +54,8 @@ export const adminListFlagsQuerySchema = z.object({
 });
 
 export const adminReviewFlagBodySchema = z.object({
-  action: z.enum(["APPROVE", "REJECT"]),
+  // APPROVE/REJECT kept for back-compat; HIDE/REMOVE are the moderation actions.
+  action: z.enum(["APPROVE", "REJECT", "HIDE", "REMOVE"]),
 });
 
 export const adminWarnUserBodySchema = z.object({
@@ -70,6 +75,10 @@ export const adminPinThreadBodySchema = z.object({
 
 export const adminLockThreadBodySchema = z.object({
   isLocked: z.boolean(),
+});
+
+export const adminHidePostBodySchema = z.object({
+  isHidden: z.boolean(),
 });
 
 export const adminBannedWordBodySchema = z.object({
@@ -92,6 +101,10 @@ export const forumUserParamSchema = z.object({
   userId: z.string().uuid(),
 });
 
+export const forumWarningParamSchema = z.object({
+  warningId: z.string().uuid(),
+});
+
 export const forumBannedWordParamSchema = z.object({
   wordId: z.string().uuid(),
 });
@@ -101,6 +114,8 @@ export const forumBannedWordParamSchema = z.object({
 const authorSchema = z.object({
   id: z.string(),
   name: z.string().nullable(),
+  // Real name behind an anonymous post — only populated for ADMIN/TUTOR viewers.
+  realName: z.string().optional(),
 });
 
 const forumPostSchema = z.object({
@@ -143,6 +158,9 @@ const forumFlagSchema = z.object({
   id: z.string(),
   postId: z.string(),
   postContent: z.string(),
+  // Flagged post's real author (ADMIN/TUTOR-only view) + whether it was posted anonymously.
+  author: authorSchema.nullable(),
+  isAnonymous: z.boolean(),
   reporter: authorSchema,
   reason: flagReasonEnum,
   note: z.string().nullable(),
@@ -156,6 +174,9 @@ const forumWarningSchema = z.object({
   admin: authorSchema,
   level: warningLevelEnum,
   reason: z.string(),
+  minorCount: z.number(),
+  majorCount: z.number(),
+  isForumBanned: z.boolean(),
   createdAt: z.string(),
 });
 
@@ -169,6 +190,7 @@ const forumBannedWordSchema = z.object({
 
 export type CreateThreadBody = z.infer<typeof createThreadBodySchema>;
 export type CreatePostBody = z.infer<typeof createPostBodySchema>;
+export type EditPostBody = z.infer<typeof editPostBodySchema>;
 export type FlagPostBody = z.infer<typeof flagPostBodySchema>;
 export type ListThreadsQuery = z.infer<typeof listThreadsQuerySchema>;
 export type CreateThreadQuery = z.infer<typeof createThreadQuerySchema>;
@@ -179,6 +201,7 @@ export type AdminWarnUserBody = z.infer<typeof adminWarnUserBodySchema>;
 export type AdminListWarningsQuery = z.infer<typeof adminListWarningsQuerySchema>;
 export type AdminPinThreadBody = z.infer<typeof adminPinThreadBodySchema>;
 export type AdminLockThreadBody = z.infer<typeof adminLockThreadBodySchema>;
+export type AdminHidePostBody = z.infer<typeof adminHidePostBodySchema>;
 export type AdminBannedWordBody = z.infer<typeof adminBannedWordBodySchema>;
 
 // ── buildJsonSchemas ──────────────────────────────────────────────────────────
@@ -187,6 +210,7 @@ export const { schemas: forumSchemas, $ref: forumRef } = buildJsonSchemas(
   {
     createThreadBodySchema,
     createPostBodySchema,
+    editPostBodySchema,
     flagPostBodySchema,
     listThreadsQuerySchema,
     createThreadQuerySchema,
@@ -197,11 +221,13 @@ export const { schemas: forumSchemas, $ref: forumRef } = buildJsonSchemas(
     adminListWarningsQuerySchema,
     adminPinThreadBodySchema,
     adminLockThreadBodySchema,
+    adminHidePostBodySchema,
     adminBannedWordBodySchema,
     forumThreadParamSchema,
     forumPostParamSchema,
     forumFlagParamSchema,
     forumUserParamSchema,
+    forumWarningParamSchema,
     forumBannedWordParamSchema,
     forumPostSchema,
     forumThreadSummarySchema,
