@@ -18,7 +18,7 @@ RUN npm prune --omit=dev
 # ================= DEVELOPMENT =================
 FROM node:20-alpine AS development
 
-RUN apk add --no-cache dumb-init && \
+RUN apk add --no-cache dumb-init ffmpeg && \
     addgroup -S nodejs && adduser -S nodejs -G nodejs
 
 WORKDIR /app
@@ -43,7 +43,7 @@ CMD ["node", "dist/server.js"]
 # ================= PRODUCTION =================
 FROM node:20-alpine AS production
 
-RUN apk add --no-cache dumb-init && \
+RUN apk add --no-cache dumb-init ffmpeg && \
     addgroup -S nodejs && adduser -S nodejs -G nodejs
 
 WORKDIR /app

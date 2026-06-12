@@ -15,11 +15,15 @@ const RESOURCE_SELECT = {
   fileSize: true,
   mimeType: true,
   allowedTiers: true,
+  subjectId: true,
   uploadedBy: true,
   createdAt: true,
   updatedAt: true,
   uploader: {
     select: { fullName: true },
+  },
+  subject: {
+    select: { id: true, name: true },
   },
 };
 
@@ -58,10 +62,12 @@ function mapResource(resource: Record<string, unknown>) {
     fileSize: number | null;
     mimeType: string | null;
     allowedTiers: Tier[];
+    subjectId: string | null;
     uploadedBy: string;
     createdAt: Date;
     updatedAt: Date;
     uploader?: { fullName: string };
+    subject?: { id: string; name: string } | null;
   };
 
   return {
@@ -75,6 +81,8 @@ function mapResource(resource: Record<string, unknown>) {
     fileSize: r.fileSize,
     mimeType: r.mimeType,
     allowedTiers: r.allowedTiers,
+    subjectId: r.subjectId,
+    subject: r.subject ?? null,
     uploadedBy: r.uploadedBy,
     uploaderName: r.uploader?.fullName ?? "",
     createdAt: r.createdAt.toISOString(),
@@ -126,11 +134,12 @@ function normalizeAllowedTiersByMinimumTier(allowedTiers: readonly Tier[] | unde
 }
 
 export async function findAllResources(prisma: PrismaClient, query: ListResourcesQuery, user: { role: Role; tier: Tier }) {
-  const { page, limit, type, search } = query;
+  const { page, limit, type, search, subjectId } = query;
   const skip = (page - 1) * limit;
 
   const where: Record<string, unknown> = {};
   if (type) where.type = type;
+  if (subjectId) where.subjectId = subjectId;
   applyTierAccessFilter(where, user);
   if (search) {
     where.OR = [
@@ -246,6 +255,7 @@ export async function createResourceRecord(
       type: input.type as ResourceType,
       videoUrl: input.type === "VIDEO" ? (input.videoUrl ?? null) : null,
       allowedTiers: normalizeAllowedTiersByMinimumTier(input.allowedTiers),
+      subjectId: input.subjectId ?? null,
       uploadedBy,
     },
     select: RESOURCE_SELECT,
@@ -271,6 +281,7 @@ export async function updateResourceRecord(
       ...(input.title !== undefined && { title: input.title }),
       ...(input.description !== undefined && { description: input.description }),
       ...(input.allowedTiers !== undefined && { allowedTiers: normalizeAllowedTiersByMinimumTier(input.allowedTiers) }),
+      ...(input.subjectId !== undefined && { subjectId: input.subjectId }),
       ...(input.fileUrl !== undefined && { fileUrl: input.fileUrl }),
       ...(input.fileName !== undefined && { fileName: input.fileName }),
       ...(input.fileSize !== undefined && { fileSize: input.fileSize }),

@@ -12,6 +12,7 @@ import {
   assertResourceCanReceiveUpload,
 } from "./resources.service.js";
 import { createHttpError } from "../../utils/http-error.js";
+import { isFaststartCandidate, remuxMp4ToFaststart } from "../../lib/video.js";
 
 function sanitizeFilename(filename: string) {
   return filename.replace(/["\\\r\n]/g, "_");
@@ -64,13 +65,22 @@ export async function getResourceHandler(request: FastifyRequest, reply: Fastify
 
 export async function previewResourceFileHandler(request: FastifyRequest, reply: FastifyReply) {
   const { id } = request.params as { id: string };
+  const { raw } = request.query as { raw?: string };
+  const isRaw = raw === "1" || raw === "true";
+
   const accessUser = await getResourceAccessUser(request.server.prisma, request.user);
   const file = await getResourcePreviewFile(request.server.prisma, request.server.storage, id, accessUser);
   const fileName = sanitizeFilename(file.fileName);
-  const contentType = resolvePreviewContentType(fileName, file.mimeType);
+  const resolvedContentType = resolvePreviewContentType(fileName, file.mimeType);
+
+  // Raw mode (in-app viewer): strip the headers that make download managers like
+  // IDM intercept the request. We drop Content-Disposition (IDM reads its filename
+  // to grab the file) and serve PDFs as text/plain so IDM doesn't see a downloadable
+  // file — pdf.js reads the raw bytes and ignores the declared content type.
+  const contentType = isRaw && resolvedContentType === "application/pdf" ? "text/plain" : resolvedContentType;
 
   reply.header("Content-Type", contentType);
-  reply.header("Content-Disposition", `inline; filename="${fileName}"`);
+  if (!isRaw) reply.header("Content-Disposition", `inline; filename="${fileName}"`);
   reply.header("Cache-Control", "private, max-age=300");
   if (file.size) reply.header("Content-Length", String(file.size));
 
@@ -125,7 +135,14 @@ export async function uploadResourceFileHandler(request: FastifyRequest, reply: 
   if (!data) throw createHttpError(400, "No file uploaded");
   await assertResourceCanReceiveUpload(request.server.prisma, id, data.mimetype);
 
-  const buffer = await data.toBuffer();
+  const originalBuffer = await data.toBuffer();
+
+  // Move the MP4/MOV moov atom to the front so the browser can start streaming
+  // immediately instead of issuing many scattered range requests to find it.
+  const buffer = isFaststartCandidate(data.mimetype, data.filename)
+    ? await remuxMp4ToFaststart(originalBuffer, request.log)
+    : originalBuffer;
+
   const safeFilename = `${Date.now()}-${data.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
 
   const fileUrl = await request.server.storage.uploadResourceFile({

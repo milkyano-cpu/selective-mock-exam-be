@@ -3,7 +3,9 @@ import { buildJsonSchemas } from "../../utils/build-schemas.js";
 
 const resourceTypeEnum = z.enum(["FILE", "VIDEO"]);
 const tierEnum = z.enum(["BASIC", "STANDARD", "PREMIUM"]);
-const allowedTiersSchema = z.array(tierEnum).min(1, "Select at least one tier").default(["BASIC", "STANDARD", "PREMIUM"]);
+// Resources are a Premium-only feature, so the default (and effective) access
+// tier is PREMIUM. Lower tiers are never granted access via the resource library.
+const allowedTiersSchema = z.array(tierEnum).min(1, "Select at least one tier").default(["PREMIUM"]);
 
 const createResourceBodySchema = z.object({
   title: z.string().min(1, "Title is required").max(200),
@@ -11,12 +13,14 @@ const createResourceBodySchema = z.object({
   type: resourceTypeEnum,
   videoUrl: z.string().url("Invalid video URL").optional().nullable(),
   allowedTiers: allowedTiersSchema,
+  subjectId: z.string().uuid("Invalid subject").optional().nullable(),
 });
 
 const updateResourceBodySchema = z.object({
   title: z.string().min(1).max(200).optional(),
   description: z.string().max(1000).optional(),
   allowedTiers: allowedTiersSchema.optional(),
+  subjectId: z.string().uuid("Invalid subject").optional().nullable(),
 });
 
 const resourceItemSchema = z.object({
@@ -30,6 +34,8 @@ const resourceItemSchema = z.object({
   fileSize: z.number().nullable(),
   mimeType: z.string().nullable(),
   allowedTiers: z.array(tierEnum),
+  subjectId: z.string().nullable(),
+  subject: z.object({ id: z.string(), name: z.string() }).nullable(),
   uploadedBy: z.string(),
   uploaderName: z.string().optional(),
   createdAt: z.string(),
@@ -41,6 +47,7 @@ const listResourcesQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(20),
   type: resourceTypeEnum.optional(),
   search: z.string().optional(),
+  subjectId: z.string().uuid("Invalid subject").optional(),
 });
 
 const listResourcesResponseSchema = z.object({

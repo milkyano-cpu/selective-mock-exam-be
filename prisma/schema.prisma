@@ -192,6 +192,7 @@ model Subject {
   passages    Passage[]
   performance StudentPerformance[]
   pathways    StudentPathway[]
+  resources   Resource[]
 
   @@map("subjects")
 }
@@ -1236,15 +1237,18 @@ model Resource {
   fileName     String?      @map("file_name")
   fileSize     Int?         @map("file_size")
   mimeType     String?      @map("mime_type")
-  allowedTiers Tier[]       @default([BASIC, STANDARD, PREMIUM]) @map("allowed_tiers")
+  allowedTiers Tier[]       @default([PREMIUM]) @map("allowed_tiers")
+  subjectId    String?      @map("subject_id")
   uploadedBy   String       @map("uploaded_by")
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
 
-  uploader User @relation("uploadedResources", fields: [uploadedBy], references: [id], onDelete: Cascade)
+  uploader User     @relation("uploadedResources", fields: [uploadedBy], references: [id], onDelete: Cascade)
+  subject  Subject? @relation(fields: [subjectId], references: [id], onDelete: SetNull)
 
   @@index([uploadedBy])
   @@index([type])
+  @@index([subjectId])
   @@index([allowedTiers], type: Gin)
   @@map("resources")
 }

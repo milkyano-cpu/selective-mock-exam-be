@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { resourceRef } from "./resources.schema.js";
 import { requireRole } from "../../utils/authz.js";
+import { requirePremiumStudentFeature } from "../../utils/membership.js";
 import {
   listResourcesHandler,
   getResourceHandler,
@@ -13,13 +14,22 @@ import {
 } from "./resources.controller.js";
 
 export async function resourceRoutes(fastify: FastifyInstance) {
-  // All authenticated users can list resources
+  // Resources are a Premium-only feature for students. TUTOR/ADMIN keep full
+  // access; PARENT has no membership tier and must be blocked from every
+  // content-serving GET route. requireRole 403s anyone not listed (so PARENT
+  // is rejected), and requirePremiumStudentFeature returns early for non-STUDENT
+  // roles, then tier-gates STUDENTs to PREMIUM.
+  const premiumResources = requirePremiumStudentFeature("Resources");
+  const resourceViewers = requireRole("STUDENT", "TUTOR", "ADMIN");
+  const viewerGuards = [fastify.authenticate, resourceViewers, premiumResources];
+
+  // Premium students (and TUTOR/ADMIN) can list resources
   fastify.get("/", {
     schema: {
       querystring: resourceRef("listResourcesQuerySchema"),
       response: { 200: resourceRef("listResourcesResponseSchema") },
     },
-    preHandler: [fastify.authenticate],
+    preHandler: viewerGuards,
     handler: listResourcesHandler,
   });
 
@@ -28,7 +38,7 @@ export async function resourceRoutes(fastify: FastifyInstance) {
       params: resourceRef("resourceIdParamSchema"),
       response: { 200: resourceRef("getResourceResponseSchema") },
     },
-    preHandler: [fastify.authenticate],
+    preHandler: viewerGuards,
     handler: getResourceHandler,
   });
 
@@ -36,7 +46,7 @@ export async function resourceRoutes(fastify: FastifyInstance) {
     schema: {
       params: resourceRef("resourceIdParamSchema"),
     },
-    preHandler: [fastify.authenticate],
+    preHandler: viewerGuards,
     handler: previewResourceFileHandler,
   });
 
@@ -44,7 +54,7 @@ export async function resourceRoutes(fastify: FastifyInstance) {
     schema: {
       params: resourceRef("resourceIdParamSchema"),
     },
-    preHandler: [fastify.authenticate],
+    preHandler: viewerGuards,
     handler: getResourceStreamUrlHandler,
   });
 
