@@ -13,10 +13,12 @@ const listFlashcardsQuerySchema = z.object({
   dueOnly: z.coerce.boolean().optional().default(false),
 });
 
+// Either a questionId (content is derived from the question) or an explicit
+// frontContent + backContent pair must be provided — enforced in the service.
 const createFlashcardBodySchema = z.object({
   questionId: z.string().uuid().optional(),
-  frontContent: z.string().trim().min(1).max(5000),
-  backContent: z.string().trim().min(1).max(5000),
+  frontContent: z.string().trim().min(1).max(5000).optional(),
+  backContent: z.string().trim().min(1).max(5000).optional(),
 });
 
 const updateFlashcardBodySchema = z.object({
@@ -48,6 +50,7 @@ const flashcardItemSchema = z.object({
   frontContent: z.string(),
   backContent: z.string(),
   source: z.enum(["manual", "question"]),
+  latexEnabled: z.boolean(),
   createdAt: z.string(),
   review: flashcardReviewSchema,
 });

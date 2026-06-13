@@ -25,6 +25,7 @@ import type {
   ListAssignmentsQuery,
 } from "./practice.schema.js";
 import { buildEssayAiFeedback, gradeEssayWithAi, type AiRubricInput } from "../../utils/ai-grader.js";
+import { generateFromMistakes } from "../flashcards/flashcards.service.js";
 
 // Strip server-only fields (like `aiModel`) from the persisted aiFeedback JSON
 // before sending it to a student. Per final-design, the AI label must stay
@@ -935,6 +936,10 @@ export async function submitPracticeSession(
       await upsertTopicPerformance(tx, studentId, topicId, subjectId, tps);
     }
   });
+
+  // Fire-and-forget: build flashcards from the newly graded mistakes. The
+  // student can still trigger generation manually if this silently fails.
+  generateFromMistakes(prisma, studentId, { limit: 50 }).catch(() => {});
 
   if (session.sourceType === "PATHWAY" && session.pathwayNodeId) {
     await completePathwayNodePractice(

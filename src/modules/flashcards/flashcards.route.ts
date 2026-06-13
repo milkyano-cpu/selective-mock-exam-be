@@ -1,6 +1,5 @@
-import type { FastifyInstance } from "fastify";
+﻿import type { FastifyInstance } from "fastify";
 import { requireRole } from "../../utils/authz.js";
-import { requirePremiumStudentFeature } from "../../utils/membership.js";
 import { flashcardRef } from "./flashcards.schema.js";
 import {
   createFlashcardHandler,
@@ -14,17 +13,15 @@ import {
 } from "./flashcards.controller.js";
 
 export async function flashcardRoutes(fastify: FastifyInstance) {
-  const premiumFlashcards = requirePremiumStudentFeature("Flashcards");
-
   fastify.get("/due", {
     schema: { response: { 200: flashcardRef("flashcardsDueResponseSchema") } },
-    preHandler: [fastify.authenticate, requireRole("STUDENT"), premiumFlashcards],
+    preHandler: [fastify.authenticate, requireRole("STUDENT")],
     handler: getDueFlashcardsHandler,
   });
 
   fastify.get("/stats", {
     schema: { response: { 200: flashcardRef("flashcardsStatsResponseSchema") } },
-    preHandler: [fastify.authenticate, requireRole("STUDENT"), premiumFlashcards],
+    preHandler: [fastify.authenticate, requireRole("STUDENT")],
     handler: getFlashcardStatsHandler,
   });
 
@@ -33,7 +30,7 @@ export async function flashcardRoutes(fastify: FastifyInstance) {
       body: flashcardRef("generateFromMistakesBodySchema"),
       response: { 201: flashcardRef("generateFromMistakesResponseSchema") },
     },
-    preHandler: [fastify.authenticate, requireRole("STUDENT"), premiumFlashcards],
+    preHandler: [fastify.authenticate, requireRole("STUDENT")],
     handler: generateFromMistakesHandler,
   });
 
@@ -42,7 +39,7 @@ export async function flashcardRoutes(fastify: FastifyInstance) {
       querystring: flashcardRef("listFlashcardsQuerySchema"),
       response: { 200: flashcardRef("flashcardsListResponseSchema") },
     },
-    preHandler: [fastify.authenticate, requireRole("STUDENT"), premiumFlashcards],
+    preHandler: [fastify.authenticate, requireRole("STUDENT")],
     handler: listFlashcardsHandler,
   });
 
@@ -51,7 +48,7 @@ export async function flashcardRoutes(fastify: FastifyInstance) {
       body: flashcardRef("createFlashcardBodySchema"),
       response: { 201: flashcardRef("flashcardResponseSchema") },
     },
-    preHandler: [fastify.authenticate, requireRole("STUDENT"), premiumFlashcards],
+    preHandler: [fastify.authenticate, requireRole("STUDENT")],
     handler: createFlashcardHandler,
   });
 
@@ -61,7 +58,7 @@ export async function flashcardRoutes(fastify: FastifyInstance) {
       body: flashcardRef("updateFlashcardBodySchema"),
       response: { 200: flashcardRef("flashcardResponseSchema") },
     },
-    preHandler: [fastify.authenticate, requireRole("STUDENT"), premiumFlashcards],
+    preHandler: [fastify.authenticate, requireRole("STUDENT")],
     handler: updateFlashcardHandler,
   });
 
@@ -70,7 +67,7 @@ export async function flashcardRoutes(fastify: FastifyInstance) {
       params: flashcardRef("flashcardIdParamSchema"),
       response: { 200: flashcardRef("deleteFlashcardResponseSchema") },
     },
-    preHandler: [fastify.authenticate, requireRole("STUDENT"), premiumFlashcards],
+    preHandler: [fastify.authenticate, requireRole("STUDENT")],
     handler: deleteFlashcardHandler,
   });
 
@@ -80,7 +77,7 @@ export async function flashcardRoutes(fastify: FastifyInstance) {
       body: flashcardRef("reviewFlashcardBodySchema"),
       response: { 200: flashcardRef("flashcardResponseSchema") },
     },
-    preHandler: [fastify.authenticate, requireRole("STUDENT"), premiumFlashcards],
+    preHandler: [fastify.authenticate, requireRole("STUDENT")],
     handler: reviewFlashcardHandler,
   });
 }

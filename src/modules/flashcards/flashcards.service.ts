@@ -18,6 +18,9 @@ const FLASHCARD_SELECT = {
   frontContent: true,
   backContent: true,
   createdAt: true,
+  question: {
+    select: { latexEnabled: true },
+  },
   review: {
     select: {
       easeFactor: true,
@@ -99,6 +102,7 @@ function serializeFlashcard(card: FlashcardRecord, now = new Date()) {
     frontContent: card.frontContent,
     backContent: card.backContent,
     source: card.questionId ? "question" as const : "manual" as const,
+    latexEnabled: card.question?.latexEnabled ?? false,
     createdAt: card.createdAt.toISOString(),
     review: {
       easeFactor: review ? toNumber(review.easeFactor) : INITIAL_EASE_FACTOR,
@@ -179,9 +183,28 @@ export async function getDueFlashcards(prisma: PrismaClient, studentId: string, 
 }
 
 export async function createFlashcard(prisma: PrismaClient, studentId: string, body: CreateFlashcardBody) {
+  let frontContent = body.frontContent?.trim() ?? "";
+  let backContent = body.backContent?.trim() ?? "";
+
   if (body.questionId) {
-    const question = await prisma.question.findUnique({ where: { id: body.questionId }, select: { id: true } });
+    const question = await prisma.question.findUnique({
+      where: { id: body.questionId },
+      select: { id: true, questionText: true, correctAnswer: true, explanation: true, options: true },
+    });
     if (!question) throw createHttpError(404, "Question not found");
+
+    const existing = await prisma.flashcard.findFirst({
+      where: { studentId, questionId: body.questionId },
+      select: { id: true },
+    });
+    if (existing) throw createHttpError(409, "A flashcard for this question already exists");
+
+    if (!frontContent) frontContent = question.questionText.trim();
+    if (!backContent) backContent = buildBackContent(question);
+  }
+
+  if (!frontContent || !backContent) {
+    throw createHttpError(422, "Provide a questionId or both frontContent and backContent");
   }
 
   const card = await prisma.$transaction(async (tx) => {
@@ -189,8 +212,8 @@ export async function createFlashcard(prisma: PrismaClient, studentId: string, b
       data: {
         studentId,
         questionId: body.questionId ?? null,
-        frontContent: body.frontContent.trim(),
-        backContent: body.backContent.trim(),
+        frontContent,
+        backContent,
       },
       select: FLASHCARD_SELECT,
     });
@@ -276,31 +299,64 @@ function buildBackContent(question: {
 }
 
 export async function generateFromMistakes(prisma: PrismaClient, studentId: string, body: GenerateFromMistakesBody) {
-  const wrongAnswers = await prisma.studentAnswer.findMany({
-    where: {
-      isCorrect: false,
-      session: { studentId, status: "GRADED" },
-      question: { flashcards: { none: { studentId } } },
-    },
-    orderBy: { session: { endTime: "desc" } },
-    take: body.limit,
-    select: {
-      question: {
-        select: {
-          id: true,
-          questionText: true,
-          correctAnswer: true,
-          explanation: true,
-          options: true,
+  const [wrongExamAnswers, wrongPracticeAnswers] = await Promise.all([
+    prisma.studentAnswer.findMany({
+      where: {
+        isCorrect: false,
+        session: { studentId, status: "GRADED" },
+        question: { type: "MCQ", flashcards: { none: { studentId } } },
+      },
+      orderBy: { session: { endTime: "desc" } },
+      take: body.limit,
+      select: {
+        question: {
+          select: {
+            id: true,
+            questionText: true,
+            correctAnswer: true,
+            explanation: true,
+            options: true,
+          },
         },
       },
-    },
+    }),
+    prisma.practiceAnswer.findMany({
+      where: {
+        isCorrect: false,
+        session: { studentId, status: "COMPLETED" },
+        question: { type: "MCQ", flashcards: { none: { studentId } } },
+      },
+      orderBy: { session: { endedAt: "desc" } },
+      take: body.limit,
+      select: {
+        question: {
+          select: {
+            id: true,
+            questionText: true,
+            correctAnswer: true,
+            explanation: true,
+            options: true,
+          },
+        },
+      },
+    }),
+  ]);
+
+  const wrongAnswers = [...wrongExamAnswers, ...wrongPracticeAnswers].slice(0, body.limit);
+
+  // The same question can be answered incorrectly in both an exam and a
+  // practice session — it must only produce one flashcard.
+  const seen = new Set<string>();
+  const uniqueAnswers = wrongAnswers.filter(({ question }) => {
+    if (seen.has(question.id)) return false;
+    seen.add(question.id);
+    return true;
   });
 
   const cards = [];
   let skipped = 0;
 
-  for (const answer of wrongAnswers) {
+  for (const answer of uniqueAnswers) {
     const question = answer.question;
     if (!question.questionText.trim()) {
       skipped++;

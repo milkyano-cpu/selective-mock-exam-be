@@ -40,6 +40,7 @@ function serialized(overrides: Record<string, unknown> = {}) {
     frontContent: "Front",
     backContent: "Back",
     source: "manual",
+    latexEnabled: false,
     createdAt: yesterday.toISOString(),
     review: {
       easeFactor: 2.5,
@@ -102,6 +103,9 @@ function mockPrisma(overrides: Record<string, unknown> = {}) {
       findUnique: jest.fn(async () => ({ id: "question-1" })),
     },
     studentAnswer: {
+      findMany: jest.fn(async () => []),
+    },
+    practiceAnswer: {
       findMany: jest.fn(async () => []),
     },
     ...overrides,
@@ -409,6 +413,23 @@ describe("flashcards module", () => {
           },
         ]),
       },
+      practiceAnswer: {
+        // Same question missed in practice too — dedup must keep one card.
+        findMany: jest.fn(async () => [
+          {
+            question: {
+              id: "question-1",
+              questionText: "What is 2+2?",
+              correctAnswer: "B",
+              explanation: "Two plus two is four.",
+              options: [
+                { key: "A", text: "3" },
+                { key: "B", text: "4" },
+              ],
+            },
+          },
+        ]),
+      },
     });
     prisma.$transaction
       .mockImplementationOnce(async (callback: (txArg: typeof prisma.tx) => Promise<unknown>) => {
@@ -443,9 +464,19 @@ describe("flashcards module", () => {
       where: {
         isCorrect: false,
         session: { studentId: "student-1", status: "GRADED" },
-        question: { flashcards: { none: { studentId: "student-1" } } },
+        question: { type: "MCQ", flashcards: { none: { studentId: "student-1" } } },
       },
       orderBy: { session: { endTime: "desc" } },
+      take: 10,
+      select: expect.any(Object),
+    });
+    expect(prisma.practiceAnswer.findMany).toHaveBeenCalledWith({
+      where: {
+        isCorrect: false,
+        session: { studentId: "student-1", status: "COMPLETED" },
+        question: { type: "MCQ", flashcards: { none: { studentId: "student-1" } } },
+      },
+      orderBy: { session: { endedAt: "desc" } },
       take: 10,
       select: expect.any(Object),
     });

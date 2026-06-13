@@ -14,6 +14,7 @@ import {
   IMAGE_SUMMARY_SELECT,
   serializeImageSummary,
 } from "../images/images.service.js";
+import { generateFromMistakes } from "../flashcards/flashcards.service.js";
 import type {
   CreateExamBody,
   UpdateExamBody,
@@ -2327,6 +2328,10 @@ export async function submitManualGrades(
       sub: refreshedSession.studentId,
       role: "STUDENT",
     });
+
+    // Fire-and-forget: build flashcards from the newly graded mistakes. The
+    // student can still trigger generation manually if this silently fails.
+    generateFromMistakes(prisma, refreshedSession.studentId, { limit: 50 }).catch(() => {});
   }
 
   return {

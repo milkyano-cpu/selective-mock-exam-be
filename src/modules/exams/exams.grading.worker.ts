@@ -5,6 +5,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { buildEssayAiFeedback, gradeEssayWithAi, type AiRubricInput } from "../../utils/ai-grader.js";
 import { resolveImagesAsBase64 } from "../images/images.service.js";
 import { createNotification } from "../../lib/notify.js";
+import { generateFromMistakes } from "../flashcards/flashcards.service.js";
 import { getExamAttemptSummary } from "./exams.service.js";
 
 export interface GradingJobData {
@@ -539,6 +540,10 @@ async function gradeSession(prisma: PrismaClient, sessionId: string, logger: Fas
       sub: session.studentId,
       role: "STUDENT",
     });
+
+    // Fire-and-forget: build flashcards from the newly graded mistakes. The
+    // student can still trigger generation manually if this silently fails.
+    generateFromMistakes(prisma, session.studentId, { limit: 50 }).catch(() => {});
   }
 
   if (pendingReviewCount > 0) {
