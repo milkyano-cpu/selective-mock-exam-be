@@ -3,7 +3,6 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import fp from "fastify-plugin";
 import type { FastifyInstance } from "fastify";
 import { env } from "../config/env.js";
-import { installDnsFallback } from "../config/dns.js";
 
 // pg-connection-string treats 'require'/'prefer'/'verify-ca' as 'verify-full' today,
 // but will change semantics in pg v9. Be explicit now to silence the warning.
@@ -12,11 +11,6 @@ function normalizeConnectionString(url: string): string {
 }
 
 async function prismaPlugin(fastify: FastifyInstance) {
-  const dnsServers = installDnsFallback();
-  if (dnsServers.length > 0) {
-    fastify.log.info({ dnsServers }, "Installed Node DNS fallback");
-  }
-
   const adapter = new PrismaPg({ connectionString: normalizeConnectionString(env.DATABASE_URL) });
 
   const prisma = new PrismaClient({
