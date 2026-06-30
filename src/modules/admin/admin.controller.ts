@@ -99,7 +99,10 @@ export async function listUsersHandler(
     });
   }
 
-  const result = await listUsersService(request.server.prisma, query);
+  // Profile fields & parent/student relations are admin-only; tutors get the basic list.
+  const result = await listUsersService(request.server.prisma, query, {
+    includeAdminFields: request.user?.role === "ADMIN",
+  });
 
   const data = await Promise.all(
     result.data.map(async ({ profilePhotoKey, ...user }) => {

@@ -168,8 +168,12 @@ function decryptRelatedUser(u: { id: string; fullName: string; emailEncrypted: s
 
 export async function listUsers(
   prisma: PrismaClient,
-  query: ListUsersQuery
+  query: ListUsersQuery,
+  options: { includeAdminFields?: boolean } = {}
 ) {
+  // The profile fields (gender/yearLevel/schoolName/address) and parent/student
+  // relations are admin-only (SME-126/127/128). Tutors get the basic list.
+  const includeAdminFields = options.includeAdminFields ?? true;
   const { page, limit, search, role, tiers, sortBy, order } = query;
   const skip = (page - 1) * limit;
 
@@ -209,6 +213,11 @@ export async function listUsers(
   return {
     data: rawUsers.map((u) => {
       const { fullNameTokens, parents, children, ...rest } = decryptUser(u);
+      // Non-admin (tutor) view: strip the admin-only profile fields entirely.
+      if (!includeAdminFields) {
+        const { gender, yearLevel, schoolName, address, ...basic } = rest;
+        return basic;
+      }
       // Students carry their linked parents; parents carry their linked
       // students. Other roles have neither, so we drop the empty relations.
       if (role === "STUDENT") {

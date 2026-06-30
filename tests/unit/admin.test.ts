@@ -294,6 +294,38 @@ describe("admin module", () => {
     expect(parents.data[0]).not.toHaveProperty("parents");
   });
 
+  it("strips admin-only profile fields and relations for the tutor view", async () => {
+    const parent = userCrypto.encryptUserFields({ email: "parent@example.com", fullName: "Parent One" });
+    const prisma = mockPrisma({
+      user: {
+        ...mockPrisma().user,
+        findMany: jest.fn(async () => [
+          rawUser("kid@example.com", "Kid One", {
+            id: "student-9",
+            role: "STUDENT",
+            gender: "MALE",
+            yearLevel: "Year 7",
+            schoolName: "Springfield High",
+            parents: [{ parent: { id: "parent-9", fullName: parent.fullName, emailEncrypted: parent.emailEncrypted } }],
+            children: [],
+          }),
+        ]),
+      },
+    });
+
+    const tutorView = await adminService.listUsers(
+      prisma as never,
+      { page: 1, limit: 10, role: "STUDENT", sortBy: "createdAt", order: "desc" },
+      { includeAdminFields: false }
+    );
+
+    const student = tutorView.data[0];
+    expect(student).toMatchObject({ email: "kid@example.com", fullName: "Kid One", role: "STUDENT" });
+    for (const field of ["gender", "yearLevel", "schoolName", "address", "parents", "children"]) {
+      expect(student).not.toHaveProperty(field);
+    }
+  });
+
   it("gets, updates, status-updates, and deletes tutors", async () => {
     const prisma = mockPrisma({
       user: {
