@@ -1,6 +1,11 @@
 -- Align passages with the final design:
 -- passage_format captures the content form, passage_type captures the passage category.
 
+-- Ensure the legacy text column exists so this migration is reproducible on a
+-- fresh database. On older DBs it was added out-of-band (db push); on fresh
+-- DBs it never existed. It is dropped again further down after the backfill.
+ALTER TABLE "passages" ADD COLUMN IF NOT EXISTS "passage_format" TEXT;
+
 CREATE TYPE "PassageFormat" AS ENUM ('text', 'poem', 'article', 'visual_text', 'image_only');
 CREATE TYPE "PassageType_new" AS ENUM ('comprehension', 'poem', 'visual');
 
