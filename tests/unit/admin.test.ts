@@ -236,6 +236,64 @@ describe("admin module", () => {
     expect(tutors.meta).toEqual({ page: 1, limit: 10, total: 1, totalPages: 1 });
   });
 
+  it("exposes student profile fields and decrypted parent/student relations", async () => {
+    const parent = userCrypto.encryptUserFields({ email: "parent@example.com", fullName: "Parent One" });
+    const child = userCrypto.encryptUserFields({ email: "kid@example.com", fullName: "Kid One" });
+    const address = userCrypto.encryptUserFields({ email: "x@x.com", fullName: "x", address: "1 Main St" }).address;
+
+    const studentPrisma = mockPrisma({
+      user: {
+        ...mockPrisma().user,
+        findMany: jest.fn(async () => [
+          rawUser("kid@example.com", "Kid One", {
+            id: "student-9",
+            role: "STUDENT",
+            gender: "MALE",
+            yearLevel: "Year 7",
+            schoolName: "Springfield High",
+            parents: [{ parent: { id: "parent-9", fullName: parent.fullName, emailEncrypted: parent.emailEncrypted } }],
+            children: [],
+          }),
+        ]),
+      },
+    });
+    const students = await adminService.listUsers(studentPrisma as never, {
+      page: 1, limit: 10, role: "STUDENT", sortBy: "createdAt", order: "desc",
+    });
+    expect(students.data[0]).toMatchObject({
+      role: "STUDENT",
+      gender: "MALE",
+      yearLevel: "Year 7",
+      schoolName: "Springfield High",
+      parents: [{ id: "parent-9", fullName: "Parent One", email: "parent@example.com" }],
+    });
+    expect(students.data[0]).not.toHaveProperty("children");
+
+    const parentPrisma = mockPrisma({
+      user: {
+        ...mockPrisma().user,
+        findMany: jest.fn(async () => [
+          rawUser("parent@example.com", "Parent One", {
+            id: "parent-9",
+            role: "PARENT",
+            address,
+            parents: [],
+            children: [{ student: { id: "student-9", fullName: child.fullName, emailEncrypted: child.emailEncrypted } }],
+          }),
+        ]),
+      },
+    });
+    const parents = await adminService.listUsers(parentPrisma as never, {
+      page: 1, limit: 10, role: "PARENT", sortBy: "createdAt", order: "desc",
+    });
+    expect(parents.data[0]).toMatchObject({
+      role: "PARENT",
+      address: "1 Main St",
+      children: [{ id: "student-9", fullName: "Kid One", email: "kid@example.com" }],
+    });
+    expect(parents.data[0]).not.toHaveProperty("parents");
+  });
+
   it("gets, updates, status-updates, and deletes tutors", async () => {
     const prisma = mockPrisma({
       user: {

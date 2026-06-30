@@ -12,7 +12,7 @@ import { generatePassword } from "../../utils/password-generator.js";
 import { normalizeEmail } from "../../utils/normalize.js";
 import { isUniqueConstraintError } from "../../utils/prisma-errors.js";
 import { encryptUserFields, emailToBlindIndex, decryptUser } from "../../utils/user-crypto.js";
-import { computeBlindIndex, encryptField } from "../../utils/field-encryption.js";
+import { computeBlindIndex, encryptField, decryptField } from "../../utils/field-encryption.js";
 
 const SALT_ROUNDS = 12;
 
@@ -127,6 +127,14 @@ export async function syncUserTier(
 
 // ── Generic list users by role ───────────────────────────
 
+// Minimal projection of a linked user (parent or student) for the relations
+// list. fullName + emailEncrypted are AES-encrypted and decrypted before send.
+const RELATION_USER_SELECT = {
+  id: true,
+  fullName: true,
+  emailEncrypted: true,
+} as const;
+
 const USER_SELECT = {
   id: true,
   email: true,
@@ -137,10 +145,26 @@ const USER_SELECT = {
   status: true,
   tier: true,
   phoneNumber: true,
+  address: true,
+  gender: true,
+  yearLevel: true,
+  schoolName: true,
   profilePhotoKey: true,
   createdAt: true,
   updatedAt: true,
+  // Linked accounts: a student's `parents` and a parent's `children`.
+  parents: { select: { parent: { select: RELATION_USER_SELECT } } },
+  children: { select: { student: { select: RELATION_USER_SELECT } } },
 } as const;
+
+/** Decrypts the name + email of a linked parent/student relation. */
+function decryptRelatedUser(u: { id: string; fullName: string; emailEncrypted: string }) {
+  return {
+    id: u.id,
+    fullName: decryptField(u.fullName),
+    email: decryptField(u.emailEncrypted),
+  };
+}
 
 export async function listUsers(
   prisma: PrismaClient,
@@ -184,7 +208,15 @@ export async function listUsers(
 
   return {
     data: rawUsers.map((u) => {
-      const { fullNameTokens, ...rest } = decryptUser(u);
+      const { fullNameTokens, parents, children, ...rest } = decryptUser(u);
+      // Students carry their linked parents; parents carry their linked
+      // students. Other roles have neither, so we drop the empty relations.
+      if (role === "STUDENT") {
+        return { ...rest, parents: (parents ?? []).map((r) => decryptRelatedUser(r.parent)) };
+      }
+      if (role === "PARENT") {
+        return { ...rest, children: (children ?? []).map((r) => decryptRelatedUser(r.student)) };
+      }
       return rest;
     }),
     meta: { page, limit, total, totalPages: Math.ceil(total / limit) },

@@ -167,6 +167,13 @@ const listUsersQuerySchema = z.object({
   order: z.enum(["asc", "desc"]).default("desc"),
 });
 
+// A linked account (parent or student) returned in a user's relations list.
+const relatedUserSchema = z.object({
+  id: z.string(),
+  fullName: z.string(),
+  email: z.string(),
+});
+
 const userItemSchema = z.object({
   id: z.string(),
   email: z.string(),
@@ -176,6 +183,15 @@ const userItemSchema = z.object({
   tier: z.enum(["BASIC", "STANDARD", "PREMIUM"]),
   phoneNumber: z.string().nullable(),
   photoUrl: z.string().nullable(),
+  // Student profile fields (STUDENT tab).
+  gender: z.string().nullable().optional(),
+  yearLevel: z.string().nullable().optional(),
+  schoolName: z.string().nullable().optional(),
+  // Parent profile field (PARENT tab).
+  address: z.string().nullable().optional(),
+  // Linked accounts: students carry `parents`, parents carry `children`.
+  parents: z.array(relatedUserSchema).optional(),
+  children: z.array(relatedUserSchema).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
