@@ -21,6 +21,7 @@ const pluginMocks = {
   broadcastPlugin: jest.fn(),
   gradingPlugin: jest.fn(),
   cleanupPlugin: jest.fn(),
+  pathwayOverduePlugin: jest.fn(),
   healthRoutes: jest.fn(),
   authRoutes: jest.fn(),
   usersRoutes: jest.fn(),
@@ -73,6 +74,9 @@ jest.unstable_mockModule("../../src/plugins/profile-photo-cleanup.plugin.js", ()
 jest.unstable_mockModule("../../src/plugins/broadcast.plugin.js", () => ({ default: pluginMocks.broadcastPlugin }));
 jest.unstable_mockModule("../../src/plugins/grading.plugin.js", () => ({ default: pluginMocks.gradingPlugin }));
 jest.unstable_mockModule("../../src/plugins/cleanup.plugin.js", () => ({ default: pluginMocks.cleanupPlugin }));
+jest.unstable_mockModule("../../src/plugins/pathway-overdue.plugin.js", () => ({
+  default: pluginMocks.pathwayOverduePlugin,
+}));
 jest.unstable_mockModule("../../src/modules/health/health.route.js", () => ({
   healthRoutes: pluginMocks.healthRoutes,
 }));
@@ -275,6 +279,7 @@ describe("app builder", () => {
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.broadcastPlugin);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.gradingPlugin);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.cleanupPlugin);
+    expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.pathwayOverduePlugin);
     expect(fakeApp.register).toHaveBeenCalledWith(pluginMocks.healthRoutes);
     expect(pluginMocks.authRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/auth" });
     expect(pluginMocks.usersRoutes).toHaveBeenCalledWith(fakeApp, { prefix: "/users" });

@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from "@jest/globals";
-import { healthCheck } from "../../src/modules/health/health.controller.js";
+import { healthCheck, deepHealthCheck } from "../../src/modules/health/health.controller.js";
 import { checkDbConnection } from "../../src/modules/health/health.service.js";
 
 function mockReply() {
@@ -32,7 +32,34 @@ describe("health module", () => {
     await expect(checkDbConnection(prisma as never)).resolves.toBe("disconnected");
   });
 
-  it("sends an ok health response when dependencies are healthy", async () => {
+  it("sends an ok liveness response without a db field", async () => {
+    const reply = mockReply();
+
+    const response = await healthCheck({} as never, reply as never);
+
+    expect(reply.status).toHaveBeenCalledWith(200);
+    expect(response).toMatchObject({
+      success: true,
+      message: "Aspire API is running",
+      data: { status: "ok" },
+    });
+    expect(response).toHaveProperty("data.uptime");
+    expect(response).toHaveProperty("data.timestamp");
+    expect(response).toHaveProperty("data.environment");
+    expect(response).not.toHaveProperty("data.db");
+  });
+
+  it("never queries the database on the liveness probe", async () => {
+    const $queryRaw = jest.fn(async () => [{ result: 1 }]);
+    const request = { server: { prisma: { $queryRaw } } };
+    const reply = mockReply();
+
+    await healthCheck(request as never, reply as never);
+
+    expect($queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("sends an ok deep health response when dependencies are healthy", async () => {
     const request = {
       server: {
         prisma: {
@@ -42,7 +69,7 @@ describe("health module", () => {
     };
     const reply = mockReply();
 
-    const response = await healthCheck(request as never, reply as never);
+    const response = await deepHealthCheck(request as never, reply as never);
 
     expect(reply.status).toHaveBeenCalledWith(200);
     expect(response).toMatchObject({
@@ -58,7 +85,7 @@ describe("health module", () => {
     expect(response).toHaveProperty("data.environment");
   });
 
-  it("sends a degraded health response when the database is unavailable", async () => {
+  it("sends a degraded deep health response when the database is unavailable", async () => {
     const request = {
       server: {
         prisma: {
@@ -70,7 +97,7 @@ describe("health module", () => {
     };
     const reply = mockReply();
 
-    const response = await healthCheck(request as never, reply as never);
+    const response = await deepHealthCheck(request as never, reply as never);
 
     expect(reply.status).toHaveBeenCalledWith(503);
     expect(response).toMatchObject({

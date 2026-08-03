@@ -11,6 +11,11 @@ const envSchema = z.object({
   // Database
   DATABASE_URL: z.string().url({ error: "DATABASE_URL must be a valid URL" }),
   DIRECT_URL: z.string().url({ error: "DIRECT_URL must be a valid URL" }).optional(),
+  // Connection pool cap. NOTE: Prisma's `connection_limit` URL parameter is
+  // ignored here — with @prisma/adapter-pg the pool belongs to `pg`, not to the
+  // Prisma engine, so the limit has to be passed as `max` in PoolConfig.
+  // Default matches pg's own default, so this is a no-op until tuned.
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
 
   // Redis
   REDIS_URL: z.string({ error: "REDIS_URL is required" }).min(1, "REDIS_URL cannot be empty"),

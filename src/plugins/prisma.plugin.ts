@@ -11,7 +11,12 @@ function normalizeConnectionString(url: string): string {
 }
 
 async function prismaPlugin(fastify: FastifyInstance) {
-  const adapter = new PrismaPg({ connectionString: normalizeConnectionString(env.DATABASE_URL) });
+  // `max` is the pg pool cap. It replaces Prisma's `connection_limit` URL param,
+  // which the driver adapter does not read — see DATABASE_POOL_MAX in config/env.
+  const adapter = new PrismaPg({
+    connectionString: normalizeConnectionString(env.DATABASE_URL),
+    max: env.DATABASE_POOL_MAX,
+  });
 
   const prisma = new PrismaClient({
     adapter,

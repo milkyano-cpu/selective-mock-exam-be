@@ -42,6 +42,7 @@ describe("routes and schemas", () => {
 
   it("exports health JSON schemas and refs", () => {
     expect(healthSchemas.map((schema) => schema.$id)).toEqual([
+      "healthLivenessResponseSchema",
       "healthResponseSchema",
       "healthDegradedResponseSchema",
     ]);
@@ -56,6 +57,7 @@ describe("routes and schemas", () => {
       "uploadMyProfilePhotoResponseSchema",
       "userNotFoundResponseSchema",
       "deleteAccountResponseSchema",
+      "deleteChildParamsSchema",
     ]);
     expect(userRef("getMeResponseSchema")).toEqual({ $ref: "getMeResponseSchema#" });
   });
@@ -139,7 +141,7 @@ describe("routes and schemas", () => {
     );
   });
 
-  it("registers health route", async () => {
+  it("registers the liveness health route without a db-backed response", async () => {
     const fastify = fakeFastify();
 
     await healthRoutes(fastify as never);
@@ -147,6 +149,25 @@ describe("routes and schemas", () => {
     expect(fastify.get).toHaveBeenCalledWith(
       "/health",
       expect.objectContaining({
+        schema: {
+          response: {
+            200: { $ref: "healthLivenessResponseSchema#" },
+          },
+        },
+        handler: expect.any(Function),
+      })
+    );
+  });
+
+  it("registers the deep health route rate limited", async () => {
+    const fastify = fakeFastify();
+
+    await healthRoutes(fastify as never);
+
+    expect(fastify.get).toHaveBeenCalledWith(
+      "/health/deep",
+      expect.objectContaining({
+        config: { rateLimit: { max: 6, timeWindow: "1 minute" } },
         schema: {
           response: {
             200: { $ref: "healthResponseSchema#" },
@@ -165,7 +186,7 @@ describe("routes and schemas", () => {
 
     expect(fastify.get).toHaveBeenCalledTimes(2);
     expect(fastify.post).toHaveBeenCalledTimes(1);
-    expect(fastify.delete).toHaveBeenCalledTimes(1);
+    expect(fastify.delete).toHaveBeenCalledTimes(2);
 
     expect(fastify.get).toHaveBeenNthCalledWith(
       1,
@@ -224,6 +245,22 @@ describe("routes and schemas", () => {
         handler: expect.any(Function),
       })
     );
+
+    expect(fastify.delete).toHaveBeenCalledWith(
+      "/parent/children/:studentId",
+      expect.objectContaining({
+        schema: expect.objectContaining({
+          params: { $ref: "deleteChildParamsSchema#" },
+          response: {
+            200: { $ref: "deleteAccountResponseSchema#" },
+            403: { $ref: "userNotFoundResponseSchema#" },
+            409: { $ref: "userNotFoundResponseSchema#" },
+          },
+        }),
+        preHandler: [fastify.authenticate, expect.any(Function)],
+        handler: expect.any(Function),
+      })
+    );
   });
 
   it("exports admin JSON schemas and refs", () => {
@@ -245,6 +282,9 @@ describe("routes and schemas", () => {
       "listUsersResponseSchema",
       "syncTiersResponseSchema",
       "deleteUserResponseSchema",
+      "userParamsSchema",
+      "updateUserResponseSchema",
+      "updateUserStatusResponseSchema",
     ]);
     expect(adminRef("createStaffBodySchema")).toEqual({ $ref: "createStaffBodySchema#" });
   });
@@ -256,8 +296,8 @@ describe("routes and schemas", () => {
 
     expect(fastify.post).toHaveBeenCalledTimes(2);
     expect(fastify.get).toHaveBeenCalledTimes(4);
-    expect(fastify.put).toHaveBeenCalledTimes(1);
-    expect(fastify.patch).toHaveBeenCalledTimes(1);
+    expect(fastify.put).toHaveBeenCalledTimes(2);
+    expect(fastify.patch).toHaveBeenCalledTimes(2);
     expect(fastify.delete).toHaveBeenCalledTimes(2);
     expect(fastify.post).toHaveBeenCalledWith(
       "/users",
@@ -309,6 +349,38 @@ describe("routes and schemas", () => {
         schema: expect.objectContaining({
           response: {
             200: { $ref: "deleteUserResponseSchema#" },
+            403: { $ref: "forbiddenResponseSchema#" },
+            404: { $ref: "notFoundResponseSchema#" },
+          },
+        }),
+        preHandler: [fastify.authenticate, expect.any(Function)],
+        handler: expect.any(Function),
+      })
+    );
+    expect(fastify.put).toHaveBeenCalledWith(
+      "/users/:id",
+      expect.objectContaining({
+        schema: expect.objectContaining({
+          params: { $ref: "userParamsSchema#" },
+          body: { $ref: "updateTutorBodySchema#" },
+          response: {
+            200: { $ref: "updateUserResponseSchema#" },
+            403: { $ref: "forbiddenResponseSchema#" },
+            404: { $ref: "notFoundResponseSchema#" },
+          },
+        }),
+        preHandler: [fastify.authenticate, expect.any(Function)],
+        handler: expect.any(Function),
+      })
+    );
+    expect(fastify.patch).toHaveBeenCalledWith(
+      "/users/:id/status",
+      expect.objectContaining({
+        schema: expect.objectContaining({
+          params: { $ref: "userParamsSchema#" },
+          body: { $ref: "updateTutorStatusBodySchema#" },
+          response: {
+            200: { $ref: "updateUserStatusResponseSchema#" },
             403: { $ref: "forbiddenResponseSchema#" },
             404: { $ref: "notFoundResponseSchema#" },
           },
